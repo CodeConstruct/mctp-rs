@@ -6,46 +6,26 @@
  */
 
 use mctp_linux::{self as mctp, MctpEndpoint};
+use thiserror::Error;
 
 pub const MCTP_TYPE_PLDM: u8 = 0x01;
 pub const PLDM_MAX_MSGSIZE: usize = 1024;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum PldmError {
-    Io(std::io::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("PLDM protocol error: {0}")]
     Protocol(String),
-    Command(u8, String),
 }
 
 impl PldmError {
-    pub fn cmd_err(cc: u8, s: &str) -> Self {
-        Self::Command(cc, s.into())
-    }
-
-    pub fn proto_err(s: &str) -> Self {
-        Self::Protocol(s.into())
+    pub fn new_proto(s: String) -> Self {
+        Self::Protocol(s)
     }
 }
 
-impl From<std::io::Error> for PldmError {
-    fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
-    }
-}
-
-impl std::error::Error for PldmError {}
-
-impl std::fmt::Display for PldmError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "IO error: {e}"),
-            Self::Protocol(e) => write!(f, "PLDM protocol error: {e}"),
-            Self::Command(cc, e) => write!(f, "PLDM command failure ({cc}): {e}"),
-        }
-    }
-}
-
-pub(crate) type Result<T> = std::result::Result<T, PldmError>;
+pub type Result<T> = std::result::Result<T, PldmError>;
 
 #[derive(Debug)]
 pub struct PldmRequest {
@@ -124,7 +104,7 @@ pub fn pldm_xfer(ep: &MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
     let (sz, tag) = ep.recv(&mut rx_buf)?;
 
     if sz < 4 {
-        todo!();
+        return Err(PldmError::new_proto(format!("short response, {} bytes", sz)));
     }
 
     let rsp = PldmResponse {
