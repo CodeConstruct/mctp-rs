@@ -14,3 +14,10 @@ version = "0.1.0"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "pldm"
+version = "0.1.0"
+dependencies = [
+ "mctp-linux",
+]
