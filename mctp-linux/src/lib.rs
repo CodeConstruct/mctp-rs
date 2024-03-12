@@ -244,3 +244,74 @@ impl MctpEndpoint {
         self.sock.bind(&addr)
     }
 }
+
+
+/// Helper for applications taking an MCTP address as an argument,
+/// configuration, etc.
+///
+/// Address specifications can either be `<eid>`, or `<net>,<eid>`
+///
+/// EID may be either specified in decimal or hex, the latter requiring an '0x'
+/// prefix.
+///
+/// Net must be in decimal.
+///
+/// If no network is specified, the default of MCTP_NET_ANY is used.
+#[derive(Debug)]
+pub struct MctpAddr {
+    eid: u8,
+    net: Option<u32>,
+}
+
+impl std::str::FromStr for MctpAddr {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<MctpAddr, String> {
+        let mut parts = s.split(|c| c == ',');
+
+        let p1 = parts.next();
+        let p2 = parts.next();
+
+        let (net_str, eid_str) = match (p1, p2) {
+            (Some(n), Some(e)) => (Some(n), e),
+            (Some(e), None) => (None, e),
+            _ => return Err(format!("invalid MCTP address format")),
+        };
+
+        const HEX_PREFIX: &str = "0x";
+        const HEX_PREFIX_LEN: usize = HEX_PREFIX.len();
+
+        let eid = if eid_str.to_ascii_lowercase().starts_with(HEX_PREFIX) {
+            u8::from_str_radix(&eid_str[HEX_PREFIX_LEN..], 16)
+        } else {
+            eid_str.parse()
+        }.map_err(|e| e.to_string())?;
+
+        let net : Option<u32> = match net_str {
+            Some(n) => Some(
+                n.parse().map_err(|e: std::num::ParseIntError| e.to_string())?
+            ),
+            None => None,
+        };
+
+        Ok(MctpAddr { net, eid })
+    }
+}
+
+impl MctpAddr {
+    /// Return the MCTP Endpoint ID for this address.
+    pub fn eid(&self) -> u8 {
+        self.eid
+    }
+
+    /// Return the MCTP Network ID for this address, defaulting to MCTP_NET_ANY
+    /// if none was provided originally.
+    pub fn net(&self) -> u32 {
+        self.net.unwrap_or(MCTP_NET_ANY)
+    }
+
+    /// Create an MCTPEndpoint using the net & eid values in this address.
+    pub fn create_endpoint(&self) -> Result<MctpEndpoint> {
+        MctpEndpoint::new(self.eid, self.net())
+    }
+}
