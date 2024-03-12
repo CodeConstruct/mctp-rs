@@ -1034,3 +1034,20 @@ pub fn update_components(ep: &MctpEndpoint, update: &mut Update) -> Result<()> {
 
     Ok(())
 }
+
+pub fn activate_firmware(ep: &MctpEndpoint, self_activate: bool) -> Result<()> {
+    check_fd_state(ep, PldmFDState::ReadyXfer)?;
+
+    let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1a);
+    let self_activation_req : u8 = if self_activate { 1 } else { 0 };
+
+    req.data.extend_from_slice(&self_activation_req.to_le_bytes());
+
+    let rsp = pldm::pldm_xfer(ep, req)?;
+
+    if rsp.cc != 0 {
+        return Err(PldmUpdateError::new_command(0x1a, rsp.cc));
+    }
+
+    Ok(())
+}
