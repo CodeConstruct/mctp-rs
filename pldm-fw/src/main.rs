@@ -148,19 +148,6 @@ fn open_package(fname: String) -> anyhow::Result<pldm_fw::pkg::Package> {
     Ok(pkg)
 }
 
-fn eid_parse(s: &str) -> Result<u8, String> {
-    const HEX_PREFIX: &str = "0x";
-    const HEX_PREFIX_LEN: usize = HEX_PREFIX.len();
-
-    let result = if s.to_ascii_lowercase().starts_with(HEX_PREFIX) {
-        u8::from_str_radix(&s[HEX_PREFIX_LEN..], 16)
-    } else {
-        s.parse()
-    };
-
-    result.map_err(|e| e.to_string())
-}
-
 #[derive(FromArgs, Debug)]
 #[argh(description = "PLDM update utility")]
 struct Args {
@@ -182,9 +169,9 @@ enum Command {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "inventory", description = "Query FD inventory")]
 struct InventoryCommand {
-    /// MCTP EID of device
-    #[argh(positional, from_str_fn(eid_parse))]
-    eid: u8,
+    /// MCTP net/EID of device
+    #[argh(positional)]
+    addr: mctp::MctpAddr,
 }
 
 #[derive(FromArgs, Debug)]
@@ -195,8 +182,8 @@ struct InventoryCommand {
 )]
 struct UpdateCommand {
     /// MCTP EID of device
-    #[argh(positional, from_str_fn(eid_parse))]
-    eid: u8,
+    #[argh(positional)]
+    addr: mctp::MctpAddr,
 
     #[argh(positional)]
     file: String,
@@ -219,8 +206,8 @@ struct UpdateCommand {
 #[argh(subcommand, name = "cancel", description = "Cancel ongoing update")]
 struct CancelCommand {
     /// MCTP EID of device
-    #[argh(positional, from_str_fn(eid_parse))]
-    eid: u8,
+    #[argh(positional)]
+    addr: mctp::MctpAddr,
 }
 
 #[derive(FromArgs, Debug)]
@@ -250,7 +237,7 @@ fn main() -> anyhow::Result<()> {
 
     match args.command {
         Command::Inventory(i) => {
-            let ep = mctp::MctpEndpoint::new(i.eid, mctp::MCTP_NET_ANY)?;
+            let ep = i.addr.create_endpoint()?;
             let dev = pldm_fw::query_device_identifiers(&ep)?;
             let params = pldm_fw::query_firmware_parameters(&ep)?;
 
@@ -258,7 +245,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Update(u) => {
             let pkg = open_package(u.file)?;
-            let ep = mctp::MctpEndpoint::new(u.eid, mctp::MCTP_NET_ANY)?;
+            let ep = u.addr.create_endpoint()?;
             let dev = pldm_fw::query_device_identifiers(&ep)?;
             let fwp = pldm_fw::query_firmware_parameters(&ep)?;
             let mut update = pldm_fw::Update::new(
@@ -284,7 +271,7 @@ fn main() -> anyhow::Result<()> {
             pldm_fw::update_components(&ep, &mut update)?;
         }
         Command::Cancel(c) => {
-            let ep = mctp::MctpEndpoint::new(c.eid, mctp::MCTP_NET_ANY)?;
+            let ep = c.addr.create_endpoint()?;
             let _ = pldm_fw::cancel_update(&ep);
         }
         Command::PkgInfo(p) => {
