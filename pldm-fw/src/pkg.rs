@@ -277,6 +277,33 @@ impl Package {
         })
     }
 
+    pub fn new_virtual(classification: ComponentClassification,
+                       identifier: u16,
+                       payload_file: std::fs::File) -> Result<Self> {
+        let metadata = payload_file.metadata()?;
+        let payload_len = metadata.len()
+            .try_into()
+            .map_err(|_| PldmPackageError::new_format("invalid file size?"))?;
+
+        let comp = PackageComponent {
+            classification,
+            identifier,
+            comparison_stamp: 0,
+            options: 0,
+            activation_method: 0,
+            file_offset: 0,
+            file_size: payload_len,
+            version: DescriptorString::String("0000".into()),
+        };
+        Ok(Self {
+            identifier: PKG_UUID_1_1_X,
+            version: DescriptorString::String("0000".into()),
+            components: vec![comp],
+            devices: vec![],
+            file: payload_file,
+        })
+    }
+
     pub fn read_component(
         &self,
         component: &PackageComponent,
