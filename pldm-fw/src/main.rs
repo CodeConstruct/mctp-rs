@@ -200,6 +200,10 @@ struct UpdateCommand {
     /// explicitly specify components (by index)
     #[argh(option)]
     force_components: Vec<usize>,
+
+    /// set self-contained activation flag for activate
+    #[argh(switch)]
+    self_contained_activation: bool,
 }
 
 #[derive(FromArgs, Debug)]
@@ -269,6 +273,7 @@ fn main() -> anyhow::Result<()> {
             let _ = pldm_fw::request_update(&ep, &update)?;
             pldm_fw::pass_component_table(&ep, &update)?;
             pldm_fw::update_components(&ep, &mut update)?;
+            pldm_fw::activate_firmware(&ep, u.self_contained_activation)?;
         }
         Command::Cancel(c) => {
             let ep = c.addr.create_endpoint()?;
