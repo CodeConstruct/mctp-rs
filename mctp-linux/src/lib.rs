@@ -243,6 +243,13 @@ impl MctpEndpoint {
             MctpSockAddr::new(MCTP_ADDR_ANY, self.net, typ, MCTP_TAG_OWNER);
         self.sock.bind(&addr)
     }
+
+    /// Clone this endpoint.
+    ///
+    /// Creates a separate socket descriptor for the new endpoint.
+    pub fn try_clone(&self) -> Result<Self> {
+        Self::new(self.eid, self.net)
+    }
 }
 
 
