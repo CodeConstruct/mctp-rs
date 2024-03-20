@@ -840,44 +840,35 @@ pub fn pass_component_table(ep: &MctpEndpoint, update: &Update) -> Result<()> {
     Ok(())
 }
 
-fn duration_str(d: &chrono::Duration) -> String {
-    let secs = d.num_seconds();
-    if secs < 0 {
-        format!("unknown")
-    } else if secs > 86400 {
-        format!("{} days", secs / 86400)
-    } else {
-        let mut s = secs;
-        let h = s / 3600;
-        s -= h * 3600;
-        let m = s / 60;
-        s -= m * 60;
-        format!("{:02}:{:02}:{:02}", h, m, s)
-    }
-}
-
-fn bps_str(d: &chrono::Duration) -> String {
-    let bps = 1_000_000.0 / d.num_microseconds().unwrap_or(0) as f32;
-    const B_PER_MB : f32 = 1_000_000.0;
-    #[allow(non_upper_case_globals)]
-    const B_PER_kB : f32 = 1_000.0;
-    let threshold = 0.8;
-
-    if bps > (B_PER_MB * threshold) {
-        format!("{:.2} MB/sec", bps / B_PER_MB)
-    } else if bps > (B_PER_kB * threshold) {
-        format!("{:.2} kB/sec", bps / B_PER_kB)
-    } else {
-        format!("{:.0} B/sec", bps)
-    }
-}
-
 pub fn update_component(
     ep: &MctpEndpoint,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
     index: u8,
-) -> Result<()> {
+) -> Result<()>
+{
+    update_component_progress(ep, package, component, index, |_| ())
+}
+
+pub struct UpdateTransferProgress {
+    pub cur_xfer: Option<(u32, u32)>,
+    pub percent: u8,
+    pub bps: f32,
+    pub duration: chrono::Duration,
+    pub remaining: chrono::Duration,
+    pub complete: bool,
+}
+
+pub fn update_component_progress<F>(
+    ep: &MctpEndpoint,
+    package: &pkg::Package,
+    component: &pkg::PackageComponent,
+    index: u8,
+    mut progress: F,
+) -> Result<()>
+where
+    F: FnMut(&UpdateTransferProgress) -> (),
+{
     check_fd_state(ep, PldmFDState::ReadyXfer)?;
 
     let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x14);
@@ -942,13 +933,20 @@ pub fn update_component(
                 let sz_left = if sz_done <= sz { sz - sz_done } else { 0 };
 
                 let remaining = rate * sz_left as i32;
+                let bps = 1_000_000.0 / rate.num_microseconds().unwrap_or(0) as f32;
+                let percent = ((100 * (sz_done as u64)) / sz as u64) as u8;
 
-                println!(
-                    "Data request: offset 0x{:08x}, len 0x{:x}, {:2}% {}, {} remaining",
-                    offset, len, 100 * (sz_done as u64) / sz as u64,
-                    bps_str(&rate),
-                    duration_str(&remaining),
-                );
+                let u = UpdateTransferProgress {
+                    cur_xfer: Some((offset, len)),
+                    percent,
+                    bps,
+                    remaining,
+                    duration: elapsed,
+                    complete: false,
+                };
+
+                progress(&u);
+
             }
             0x16 => {
                 /* Transfer Complete */
@@ -956,10 +954,19 @@ pub fn update_component(
                 let elapsed = chrono::Utc::now() - start;
 
                 if res == 0 {
-                    println!(
-                        "firmware transfer complete, duration {}",
-                        duration_str(&elapsed)
-                    );
+                    let rate = elapsed / sz_done as i32;
+                    let bps = 1_000_000.0 / rate.num_microseconds().unwrap_or(0) as f32;
+
+                    let u = UpdateTransferProgress {
+                        cur_xfer: None,
+                        percent: 100,
+                        bps,
+                        remaining: chrono::Duration::zero(),
+                        duration: elapsed,
+                        complete: false,
+                    };
+
+                    progress(&u);
                 } else {
                     println!("fimware transfer error: 0x{:02x}", res);
                 }
@@ -1022,6 +1029,17 @@ pub fn update_component(
 }
 
 pub fn update_components(ep: &MctpEndpoint, update: &mut Update) -> Result<()> {
+    update_components_progress(ep, update, |_| ())
+}
+
+pub fn update_components_progress<F>(
+    ep: &MctpEndpoint,
+    update: &mut Update,
+    mut progress: F,
+) -> Result<()>
+where
+    F: FnMut(&UpdateTransferProgress) -> ()
+{
     // We'll need to receive incoming data requests, so bind() now.
     ep.bind(pldm::MCTP_TYPE_PLDM)?;
 
@@ -1029,7 +1047,13 @@ pub fn update_components(ep: &MctpEndpoint, update: &mut Update) -> Result<()> {
 
     for idx in components {
         let component = update.package.components.get(idx).unwrap();
-        update_component(&ep, &update.package, component, update.index)?;
+        update_component_progress(
+            &ep,
+            &update.package,
+            component,
+            update.index,
+            &mut progress
+        )?;
     }
 
     Ok(())

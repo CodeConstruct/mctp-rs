@@ -236,6 +236,59 @@ struct ExtractCommand {
 #[argh(subcommand, name = "version", description = "Print pldm-fw version")]
 struct VersionCommand {}
 
+fn duration_str(d: &chrono::Duration) -> String {
+    let secs = d.num_seconds();
+    if secs < 0 {
+        format!("unknown")
+    } else if secs > 86400 {
+        format!("{} days", secs / 86400)
+    } else {
+        let mut s = secs;
+        let h = s / 3600;
+        s -= h * 3600;
+        let m = s / 60;
+        s -= m * 60;
+        format!("{:02}:{:02}:{:02}", h, m, s)
+    }
+}
+
+fn bps_str(bps: f32) -> String {
+    const B_PER_MB : f32 = 1_000_000.0;
+    #[allow(non_upper_case_globals)]
+    const B_PER_kB : f32 = 1_000.0;
+    let threshold = 0.8;
+
+    if bps > (B_PER_MB * threshold) {
+        format!("{:.2} MB/sec", bps / B_PER_MB)
+    } else if bps > (B_PER_kB * threshold) {
+        format!("{:.2} kB/sec", bps / B_PER_kB)
+    } else {
+        format!("{:.0} B/sec", bps)
+    }
+}
+
+fn progress(p: &pldm_fw::UpdateTransferProgress)
+{
+    if p.complete {
+        println!(
+            "Firmware transfer complete, duration {}, {}",
+            duration_str(&p.duration),
+            bps_str(p.bps)
+        );
+    } else {
+        let (offset, len) = match p.cur_xfer {
+            Some(x) => x,
+            None => (0, 0),
+        };
+        println!(
+            "Data request: offset 0x{:08x}, len 0x{:x}, {:2}% {}, {} remaining",
+            offset, len, p.percent,
+            bps_str(p.bps),
+            duration_str(&p.remaining),
+        );
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let args: Args = argh::from_env();
 
@@ -272,7 +325,7 @@ fn main() -> anyhow::Result<()> {
 
             let _ = pldm_fw::request_update(&ep, &update)?;
             pldm_fw::pass_component_table(&ep, &update)?;
-            pldm_fw::update_components(&ep, &mut update)?;
+            pldm_fw::update_components_progress(&ep, &mut update, progress)?;
             pldm_fw::activate_firmware(&ep, u.self_contained_activation)?;
         }
         Command::Cancel(c) => {
