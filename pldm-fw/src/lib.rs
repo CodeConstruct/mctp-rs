@@ -10,6 +10,8 @@ use thiserror::Error;
 use pldm;
 use core::fmt;
 
+use log::{debug, error};
+
 use enumset::{EnumSet, EnumSetType};
 use itertools::Itertools;
 
@@ -646,7 +648,7 @@ pub fn request_update(
 pub fn cancel_update(ep: &MctpEndpoint) -> Result<()> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1d);
     let rsp = pldm::pldm_xfer(ep, req)?;
-    println!("cancel rsp: cc {:x}, data {:?}", rsp.cc, rsp.data);
+    debug!("cancel rsp: cc {:x}, data {:?}", rsp.cc, rsp.data);
     Ok(())
 }
 
@@ -701,7 +703,7 @@ fn check_fd_state(ep: &MctpEndpoint, expected_state: PldmFDState) -> Result<()> 
         .map_err(|_e| PldmUpdateError::new_proto("can't parse Get Status response".into()))?;
 
     //todo: flag
-    println!("state: {:?}", res.current_state);
+    debug!("state: {:?}", res.current_state);
 
     if res.current_state != expected_state {
         return Err(PldmUpdateError::new_proto(
@@ -968,7 +970,7 @@ where
 
                     progress(&u);
                 } else {
-                    println!("fimware transfer error: 0x{:02x}", res);
+                    error!("fimware transfer error: 0x{:02x}", res);
                 }
                 let mut fw_resp = fw_req.response();
                 fw_resp.cc = 0;
@@ -976,11 +978,8 @@ where
                 break;
             }
             _ => {
-                println!("unknown req during transfer");
-                println!(" {:?}", fw_req);
-
                 return Err(PldmUpdateError::new_proto(
-                    "unexpected command during update".into()
+                    format!("unexpected command during update: {fw_req:?}")
                 ));
             }
         }

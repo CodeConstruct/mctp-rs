@@ -292,6 +292,10 @@ fn progress(p: &pldm_fw::UpdateTransferProgress)
 fn main() -> anyhow::Result<()> {
     let args: Args = argh::from_env();
 
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Warn)
+        .init();
+
     match args.command {
         Command::Inventory(i) => {
             let ep = i.addr.create_endpoint()?;
