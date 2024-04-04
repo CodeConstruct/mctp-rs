@@ -33,7 +33,7 @@ pub enum PldmPackageError {
     Io(#[from] std::io::Error),
     // TODO: would be nice to extract this directly from a nom ParseError,
     // including Context...
-    #[error("PLDM ackage format error: {0}")]
+    #[error("PLDM package format error: {0}")]
     Format(String),
 }
 
@@ -267,6 +267,18 @@ impl Package {
             length_count(le_u16, f)(r).finish().map_err(|_| {
                 PldmPackageError::new_format("can't parse components")
             })?;
+
+        let mut whole_header = Vec::new();
+        whole_header.extend_from_slice(&init);
+        whole_header.extend_from_slice(&buf);
+        let (cs_payload, checksum) = whole_header.split_at(whole_header.len()-4);
+        // safe unwrap, know init.len() > 4
+        let checksum = u32::from_le_bytes(checksum.try_into().unwrap());
+        let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+        let cs_calc = crc32.checksum(cs_payload);
+        if cs_calc != checksum {
+            return Err(PldmPackageError::new_format("Incorrect header checksum"))
+        }
 
         Ok(Package {
             identifier,
