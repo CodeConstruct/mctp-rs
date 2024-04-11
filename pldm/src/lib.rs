@@ -92,8 +92,9 @@ pub struct PldmResponse {
 }
 
 pub fn pldm_xfer(ep: &MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
+    const REQ_IID: u8 = 0;
     let mut tx_buf = Vec::with_capacity(req.data.len() + 2);
-    tx_buf.push(1 << 7);
+    tx_buf.push(1 << 7 | REQ_IID);
     tx_buf.push(req.typ & 0x3f);
     tx_buf.push(req.cmd);
     tx_buf.extend_from_slice(&req.data);
@@ -107,12 +108,34 @@ pub fn pldm_xfer(ep: &MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
         return Err(PldmError::new_proto(format!("short response, {} bytes", sz)));
     }
 
+    let iid = rx_buf[0] & 0x1f;
+    let typ = rx_buf[1] & 0x3f;
+    let cmd = rx_buf[2];
+    let cc = rx_buf[3];
+
+    if iid != REQ_IID {
+        return Err(PldmError::new_proto(format!(
+            "Incorrect instance ID in reply. Expected 0x{REQ_IID:02x} got 0x{iid:02x}")));
+    }
+
+    if typ != req.typ {
+        return Err(PldmError::new_proto(format!(
+            "Incorrect PLDM type in reply. Expected 0x{:02x} got 0x{:02x}",
+            req.typ, typ)));
+    }
+
+    if cmd != req.cmd {
+        return Err(PldmError::new_proto(format!(
+            "Incorrect PLDM command in reply. Expected 0x{:02x} got 0x{:02x}",
+            req.cmd, cmd)));
+    }
+
     let rsp = PldmResponse {
         mctp_tag: tag,
-        iid: rx_buf[0] & 0x1f,
-        typ: rx_buf[1] & 0x3f,
-        cmd: rx_buf[2],
-        cc: rx_buf[3],
+        iid,
+        typ,
+        cmd,
+        cc,
         data: rx_buf[4..sz].to_vec(),
     };
 
