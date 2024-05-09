@@ -198,6 +198,11 @@ impl MctpSocket {
             Ok(())
         }
     }
+
+impl std::os::fd::AsRawFd for MctpSocket {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
 }
 
 /// Encapsulation of a remote endpoint: a socket and an Endpoint ID.
@@ -249,6 +254,11 @@ impl MctpEndpoint {
     /// Creates a separate socket descriptor for the new endpoint.
     pub fn try_clone(&self) -> Result<Self> {
         Self::new(self.eid, self.net)
+    }
+
+    /// Borrow the internal MCTP socket
+    pub fn as_socket(&mut self) -> &mut MctpSocket {
+        &mut self.sock
     }
 }
 
