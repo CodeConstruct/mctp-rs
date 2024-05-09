@@ -204,6 +204,10 @@ struct UpdateCommand {
     /// set self-contained activation flag for activate
     #[argh(switch)]
     self_contained_activation: bool,
+
+    /// don't require confirmation to update
+    #[argh(switch, short='y')]
+    confirm: bool,
 }
 
 #[derive(FromArgs, Debug)]
@@ -322,7 +326,7 @@ fn main() -> anyhow::Result<()> {
             print_device(&dev);
             print_update(&update);
 
-            let c = confirm_update();
+            let c = u.confirm || confirm_update();
             if !c {
                 return Ok(())
             }
