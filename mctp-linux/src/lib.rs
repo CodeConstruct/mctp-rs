@@ -43,6 +43,7 @@ use core::mem;
 use std::fmt;
 use std::io::{Error, ErrorKind, Result};
 use std::os::unix::io::RawFd;
+use std::time::Duration;
 
 /* until we have these in libc... */
 const AF_MCTP: libc::sa_family_t = 45;
@@ -198,6 +199,62 @@ impl MctpSocket {
             Ok(())
         }
     }
+
+    /// Set the read timeout.
+    ///
+    /// A valid of `None` will have no timeout.
+    pub fn set_read_timeout(&self, dur: Option<Duration>) -> Result<()> {
+        // Avoid warnings about using time_t with musl. See comment in read_timeout().
+        #![allow(deprecated)]
+
+        let dur = dur.unwrap_or(Duration::ZERO);
+        let tv = libc::timeval {
+            tv_sec: dur.as_secs() as libc::time_t,
+            tv_usec: dur.subsec_micros() as libc::suseconds_t,
+        };
+        let rc = unsafe { libc::setsockopt(self.0, libc::SOL_SOCKET, libc::SO_RCVTIMEO,
+            (&tv as *const libc::timeval) as *const libc::c_void,
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t) };
+
+        if rc < 0 {
+            Err(Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Retrieves the read timeout
+    ///
+    /// A value of `None` indicates no timeout.
+    pub fn read_timeout(&self) -> Result<Option<Duration>> {
+        // Avoid warnings about using time_t with musl. It is safe here since we are
+        // only using it directly with libc, that should be compiled with the
+        // same definitions as libc crate. https://github.com/rust-lang/libc/issues/1848
+        #![allow(deprecated)]
+
+        let mut tv = std::mem::MaybeUninit::<libc::timeval>::uninit();
+        let mut tv_len = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+        let rc = unsafe { libc::getsockopt(self.0, libc::SOL_SOCKET, libc::SO_RCVTIMEO,
+            tv.as_mut_ptr() as *mut libc::c_void,
+            &mut tv_len as *mut libc::socklen_t) };
+
+        if rc < 0 {
+            Err(Error::last_os_error())
+        } else {
+            let tv = unsafe { tv.assume_init() };
+            if tv.tv_sec < 0 || tv.tv_usec < 0 {
+                return Err(Error::other("Negative timeout from socket"));
+            }
+
+            if tv.tv_sec == 0 && tv.tv_usec == 0 {
+                Ok(None)
+            } else {
+                Ok(Some(Duration::from_secs(tv.tv_sec as u64)
+                    + Duration::from_micros(tv.tv_usec as u64)))
+            }
+        }
+    }
+}
 
 impl std::os::fd::AsRawFd for MctpSocket {
     fn as_raw_fd(&self) -> RawFd {
