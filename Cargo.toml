@@ -1,7 +1,8 @@
 [workspace]
-members = ["mctp-linux", "pldm", "pldm-fw"]
+members = ["mctp", "mctp-linux", "pldm", "pldm-fw"]
 resolver = "2"
 
 [workspace.dependencies]
+mctp = { path = "mctp" }
 mctp-linux = { path = "mctp-linux" }
 pldm = { path = "pldm" }
