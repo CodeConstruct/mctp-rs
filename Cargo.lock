@@ -390,6 +390,7 @@ checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 name = "pldm"
 version = "0.1.0"
 dependencies = [
+ "mctp",
  "mctp-linux",
  "thiserror",
 ]

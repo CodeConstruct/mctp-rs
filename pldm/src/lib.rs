@@ -5,18 +5,21 @@
  * Copyright (c) 2023 Code Construct
  */
 
-use mctp_linux::{self as mctp, MctpEndpoint};
 use thiserror::Error;
 
-pub const MCTP_TYPE_PLDM: u8 = 0x01;
+use mctp::{MctpEndpoint, MctpError, Tag};
+
 pub const PLDM_MAX_MSGSIZE: usize = 1024;
 
 #[derive(Error, Debug)]
 pub enum PldmError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    // #[error("IO error: {0}")]
+    // Io(#[from] std::io::Error),
     #[error("PLDM protocol error: {0}")]
     Protocol(String),
+    #[error("MCTP error")]
+    // TODO figure how to keep it
+    Mctp,
 }
 
 impl PldmError {
@@ -25,11 +28,17 @@ impl PldmError {
     }
 }
 
+impl<E> From<E> for PldmError where E: MctpError {
+    fn from(_e: E) -> PldmError {
+        PldmError::Mctp
+    }
+}
+
 pub type Result<T> = std::result::Result<T, PldmError>;
 
 #[derive(Debug)]
 pub struct PldmRequest {
-    pub mctp_tag: u8,
+    pub mctp_tag: Tag,
     pub iid: u8,
     pub typ: u8,
     pub cmd: u8,
@@ -39,7 +48,7 @@ pub struct PldmRequest {
 impl PldmRequest {
     pub fn new(typ: u8, cmd: u8) -> Self {
         Self {
-            mctp_tag: mctp::MCTP_TAG_OWNER,
+            mctp_tag: Tag::OwnedAuto,
             iid: 0,
             typ,
             cmd,
@@ -47,7 +56,7 @@ impl PldmRequest {
         }
     }
 
-    pub fn from_buf(data: &[u8]) -> Result<Self> {
+    pub fn from_buf(tag: Tag, data: &[u8]) -> Result<Self> {
         if data.len() < 3 {
             panic!("request too short");
         }
@@ -57,7 +66,7 @@ impl PldmRequest {
         let cmd = data[2];
 
         Ok(PldmRequest {
-            mctp_tag: 0,
+            mctp_tag: tag,
             iid,
             typ,
             cmd,
@@ -69,21 +78,24 @@ impl PldmRequest {
         self.data = data;
     }
 
-    pub fn response(&self) -> PldmResponse {
-        PldmResponse {
-            mctp_tag: self.mctp_tag & !mctp::MCTP_TAG_OWNER,
+    pub fn response(&self) -> Result<PldmResponse> {
+        let tag = self.mctp_tag.tag()
+            .ok_or(PldmError::Protocol("OwnedAuto tag".into()))?;
+        let resp_tag = Tag::Unowned(tag);
+        Ok(PldmResponse {
+            mctp_tag: resp_tag,
             iid: self.iid,
             typ: self.typ,
             cmd: self.cmd,
             cc: 0,
             data: Vec::new(),
-        }
+        })
     }
 }
 
 #[derive(Debug)]
 pub struct PldmResponse {
-    pub mctp_tag: u8,
+    pub mctp_tag: Tag,
     pub iid: u8,
     pub typ: u8,
     pub cmd: u8,
@@ -91,7 +103,7 @@ pub struct PldmResponse {
     pub data: Vec<u8>,
 }
 
-pub fn pldm_xfer(ep: &MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
+pub fn pldm_xfer(ep: &mut impl MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
     const REQ_IID: u8 = 0;
     let mut tx_buf = Vec::with_capacity(req.data.len() + 2);
     tx_buf.push(1 << 7 | REQ_IID);
@@ -99,14 +111,16 @@ pub fn pldm_xfer(ep: &MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
     tx_buf.push(req.cmd);
     tx_buf.extend_from_slice(&req.data);
 
-    ep.send(MCTP_TYPE_PLDM, req.mctp_tag, &tx_buf)?;
+    ep.send(mctp::MCTP_TYPE_PLDM, req.mctp_tag, &tx_buf)?;
 
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
-    let (sz, tag) = ep.recv(&mut rx_buf)?;
+    let (rx_buf, _eid, tag) = ep.recv(&mut rx_buf)?;
 
-    if sz < 4 {
-        return Err(PldmError::new_proto(format!("short response, {} bytes", sz)));
+    if rx_buf.len() < 4 {
+        return Err(PldmError::new_proto(format!("short response, {} bytes", rx_buf.len())));
     }
+
+    // TODO: should check eid, but against what? Or should MctpEndpoint impl check it?
 
     let iid = rx_buf[0] & 0x1f;
     let typ = rx_buf[1] & 0x3f;
@@ -136,23 +150,22 @@ pub fn pldm_xfer(ep: &MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
         typ,
         cmd,
         cc,
-        data: rx_buf[4..sz].to_vec(),
+        data: rx_buf[4..].to_vec(),
     };
 
     Ok(rsp)
 }
 
-pub fn pldm_rx_req(ep: &MctpEndpoint) -> Result<PldmRequest> {
+pub fn pldm_rx_req(ep: &mut impl MctpEndpoint) -> Result<PldmRequest> {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
-    let (sz, tag) = ep.recv(&mut rx_buf)?;
+    let (rx_buf, _eid, tag) = ep.recv(&mut rx_buf)?;
 
-    let mut resp = PldmRequest::from_buf(&rx_buf[0..sz])?;
-    resp.mctp_tag = tag;
+    let req = PldmRequest::from_buf(tag, rx_buf)?;
 
-    Ok(resp)
+    Ok(req)
 }
 
-pub fn pldm_tx_resp(ep: &MctpEndpoint, resp: &PldmResponse) -> Result<()> {
+pub fn pldm_tx_resp(ep: &mut impl MctpEndpoint, resp: &PldmResponse) -> Result<()> {
     let mut tx_buf = Vec::with_capacity(resp.data.len() + 4);
     tx_buf.push(resp.iid);
     tx_buf.push(resp.typ);
@@ -160,7 +173,7 @@ pub fn pldm_tx_resp(ep: &MctpEndpoint, resp: &PldmResponse) -> Result<()> {
     tx_buf.push(resp.cc);
     tx_buf.extend_from_slice(&resp.data);
 
-    ep.send(MCTP_TYPE_PLDM, resp.mctp_tag, &tx_buf)?;
+    ep.send(mctp::MCTP_TYPE_PLDM, resp.mctp_tag, &tx_buf)?;
 
     Ok(())
 }
