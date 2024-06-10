@@ -11,8 +11,7 @@ use argh::FromArgs;
 use enumset::{EnumSet, EnumSetType};
 use std::io::Write;
 use std::fmt::Write as _;
-use mctp_linux as mctp;
-
+use mctp_linux::MctpAddr;
 
 fn comma_separated<T: EnumSetType + std::fmt::Debug>(e: EnumSet<T>) -> String {
     let mut s = String::new();
@@ -171,7 +170,7 @@ enum Command {
 struct InventoryCommand {
     /// MCTP net/EID of device
     #[argh(positional)]
-    addr: mctp::MctpAddr,
+    addr: MctpAddr,
 }
 
 #[derive(FromArgs, Debug)]
@@ -183,7 +182,7 @@ struct InventoryCommand {
 struct UpdateCommand {
     /// MCTP EID of device
     #[argh(positional)]
-    addr: mctp::MctpAddr,
+    addr: MctpAddr,
 
     #[argh(positional)]
     file: String,
@@ -215,7 +214,7 @@ struct UpdateCommand {
 struct CancelCommand {
     /// MCTP EID of device
     #[argh(positional)]
-    addr: mctp::MctpAddr,
+    addr: MctpAddr,
 }
 
 #[derive(FromArgs, Debug)]
@@ -302,17 +301,18 @@ fn main() -> anyhow::Result<()> {
 
     match args.command {
         Command::Inventory(i) => {
-            let ep = i.addr.create_endpoint()?;
-            let dev = pldm_fw::query_device_identifiers(&ep)?;
-            let params = pldm_fw::query_firmware_parameters(&ep)?;
+            let mut ep = i.addr.create_endpoint()?;
+            let dev = pldm_fw::query_device_identifiers(&mut ep)?;
+            let params = pldm_fw::query_firmware_parameters(&mut ep)?;
 
             print_device_info(&dev, &params)
         }
         Command::Update(u) => {
             let pkg = open_package(u.file)?;
-            let ep = u.addr.create_endpoint()?;
-            let dev = pldm_fw::query_device_identifiers(&ep)?;
-            let fwp = pldm_fw::query_firmware_parameters(&ep)?;
+            let mut ep = u.addr.create_endpoint()?;
+            let ep = &mut ep;
+            let dev = pldm_fw::query_device_identifiers(ep)?;
+            let fwp = pldm_fw::query_firmware_parameters(ep)?;
             let mut update = pldm_fw::Update::new(
                 &dev,
                 &fwp,
@@ -331,14 +331,14 @@ fn main() -> anyhow::Result<()> {
                 return Ok(())
             }
 
-            let _ = pldm_fw::request_update(&ep, &update)?;
-            pldm_fw::pass_component_table(&ep, &update)?;
-            pldm_fw::update_components_progress(&ep, &mut update, progress)?;
-            pldm_fw::activate_firmware(&ep, u.self_contained_activation)?;
+            let _ = pldm_fw::request_update(ep, &update)?;
+            pldm_fw::pass_component_table(ep, &update)?;
+            pldm_fw::update_components_progress(ep, &mut update, progress)?;
+            pldm_fw::activate_firmware(ep, u.self_contained_activation)?;
         }
         Command::Cancel(c) => {
-            let ep = c.addr.create_endpoint()?;
-            let _ = pldm_fw::cancel_update(&ep);
+            let mut ep = c.addr.create_endpoint()?;
+            let _ = pldm_fw::cancel_update(&mut ep);
         }
         Command::PkgInfo(p) => {
             let pkg = open_package(p.file)?;

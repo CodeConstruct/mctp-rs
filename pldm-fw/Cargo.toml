@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 pldm = { workspace = true }
+mctp = { workspace = true }
 mctp-linux = { workspace = true }
 nom = "7.1"
 itertools = "0.10"

@@ -407,6 +407,7 @@ dependencies = [
  "env_logger",
  "itertools",
  "log",
+ "mctp",
  "mctp-linux",
  "nom",
  "pldm",
