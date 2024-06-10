@@ -342,6 +342,7 @@ name = "mctp-linux"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "mctp",
 ]
 
 [[package]]

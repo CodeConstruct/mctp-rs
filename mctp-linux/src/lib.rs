@@ -21,7 +21,7 @@
 //!
 //! let sock = mctp_linux::MctpSocket::new()?;
 //! let bind_addr = mctp_linux::MctpSockAddr::new(
-//!     mctp_linux::MCTP_ADDR_ANY,
+//!     mctp::MCTP_ADDR_ANY.0,
 //!     mctp_linux::MCTP_NET_ANY,
 //!     1,
 //!     0
@@ -45,6 +45,8 @@ use std::io::{Error, ErrorKind, Result};
 use std::os::unix::io::RawFd;
 use std::time::Duration;
 
+use mctp::*;
+
 /* until we have these in libc... */
 const AF_MCTP: libc::sa_family_t = 45;
 #[repr(C)]
@@ -59,14 +61,8 @@ struct sockaddr_mctp {
     __smctp_pad1: u8,
 }
 
-/// The Tag Owner (TO) field; generally set in a request, clear in a response.
-pub const MCTP_TAG_OWNER: u8 = 0x08;
-
 /// Special value for Network ID: any network. May be used in `bind()`.
 pub const MCTP_NET_ANY: u32 = 0x00;
-
-/// Specical EID value: broadcast and/or match any.
-pub const MCTP_ADDR_ANY: u8 = 0xff;
 
 /// Address information for a socket
 pub struct MctpSockAddr(sockaddr_mctp);
@@ -278,47 +274,20 @@ impl std::os::fd::AsRawFd for MctpSocket {
 }
 
 /// Encapsulation of a remote endpoint: a socket and an Endpoint ID.
-pub struct MctpEndpoint {
+pub struct MctpLinuxEp {
     eid: u8,
     net: u32,
     sock: MctpSocket,
 }
 
-impl MctpEndpoint {
+impl MctpLinuxEp {
     /// Create a new MCTPEndpoint with EID `eid`
     pub fn new(eid: u8, net: u32) -> Result<Self> {
-        Ok(MctpEndpoint {
+        Ok(Self {
             eid,
             net,
             sock: MctpSocket::new()?,
         })
-    }
-
-    /// Send a message to this endpoint, blocking.
-    pub fn send(&self, typ: u8, tag: u8, buf: &[u8]) -> Result<()> {
-        let addr = MctpSockAddr::new(self.eid, self.net, typ, tag);
-        self.sock.sendto(buf, &addr)?;
-        Ok(())
-    }
-
-    /// Blocking recieve from this endpoint.
-    pub fn recv(&self, buf: &mut [u8]) -> Result<(usize, u8)> {
-        let (sz, addr) = self.sock.recvfrom(buf)?;
-        if addr.0.smctp_addr != self.eid {
-            return Err(Error::new(ErrorKind::Other, "invalid sender"));
-        }
-        Ok((sz, addr.0.smctp_tag))
-    }
-
-    /// Bind the endpoint's socket to a type value, so we can receive
-    /// incoming requests from this endpoint.
-    ///
-    /// Note that this only specifies the local EID for the bind; there
-    /// can only be one bind of that type for any one network.
-    pub fn bind(&self, typ: u8) -> Result<()> {
-        let addr =
-            MctpSockAddr::new(MCTP_ADDR_ANY, self.net, typ, MCTP_TAG_OWNER);
-        self.sock.bind(&addr)
     }
 
     /// Clone this endpoint.
@@ -334,6 +303,50 @@ impl MctpEndpoint {
     }
 }
 
+impl MctpEndpoint for MctpLinuxEp {
+    type Error = std::io::Error;
+
+    fn send_vectored(
+        &mut self,
+        typ: MsgType,
+        tag: Tag,
+        bufs: &[&[u8]],
+    ) -> Result<()> {
+        // Linux expects tag 0, owner bit set to allocate.
+        let mut t = tag.tag().unwrap_or(TagValue(0)).0;
+        if tag.is_owner() {
+            t |= mctp::MCTP_TAG_OWNER;
+        }
+
+        let addr = MctpSockAddr::new(self.eid, self.net, typ.0, t);
+        // TODO: implement sendmsg() with iovecs
+        let concat = bufs
+            .iter()
+            .flat_map(|b| b.iter().cloned())
+            .collect::<Vec<u8>>();
+        self.sock.sendto(&concat, &addr)?;
+        Ok(())
+    }
+
+    fn recv<'f>(&mut self, buf: &'f mut [u8]) -> Result<(&'f mut [u8], Eid, Tag)> {
+        let (sz, addr) = self.sock.recvfrom(buf)?;
+        if addr.0.smctp_addr != self.eid {
+            return Err(Error::new(ErrorKind::Other, "invalid sender"));
+        }
+        Ok((&mut buf[..sz], Eid(self.eid), Tag::from_to_field(addr.0.smctp_tag)))
+    }
+
+    /// Bind the endpoint's socket to a type value, so we can receive
+    /// incoming requests from this endpoint.
+    ///
+    /// Note that this only specifies the local EID for the bind; there
+    /// can only be one bind of that type for any one network.
+    fn bind(&mut self, typ: MsgType) -> Result<()> {
+        let addr =
+            MctpSockAddr::new(MCTP_ADDR_ANY.0, self.net, typ.0, mctp::MCTP_TAG_OWNER);
+        self.sock.bind(&addr)
+    }
+}
 
 /// Helper for applications taking an MCTP address as an argument,
 /// configuration, etc.
@@ -374,11 +387,13 @@ impl std::str::FromStr for MctpAddr {
             u8::from_str_radix(&eid_str[HEX_PREFIX_LEN..], 16)
         } else {
             eid_str.parse()
-        }.map_err(|e| e.to_string())?;
+        }
+        .map_err(|e| e.to_string())?;
 
-        let net : Option<u32> = match net_str {
+        let net: Option<u32> = match net_str {
             Some(n) => Some(
-                n.parse().map_err(|e: std::num::ParseIntError| e.to_string())?
+                n.parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?,
             ),
             None => None,
         };
@@ -400,7 +415,7 @@ impl MctpAddr {
     }
 
     /// Create an MCTPEndpoint using the net & eid values in this address.
-    pub fn create_endpoint(&self) -> Result<MctpEndpoint> {
-        MctpEndpoint::new(self.eid, self.net())
+    pub fn create_endpoint(&self) -> Result<MctpLinuxEp> {
+        MctpLinuxEp::new(self.eid, self.net())
     }
 }
