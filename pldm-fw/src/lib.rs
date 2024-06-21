@@ -870,7 +870,7 @@ pub fn update_component_progress<F>(
     mut progress: F,
 ) -> Result<()>
 where
-    F: FnMut(&UpdateTransferProgress) -> (),
+    F: FnMut(&UpdateTransferProgress),
 {
     check_fd_state(ep, PldmFDState::ReadyXfer)?;
 
@@ -1038,7 +1038,7 @@ pub fn update_components_progress<F>(
     mut progress: F,
 ) -> Result<()>
 where
-    F: FnMut(&UpdateTransferProgress) -> ()
+    F: FnMut(&UpdateTransferProgress),
 {
     // We'll need to receive incoming data requests, so bind() now.
     ep.bind(mctp::MCTP_TYPE_PLDM).map_err(|e| PldmError::from(e))?;
