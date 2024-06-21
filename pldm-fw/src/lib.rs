@@ -96,7 +96,7 @@ impl TryFrom<u8> for PldmFDState {
 
 impl PldmFDState {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
-        map_res(le_u8, |x| TryInto::<PldmFDState>::try_into(x))(buf)
+        map_res(le_u8, TryInto::<PldmFDState>::try_into)(buf)
     }
 }
 
@@ -1041,7 +1041,7 @@ where
     F: FnMut(&UpdateTransferProgress),
 {
     // We'll need to receive incoming data requests, so bind() now.
-    ep.bind(mctp::MCTP_TYPE_PLDM).map_err(|e| PldmError::from(e))?;
+    ep.bind(mctp::MCTP_TYPE_PLDM).map_err(PldmError::from)?;
 
     let components = update.components.clone();
 
