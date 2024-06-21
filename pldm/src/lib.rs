@@ -5,24 +5,38 @@
  * Copyright (c) 2023 Code Construct
  */
 
+#![warn(missing_docs)]
+
+//! Platform Level Data Model (PLDM) base protocol support
+//!
+//! This crate implements some base communication primitives for PLDM,
+//! used to construct higher-level PLDM messaging applications.
+
 use thiserror::Error;
 
 use mctp::{MctpEndpoint, MctpError, Tag};
 
+/// Maximum size of a PLDM message, defining our buffer sizes.
+///
+/// The `pldm` crate currently has a maximum message size.
 pub const PLDM_MAX_MSGSIZE: usize = 1024;
 
+/// Generic PLDM error type
 #[derive(Error, Debug)]
 pub enum PldmError {
     // #[error("IO error: {0}")]
     // Io(#[from] std::io::Error),
+    /// PLDM protocol error
     #[error("PLDM protocol error: {0}")]
     Protocol(String),
+    /// MCTP communication error
     #[error("MCTP error")]
     // TODO figure how to keep it
     Mctp,
 }
 
 impl PldmError {
+    /// Construct a new PLDM protocol error with a description
     pub fn new_proto(s: String) -> Self {
         Self::Protocol(s)
     }
@@ -34,18 +48,30 @@ impl<E> From<E> for PldmError where E: MctpError {
     }
 }
 
+/// PLDM protocol return type
 pub type Result<T> = std::result::Result<T, PldmError>;
 
+/// Base PLDM request type
 #[derive(Debug)]
 pub struct PldmRequest {
+    /// MCTP tag used for the request. Typically an owned tag
+    /// ([`mctp::Tag::Owned`] or [`mctp::Tag::OwnedAuto`])
     pub mctp_tag: Tag,
+    /// PLDM Instance ID
     pub iid: u8,
+    /// PLDM type.
     pub typ: u8,
+    /// PLDM command code
     pub cmd: u8,
+    /// PLDM command data payload
     pub data: Vec<u8>,
 }
 
 impl PldmRequest {
+    /// Create a new PLDM request for a given PLDM message type and command
+    /// number. Since this creates a request, it specifies an
+    /// [`mctp::Tag::OwnedAuto`] tag, for the lower-level MCTP stack to assign
+    /// an actual tag value.
     pub fn new(typ: u8, cmd: u8) -> Self {
         Self {
             mctp_tag: Tag::OwnedAuto,
@@ -56,6 +82,9 @@ impl PldmRequest {
         }
     }
 
+    /// Create a PLDM request given a MCTP tag value and message data.
+    ///
+    /// May fail if the message data is not parsable as a PLDM message.
     pub fn from_buf(tag: Tag, data: &[u8]) -> Result<Self> {
         if data.len() < 3 {
             panic!("request too short");
@@ -74,10 +103,16 @@ impl PldmRequest {
         })
     }
 
+    /// Set the data payload for this request
     pub fn set_data(&mut self, data: Vec<u8>) {
         self.data = data;
     }
 
+    /// Convert this request to a response, using the correct MCTP tag value
+    /// (swapping to a non-owned tag), and the instance, type and command
+    /// from the original request.
+    ///
+    /// May fail on invalid tag values.
     pub fn response(&self) -> Result<PldmResponse> {
         let tag = self.mctp_tag.tag()
             .ok_or(PldmError::Protocol("OwnedAuto tag".into()))?;
@@ -93,16 +128,28 @@ impl PldmRequest {
     }
 }
 
+/// Base PLDM response type
 #[derive(Debug)]
 pub struct PldmResponse {
+    /// MCTP tag for this response. Will typically be a non-owned value
+    /// ([`mctp::Tag::Unowned`]), as the request provided the owned tag.
     pub mctp_tag: Tag,
+    /// PLDM Instance ID
     pub iid: u8,
+    /// PLDM type
     pub typ: u8,
+    /// PLDM command code (defined by the original request)
     pub cmd: u8,
+    /// PLDM completion code
     pub cc: u8,
+    /// PLDM response data payload. Does not include the cc field.
     pub data: Vec<u8>,
 }
 
+/// Main PLDM transfer operation.
+///
+/// Sends a Request, and waits for a response, blocking. This is generally
+/// used by PLDM Requesters, which issue commands to Responders.
 pub fn pldm_xfer(ep: &mut impl MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
     const REQ_IID: u8 = 0;
     let mut tx_buf = Vec::with_capacity(req.data.len() + 2);
@@ -156,6 +203,14 @@ pub fn pldm_xfer(ep: &mut impl MctpEndpoint, req: PldmRequest) -> Result<PldmRes
     Ok(rsp)
 }
 
+/// Receive an incoming PLDM request.
+///
+/// This uses [`mctp::MctpEndpoint::recv`], which performs a blocking wait
+/// for incoming messages. The ep should already be bound (via
+/// [`mctp::MctpEndpoint::bind`]), listening on the PLDM message type.
+///
+/// Responder implementations will typically want to respond via
+/// [`pldm_tx_resp`].
 pub fn pldm_rx_req(ep: &mut impl MctpEndpoint) -> Result<PldmRequest> {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
     let (rx_buf, _eid, tag) = ep.recv(&mut rx_buf)?;
@@ -165,6 +220,9 @@ pub fn pldm_rx_req(ep: &mut impl MctpEndpoint) -> Result<PldmRequest> {
     Ok(req)
 }
 
+/// Transmit an outgoing PLDM response
+///
+/// Performs a blocking send on the specified ep.
 pub fn pldm_tx_resp(ep: &mut impl MctpEndpoint, resp: &PldmResponse) -> Result<()> {
     let mut tx_buf = Vec::with_capacity(resp.data.len() + 4);
     tx_buf.push(resp.iid);
