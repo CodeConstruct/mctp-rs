@@ -6,15 +6,12 @@
  */
 
 use thiserror::Error;
-use pldm;
 use core::fmt;
 
 use log::{debug, error};
 
 use enumset::{EnumSet, EnumSetType};
 use itertools::Itertools;
-
-use mctp::MctpEndpoint;
 
 use nom::{
     branch::alt,
@@ -29,8 +26,11 @@ use nom::{
     IResult,
 };
 
-pub mod pkg;
+use mctp::MctpEndpoint;
+
 use pldm::PldmError;
+
+pub mod pkg;
 
 pub type Result<T> = std::result::Result<T, PldmUpdateError>;
 
