@@ -114,8 +114,7 @@ fn extract_component(pkg: &pldm_fw::pkg::Package, idx: usize) -> anyhow::Result<
 
     println!("extracting component {} to {}", idx, fname);
 
-    let mut buf = Vec::new();
-    buf.resize(comp.file_size as usize, 0u8);
+    let mut buf = vec![0u8; comp.file_size];
     pkg.read_component(&comp, 0, &mut buf)?;
 
     f.write(&buf)?;

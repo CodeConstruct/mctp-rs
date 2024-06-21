@@ -916,8 +916,7 @@ where
                     PldmUpdateError::new_proto("RFD parse error".into())
                 })?;
 
-                let mut buf = Vec::new();
-                buf.resize(len as usize, 0u8);
+                let mut buf = vec![0u8; len as usize];
 
                 package.read_component(component, offset, &mut buf)?;
 

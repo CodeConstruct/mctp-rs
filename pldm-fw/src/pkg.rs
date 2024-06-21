@@ -216,8 +216,7 @@ impl Package {
 
         hdr_usize -= HDR_INIT_SIZE;
 
-        let mut buf = Vec::<u8>::new();
-        buf.resize(hdr_usize, 0);
+        let mut buf = vec![0; hdr_usize];
         reader.read_exact(&mut buf).map_err(|_| {
             PldmPackageError::new_format(
                 "reported header size is larger than file",
