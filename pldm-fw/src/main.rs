@@ -241,7 +241,7 @@ struct VersionCommand {}
 fn duration_str(d: &chrono::Duration) -> String {
     let secs = d.num_seconds();
     if secs < 0 {
-        format!("unknown")
+        "unknown".to_string()
     } else if secs > 86400 {
         format!("{} days", secs / 86400)
     } else {
