@@ -2,7 +2,7 @@ use std::process::Command;
 
 fn main() {
     let version = Command::new("git")
-                   .args(&["describe", "--always", "--tags", "--dirty"])
+                   .args(["describe", "--always", "--tags", "--dirty"])
                    .output()
                    .map(|o| String::from_utf8(o.stdout).unwrap().to_string())
                    .unwrap_or("(unknown)".to_string());
