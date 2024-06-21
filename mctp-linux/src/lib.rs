@@ -377,7 +377,7 @@ impl std::str::FromStr for MctpAddr {
         let (net_str, eid_str) = match (p1, p2) {
             (Some(n), Some(e)) => (Some(n), e),
             (Some(e), None) => (None, e),
-            _ => return Err(format!("invalid MCTP address format")),
+            _ => return Err("invalid MCTP address format".to_string()),
         };
 
         const HEX_PREFIX: &str = "0x";
