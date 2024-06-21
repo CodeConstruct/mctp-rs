@@ -212,9 +212,15 @@ impl MctpSocket {
             tv_sec: dur.as_secs() as libc::time_t,
             tv_usec: dur.subsec_micros() as libc::suseconds_t,
         };
-        let rc = unsafe { libc::setsockopt(self.0, libc::SOL_SOCKET, libc::SO_RCVTIMEO,
-            (&tv as *const libc::timeval) as *const libc::c_void,
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t) };
+        let rc = unsafe {
+            libc::setsockopt(
+                self.0,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                (&tv as *const libc::timeval) as *const libc::c_void,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            )
+        };
 
         if rc < 0 {
             Err(Error::last_os_error())
@@ -233,10 +239,17 @@ impl MctpSocket {
         #![allow(deprecated)]
 
         let mut tv = std::mem::MaybeUninit::<libc::timeval>::uninit();
-        let mut tv_len = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
-        let rc = unsafe { libc::getsockopt(self.0, libc::SOL_SOCKET, libc::SO_RCVTIMEO,
-            tv.as_mut_ptr() as *mut libc::c_void,
-            &mut tv_len as *mut libc::socklen_t) };
+        let mut tv_len =
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                self.0,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                tv.as_mut_ptr() as *mut libc::c_void,
+                &mut tv_len as *mut libc::socklen_t,
+            )
+        };
 
         if rc < 0 {
             Err(Error::last_os_error())
@@ -249,8 +262,10 @@ impl MctpSocket {
             if tv.tv_sec == 0 && tv.tv_usec == 0 {
                 Ok(None)
             } else {
-                Ok(Some(Duration::from_secs(tv.tv_sec as u64)
-                    + Duration::from_micros(tv.tv_usec as u64)))
+                Ok(Some(
+                    Duration::from_secs(tv.tv_sec as u64)
+                        + Duration::from_micros(tv.tv_usec as u64),
+                ))
             }
         }
     }
