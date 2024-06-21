@@ -9,12 +9,12 @@
 
 //! Interface for the Linux socket-based MCTP support.
 //!
-//! This crate provides some minimal wrappers around standard [libc] socket
+//! This crate provides some minimal wrappers around standard [`libc`] socket
 //! operations, using MCTP-specific addressing structures.
 //!
-//! [MctpSocket] provides support for blocking socket operations
-//! [sendto](MctpSocket::sendto), [recvfrom](MctpSocket::recvfrom) and
-//! [bind](MctpSocket::bind).
+//! [`MctpSocket`] provides support for blocking socket operations
+//! [sendto](MctpSocket::sendto), [`recvfrom`](MctpSocket::recvfrom) and
+//! [`bind`](MctpSocket::bind).
 //!
 //! ```no_run
 //! use mctp_linux;
@@ -33,10 +33,10 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 //!
-//! [MctpEndpoint] provides a thin wrapper that represents a remote endpoint,
+//! [`MctpLinuxEp`] provides a thin wrapper that represents a remote endpoint,
 //! referenced by EID. It creates a single socket for communication with that
 //! endpoint. This is a convenience for simple consumers that perform
-//! single-endpoint communucation; general MCTP requesters may want a different
+//! single-endpoint communication; general MCTP requesters may want a different
 //! socket model.
 
 use core::mem;
@@ -62,7 +62,7 @@ struct sockaddr_mctp {
 /// The Tag Owner (TO) field; generally set in a request, clear in a response.
 pub const MCTP_TAG_OWNER: u8 = 0x08;
 
-/// Special value for Network ID: any network. May be used in bind().
+/// Special value for Network ID: any network. May be used in `bind()`.
 pub const MCTP_NET_ANY: u32 = 0x00;
 
 /// Specical EID value: broadcast and/or match any.
