@@ -129,7 +129,7 @@ fn confirm_update() -> bool {
     let _ = std::io::stdout().flush();
     let rc = std::io::stdin().read_line(&mut line);
 
-    if ! rc.is_ok() {
+    if rc.is_err() {
         return false;
     }
 
@@ -278,10 +278,7 @@ fn progress(p: &pldm_fw::UpdateTransferProgress)
             bps_str(p.bps)
         );
     } else {
-        let (offset, len) = match p.cur_xfer {
-            Some(x) => x,
-            None => (0, 0),
-        };
+        let (offset, len) = p.cur_xfer.unwrap_or((0, 0));
         println!(
             "Data request: offset 0x{:08x}, len 0x{:x}, {:2}% {}, {} remaining",
             offset, len, p.percent,
@@ -345,7 +342,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Extract(e) => {
             let pkg = open_package(e.file)?;
-            if e.components.len() == 0 {
+            if e.components.is_empty() {
                 println!("No components specified to extract");
             }
             for idx in e.components {
