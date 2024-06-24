@@ -3,6 +3,6 @@ members = ["mctp", "mctp-linux", "pldm", "pldm-fw"]
 resolver = "2"
 
 [workspace.dependencies]
-mctp = { path = "mctp" }
-mctp-linux = { path = "mctp-linux" }
-pldm = { path = "pldm" }
+mctp = { path = "mctp", version = "0.1.0" }
+mctp-linux = { path = "mctp-linux", version = "0.1.0" }
+pldm = { path = "pldm", version = "0.1.0" }
