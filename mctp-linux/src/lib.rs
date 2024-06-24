@@ -45,7 +45,14 @@ use std::io::Error;
 use std::os::unix::io::RawFd;
 use std::time::Duration;
 
-use mctp::*;
+use mctp::{
+    Eid,
+    MCTP_ADDR_ANY,
+    MsgType,
+    Result,
+    Tag,
+    TagValue,
+};
 
 /* until we have these in libc... */
 const AF_MCTP: libc::sa_family_t = 45;
@@ -116,8 +123,8 @@ impl fmt::Debug for MctpSockAddr {
 }
 
 // helper for IO error construction
-fn last_os_error() -> MctpError {
-    MctpError::Io(Error::last_os_error())
+fn last_os_error() -> mctp::Error {
+    mctp::Error::Io(Error::last_os_error())
 }
 
 /// MCTP socket object.
@@ -258,7 +265,7 @@ impl MctpSocket {
             let tv = unsafe { tv.assume_init() };
             if tv.tv_sec < 0 || tv.tv_usec < 0 {
                 // Negative timeout from socket
-                return Err(MctpError::Other)
+                return Err(mctp::Error::Other)
             }
 
             if tv.tv_sec == 0 && tv.tv_usec == 0 {
@@ -309,7 +316,7 @@ impl MctpLinuxEp {
     }
 }
 
-impl MctpEndpoint for MctpLinuxEp {
+impl mctp::Endpoint for MctpLinuxEp {
     fn send_vectored(
         &mut self,
         typ: MsgType,
@@ -336,7 +343,7 @@ impl MctpEndpoint for MctpLinuxEp {
         let (sz, addr) = self.sock.recvfrom(buf)?;
         if addr.0.smctp_addr != self.eid {
             // Kernel gave us a message from a different sender?
-            return Err(MctpError::Other)
+            return Err(mctp::Error::Other)
         }
         Ok((&mut buf[..sz], Eid(self.eid), Tag::from_to_field(addr.0.smctp_tag)))
     }

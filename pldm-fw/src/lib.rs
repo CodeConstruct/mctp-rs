@@ -26,8 +26,6 @@ use nom::{
     IResult,
 };
 
-use mctp::MctpEndpoint;
-
 use pldm::PldmError;
 
 pub mod pkg;
@@ -298,7 +296,7 @@ impl fmt::Display for DeviceIdentifiers {
 }
 
 pub fn query_device_identifiers(
-    ep: &mut impl MctpEndpoint,
+    ep: &mut impl mctp::Endpoint,
 ) -> Result<DeviceIdentifiers> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x01);
 
@@ -581,7 +579,7 @@ impl FirmwareParameters {
 }
 
 pub fn query_firmware_parameters(
-    ep: &mut impl MctpEndpoint,
+    ep: &mut impl mctp::Endpoint,
 ) -> Result<FirmwareParameters> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x02);
 
@@ -621,7 +619,7 @@ impl RequestUpdateResponse {
 }
 
 pub fn request_update(
-    ep: &mut impl MctpEndpoint,
+    ep: &mut impl mctp::Endpoint,
     update: &Update,
 ) -> Result<RequestUpdateResponse> {
     check_fd_state(ep, PldmFDState::Idle)?;
@@ -646,7 +644,7 @@ pub fn request_update(
         .map_err(|_e| PldmUpdateError::new_proto("can't parse RU response".into()))
 }
 
-pub fn cancel_update(ep: &mut impl MctpEndpoint) -> Result<()> {
+pub fn cancel_update(ep: &mut impl mctp::Endpoint) -> Result<()> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1d);
     let rsp = pldm::pldm_xfer(ep, req)?;
     debug!("cancel rsp: cc {:x}, data {:?}", rsp.cc, rsp.data);
@@ -692,7 +690,7 @@ impl fmt::Display for GetStatusResponse {
     }
 }
 
-fn check_fd_state(ep: &mut impl MctpEndpoint, expected_state: PldmFDState) -> Result<()> {
+fn check_fd_state(ep: &mut impl mctp::Endpoint, expected_state: PldmFDState) -> Result<()> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1b);
     let rsp = pldm::pldm_xfer(ep, req)?;
 
@@ -795,7 +793,7 @@ fn xfer_flags(idx: usize, len: usize) -> u8 {
     xfer_flags
 }
 
-pub fn pass_component_table(ep: &mut impl MctpEndpoint, update: &Update) -> Result<()> {
+pub fn pass_component_table(ep: &mut impl mctp::Endpoint, update: &Update) -> Result<()> {
     let components = &update.components;
     let len = components.len();
 
@@ -844,7 +842,7 @@ pub fn pass_component_table(ep: &mut impl MctpEndpoint, update: &Update) -> Resu
 }
 
 pub fn update_component(
-    ep: &mut impl MctpEndpoint,
+    ep: &mut impl mctp::Endpoint,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
     index: u8,
@@ -863,7 +861,7 @@ pub struct UpdateTransferProgress {
 }
 
 pub fn update_component_progress<F>(
-    ep: &mut impl MctpEndpoint,
+    ep: &mut impl mctp::Endpoint,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
     index: u8,
@@ -1027,12 +1025,12 @@ where
     Ok(())
 }
 
-pub fn update_components(ep: &mut impl MctpEndpoint, update: &mut Update) -> Result<()> {
+pub fn update_components(ep: &mut impl mctp::Endpoint, update: &mut Update) -> Result<()> {
     update_components_progress(ep, update, |_| ())
 }
 
 pub fn update_components_progress<F>(
-    ep: &mut impl MctpEndpoint,
+    ep: &mut impl mctp::Endpoint,
     update: &mut Update,
     mut progress: F,
 ) -> Result<()>
@@ -1058,7 +1056,7 @@ where
     Ok(())
 }
 
-pub fn activate_firmware(ep: &mut impl MctpEndpoint, self_activate: bool) -> Result<()> {
+pub fn activate_firmware(ep: &mut impl mctp::Endpoint, self_activate: bool) -> Result<()> {
     check_fd_state(ep, PldmFDState::ReadyXfer)?;
 
     let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1a);

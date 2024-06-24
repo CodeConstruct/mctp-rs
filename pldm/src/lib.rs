@@ -14,7 +14,7 @@
 
 use thiserror::Error;
 
-use mctp::{MctpEndpoint, MctpError, Tag};
+use mctp::Tag;
 
 /// Maximum size of a PLDM message, defining our buffer sizes.
 ///
@@ -29,7 +29,7 @@ pub enum PldmError {
     Protocol(String),
     /// MCTP communication error
     #[error("MCTP error")]
-    Mctp(MctpError),
+    Mctp(mctp::Error),
 }
 
 impl PldmError {
@@ -39,8 +39,8 @@ impl PldmError {
     }
 }
 
-impl From<MctpError> for PldmError {
-    fn from(e: MctpError) -> PldmError {
+impl From<mctp::Error> for PldmError {
+    fn from(e: mctp::Error) -> PldmError {
         PldmError::Mctp(e)
     }
 }
@@ -147,7 +147,7 @@ pub struct PldmResponse {
 ///
 /// Sends a Request, and waits for a response, blocking. This is generally
 /// used by PLDM Requesters, which issue commands to Responders.
-pub fn pldm_xfer(ep: &mut impl MctpEndpoint, req: PldmRequest) -> Result<PldmResponse> {
+pub fn pldm_xfer(ep: &mut impl mctp::Endpoint, req: PldmRequest) -> Result<PldmResponse> {
     const REQ_IID: u8 = 0;
     let mut tx_buf = Vec::with_capacity(req.data.len() + 2);
     tx_buf.push(1 << 7 | REQ_IID);
@@ -164,7 +164,7 @@ pub fn pldm_xfer(ep: &mut impl MctpEndpoint, req: PldmRequest) -> Result<PldmRes
         return Err(PldmError::new_proto(format!("short response, {} bytes", rx_buf.len())));
     }
 
-    // TODO: should check eid, but against what? Or should MctpEndpoint impl check it?
+    // TODO: should check eid, but against what? Or should mctp::Endpoint impl check it?
 
     let iid = rx_buf[0] & 0x1f;
     let typ = rx_buf[1] & 0x3f;
@@ -202,13 +202,13 @@ pub fn pldm_xfer(ep: &mut impl MctpEndpoint, req: PldmRequest) -> Result<PldmRes
 
 /// Receive an incoming PLDM request.
 ///
-/// This uses [`mctp::MctpEndpoint::recv`], which performs a blocking wait
-/// for incoming messages. The ep should already be bound (via
-/// [`mctp::MctpEndpoint::bind`]), listening on the PLDM message type.
+/// This uses [`mctp::Endpoint::recv`], which performs a blocking wait for
+/// incoming messages. The ep should already be bound (via
+/// [`mctp::Endpoint::bind`]), listening on the PLDM message type.
 ///
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
-pub fn pldm_rx_req(ep: &mut impl MctpEndpoint) -> Result<PldmRequest> {
+pub fn pldm_rx_req(ep: &mut impl mctp::Endpoint) -> Result<PldmRequest> {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
     let (rx_buf, _eid, tag) = ep.recv(&mut rx_buf)?;
 
@@ -220,7 +220,7 @@ pub fn pldm_rx_req(ep: &mut impl MctpEndpoint) -> Result<PldmRequest> {
 /// Transmit an outgoing PLDM response
 ///
 /// Performs a blocking send on the specified ep.
-pub fn pldm_tx_resp(ep: &mut impl MctpEndpoint, resp: &PldmResponse) -> Result<()> {
+pub fn pldm_tx_resp(ep: &mut impl mctp::Endpoint, resp: &PldmResponse) -> Result<()> {
     let mut tx_buf = Vec::with_capacity(resp.data.len() + 4);
     tx_buf.push(resp.iid);
     tx_buf.push(resp.typ);

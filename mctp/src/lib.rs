@@ -14,7 +14,7 @@
 //! Management Component Transport Protocol (MCTP)
 //!
 //! This crate provides common types and traits for MCTP.
-//! Implementations can implement [`MctpEndpoint`] to represent
+//! Implementations can implement [`Endpoint`] to represent
 //! a remote endpoint.
 
 /// MCTP endpoint ID
@@ -144,7 +144,7 @@ impl std::fmt::Display for Tag {
     }
 }
 
-/// An error type for a `MctpEndpoint`
+/// An error type for a `Endpoint`
 ///
 /// The options here intend to capture typical transport failures, but also
 /// allow platform-specific errors to be reported through the `Other`
@@ -156,7 +156,7 @@ impl std::fmt::Display for Tag {
 /// failure mode, hence the `non_exhaustive`.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum MctpError {
+pub enum Error {
     /// Failure in transmit path, typically transport-specific
     TxFailure,
     /// Timed out waiting for the remote peer
@@ -177,9 +177,9 @@ pub enum MctpError {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for MctpError { }
+impl std::error::Error for Error { }
 
-impl core::fmt::Display for MctpError {
+impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
             Self::Io(i) => write!(fmt, "MCTP IO Error: {}", i),
@@ -189,14 +189,14 @@ impl core::fmt::Display for MctpError {
 }
 
 #[cfg(feature = "std")]
-impl From<MctpError> for std::io::Error {
-    fn from(e: MctpError) -> std::io::Error {
+impl From<Error> for std::io::Error {
+    fn from(e: Error) -> std::io::Error {
         std::io::Error::other(e)
     }
 }
 
 /// MCTP result type
-pub type Result<T> = core::result::Result<T, MctpError>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// A trait for an MCTP peer
 ///
@@ -204,7 +204,7 @@ pub type Result<T> = core::result::Result<T, MctpError>;
 /// to a remote endpoint.
 ///
 /// It should be implemented by specific MCTP implementations.
-pub trait MctpEndpoint {
+pub trait Endpoint {
     /// Send a message to this endpoint, blocking.
     ///
     /// The slice of buffers will be sent as a single message
