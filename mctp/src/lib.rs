@@ -113,10 +113,51 @@ impl Tag {
 }
 
 /// An error type for a `MctpEndpoint`
-pub trait MctpError: core::fmt::Display + core::fmt::Debug {}
+///
+/// The options here intend to capture typical transport failures, but also
+/// allow platform-specific errors to be reported through the `Other`
+/// and `Io` (on `std`) members.
+///
+/// Errors that are platform-specific typically cannot be handled gracefully
+/// by an application (say, by deciding whether or not to retry). If a
+/// new error type is needed, we can extend this enum to represent that
+/// failure mode, hence the `non_exhaustive`.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum MctpError {
+    /// Failure in transmit path, typically transport-specific
+    TxFailure,
+    /// Timed out waiting for the remote peer
+    TimedOut,
+    /// Invalid input
+    InvalidInput,
+    /// A tag cannot be allocated, or the tag specified cannot be used
+    TagUnavailable,
+    /// The remote peer cannot be reached
+    Unreachable,
+    /// The requested address is in use
+    AddrInUse,
+    /// Other error type
+    Other,
+    /// IO error from transport binding
+    #[cfg(feature = "std")]
+    Io(std::io::Error),
+}
 
 #[cfg(feature = "std")]
-impl MctpError for std::io::Error {}
+impl std::error::Error for MctpError { }
+
+impl core::fmt::Display for MctpError {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
+        match self {
+            Self::Io(i) => write!(fmt, "MCTP IO Error: {}", i),
+            _ => write!(fmt, "MCTP Error: {:?}", self),
+        }
+    }
+}
+
+/// MCTP result type
+pub type Result<T> = core::result::Result<T, MctpError>;
 
 /// A trait for an MCTP peer
 ///
@@ -125,11 +166,6 @@ impl MctpError for std::io::Error {}
 ///
 /// It should be implemented by specific MCTP implementations.
 pub trait MctpEndpoint {
-    /// Error type returned on failure
-    // TODO: use core::error::Error once stable
-    // https://github.com/rust-lang/rust/issues/103765
-    type Error: MctpError;
-
     /// Send a message to this endpoint, blocking.
     ///
     /// The slice of buffers will be sent as a single message
@@ -142,7 +178,7 @@ pub trait MctpEndpoint {
         typ: MsgType,
         tag: Tag,
         bufs: &[&[u8]],
-    ) -> Result<(), Self::Error>;
+    ) -> Result<()>;
 
     /// Send a message to this endpoint, blocking.
     fn send(
@@ -150,7 +186,7 @@ pub trait MctpEndpoint {
         typ: MsgType,
         tag: Tag,
         buf: &[u8],
-    ) -> Result<(), Self::Error> {
+    ) -> Result<()> {
         self.send_vectored(typ, tag, &[buf])
     }
 
@@ -164,9 +200,9 @@ pub trait MctpEndpoint {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Eid, Tag), Self::Error>;
+    ) -> Result<(&'f mut [u8], Eid, Tag)>;
 
     /// Bind the endpoint to a type value, so we can receive
     /// incoming requests with this endpoint.
-    fn bind(&mut self, typ: MsgType) -> Result<(), Self::Error>;
+    fn bind(&mut self, typ: MsgType) -> Result<()>;
 }

@@ -41,7 +41,7 @@
 
 use core::mem;
 use std::fmt;
-use std::io::{Error, ErrorKind, Result};
+use std::io::Error;
 use std::os::unix::io::RawFd;
 use std::time::Duration;
 
@@ -115,6 +115,11 @@ impl fmt::Debug for MctpSockAddr {
     }
 }
 
+// helper for IO error construction
+fn last_os_error() -> MctpError {
+    MctpError::Io(Error::last_os_error())
+}
+
 /// MCTP socket object.
 pub struct MctpSocket(RawFd);
 
@@ -136,7 +141,7 @@ impl MctpSocket {
             )
         };
         if rc < 0 {
-            return Err(Error::last_os_error());
+            return Err(last_os_error())
         }
         Ok(MctpSocket(rc))
     }
@@ -157,7 +162,7 @@ impl MctpSocket {
         };
 
         if rc < 0 {
-            Err(Error::last_os_error())
+            Err(last_os_error())
         } else {
             Ok((rc as usize, addr))
         }
@@ -177,7 +182,7 @@ impl MctpSocket {
         };
 
         if rc < 0 {
-            Err(Error::last_os_error())
+            Err(last_os_error())
         } else {
             Ok(rc as usize)
         }
@@ -190,7 +195,7 @@ impl MctpSocket {
         let rc = unsafe { libc::bind(self.0, addr_ptr, addr_len) };
 
         if rc < 0 {
-            Err(Error::last_os_error())
+            Err(last_os_error())
         } else {
             Ok(())
         }
@@ -219,7 +224,7 @@ impl MctpSocket {
         };
 
         if rc < 0 {
-            Err(Error::last_os_error())
+            Err(last_os_error())
         } else {
             Ok(())
         }
@@ -248,11 +253,12 @@ impl MctpSocket {
         };
 
         if rc < 0 {
-            Err(Error::last_os_error())
+            Err(last_os_error())
         } else {
             let tv = unsafe { tv.assume_init() };
             if tv.tv_sec < 0 || tv.tv_usec < 0 {
-                return Err(Error::other("Negative timeout from socket"));
+                // Negative timeout from socket
+                return Err(MctpError::Other)
             }
 
             if tv.tv_sec == 0 && tv.tv_usec == 0 {
@@ -304,8 +310,6 @@ impl MctpLinuxEp {
 }
 
 impl MctpEndpoint for MctpLinuxEp {
-    type Error = std::io::Error;
-
     fn send_vectored(
         &mut self,
         typ: MsgType,
@@ -331,7 +335,8 @@ impl MctpEndpoint for MctpLinuxEp {
     fn recv<'f>(&mut self, buf: &'f mut [u8]) -> Result<(&'f mut [u8], Eid, Tag)> {
         let (sz, addr) = self.sock.recvfrom(buf)?;
         if addr.0.smctp_addr != self.eid {
-            return Err(Error::new(ErrorKind::Other, "invalid sender"));
+            // Kernel gave us a message from a different sender?
+            return Err(MctpError::Other)
         }
         Ok((&mut buf[..sz], Eid(self.eid), Tag::from_to_field(addr.0.smctp_tag)))
     }

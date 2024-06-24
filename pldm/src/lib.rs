@@ -24,15 +24,12 @@ pub const PLDM_MAX_MSGSIZE: usize = 1024;
 /// Generic PLDM error type
 #[derive(Error, Debug)]
 pub enum PldmError {
-    // #[error("IO error: {0}")]
-    // Io(#[from] std::io::Error),
     /// PLDM protocol error
     #[error("PLDM protocol error: {0}")]
     Protocol(String),
     /// MCTP communication error
     #[error("MCTP error")]
-    // TODO figure how to keep it
-    Mctp,
+    Mctp(MctpError),
 }
 
 impl PldmError {
@@ -42,9 +39,9 @@ impl PldmError {
     }
 }
 
-impl<E> From<E> for PldmError where E: MctpError {
-    fn from(_e: E) -> PldmError {
-        PldmError::Mctp
+impl From<MctpError> for PldmError {
+    fn from(e: MctpError) -> PldmError {
+        PldmError::Mctp(e)
     }
 }
 
