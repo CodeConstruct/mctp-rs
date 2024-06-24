@@ -22,7 +22,8 @@ Component Crates
 Examples
 --------
 
-There's a small example MCTP requester in [mctp-linux/examples]:
+There's a small example MCTP requester in
+[mctp-linux/examples](mctp-linux/examples):
 
 ```rust
     // Create a new endpoint using the linux socket support
