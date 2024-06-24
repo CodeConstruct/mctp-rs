@@ -163,6 +163,13 @@ impl core::fmt::Display for MctpError {
     }
 }
 
+#[cfg(feature = "std")]
+impl From<MctpError> for std::io::Error {
+    fn from(e: MctpError) -> std::io::Error {
+        std::io::Error::other(e)
+    }
+}
+
 /// MCTP result type
 pub type Result<T> = core::result::Result<T, MctpError>;
 
