@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+/*
+ * MCTP support through Linux kernel-based sockets
+ *
+ * Copyright (c) 2024 Code Construct
+ */
+
 // Tests may use std
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
