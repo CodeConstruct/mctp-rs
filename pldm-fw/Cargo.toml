@@ -1,8 +1,11 @@
 [package]
 name = "pldm-fw"
+description = "Platform Level Data Model (PLDM) for Firmware Update library and utilities"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+repository = "https://github.com/CodeConstruct/mctp-rs"
+categories = ["network-programming", "embedded", "hardware-support", "command-line-utilities"]
 
 [dependencies]
 pldm = { workspace = true }
