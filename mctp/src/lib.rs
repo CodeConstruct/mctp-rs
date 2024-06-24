@@ -41,6 +41,9 @@ pub const MCTP_TAG_OWNER: u8 = 0x08;
 
 /// MCTP Message type field
 ///
+/// Note that this does not include the Integrity Check bit; the
+/// most-significant bit will always be zero.
+///
 /// Defined values are in DSP0239
 #[derive(Clone, Copy, Debug)]
 pub struct MsgType(pub u8);
