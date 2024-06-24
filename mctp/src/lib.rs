@@ -21,6 +21,12 @@
 #[derive(Clone, Copy, Debug)]
 pub struct Eid(pub u8);
 
+impl std::fmt::Display for Eid {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(fmt)
+    }
+}
+
 /// Special EID value: broadcast and/or match any.
 pub const MCTP_ADDR_ANY: Eid = Eid(0xff);
 /// Special EID value: NULL
@@ -38,6 +44,12 @@ pub const MCTP_TAG_OWNER: u8 = 0x08;
 /// Defined values are in DSP0239
 #[derive(Clone, Copy, Debug)]
 pub struct MsgType(pub u8);
+
+impl std::fmt::Display for MsgType {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(fmt)
+    }
+}
 
 /// MCTP Control Protocol
 pub const MCTP_TYPE_CONTROL: MsgType = MsgType(0x00);
@@ -115,6 +127,16 @@ impl Tag {
         match self {
             Self::OwnedAuto | Self::Owned(_) => true,
             Self::Unowned(_) => false,
+        }
+    }
+}
+
+impl std::fmt::Display for Tag {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Tag::OwnedAuto => write!(fmt, "TO,?"),
+            Tag::Owned(v) => write!(fmt, "TO,{:x}", v.0),
+            Tag::Unowned(v) => write!(fmt, "!TO,{:x}", v.0)
         }
     }
 }
