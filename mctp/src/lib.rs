@@ -21,8 +21,8 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Eid(pub u8);
 
-impl std::fmt::Display for Eid {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Display for Eid {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         self.0.fmt(fmt)
     }
 }
@@ -48,8 +48,8 @@ pub const MCTP_TAG_OWNER: u8 = 0x08;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct MsgType(pub u8);
 
-impl std::fmt::Display for MsgType {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Display for MsgType {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         self.0.fmt(fmt)
     }
 }
@@ -134,8 +134,8 @@ impl Tag {
     }
 }
 
-impl std::fmt::Display for Tag {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Display for Tag {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
             Tag::OwnedAuto => write!(fmt, "TO,?"),
             Tag::Owned(v) => write!(fmt, "TO,{:x}", v.0),
@@ -182,6 +182,7 @@ impl std::error::Error for Error { }
 impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(i) => write!(fmt, "MCTP IO Error: {}", i),
             _ => write!(fmt, "MCTP Error: {:?}", self),
         }
