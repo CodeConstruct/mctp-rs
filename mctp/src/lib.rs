@@ -18,7 +18,7 @@
 //! a remote endpoint.
 
 /// MCTP endpoint ID
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Eid(pub u8);
 
 impl std::fmt::Display for Eid {
@@ -33,7 +33,7 @@ pub const MCTP_ADDR_ANY: Eid = Eid(0xff);
 pub const MCTP_ADDR_NULL: Eid = Eid(0x00);
 
 /// MCTP Message Tag
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TagValue(pub u8);
 
 /// Tag Owner (TO) field; generally set in a request, clear in a response.
@@ -45,7 +45,7 @@ pub const MCTP_TAG_OWNER: u8 = 0x08;
 /// most-significant bit will always be zero.
 ///
 /// Defined values are in DSP0239
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct MsgType(pub u8);
 
 impl std::fmt::Display for MsgType {
@@ -94,7 +94,7 @@ pub const MCTP_TAG_MAX: u8 = 7;
 /// Identifies a tag and allocation method
 ///
 /// `Owned` and `OwnedAuto` indicate that the tag is allocated locally.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Tag {
     /// MCTP stack will allocate a tag on `send()`, owner bit is set
     OwnedAuto,
