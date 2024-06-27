@@ -94,7 +94,7 @@ pub const MCTP_TAG_MAX: u8 = 7;
 /// Identifies a tag and allocation method
 ///
 /// `Owned` and `OwnedAuto` indicate that the tag is allocated locally.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tag {
     /// MCTP stack will allocate a tag on `send()`, owner bit is set
     OwnedAuto,
