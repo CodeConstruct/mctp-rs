@@ -169,8 +169,14 @@ pub enum Error {
     Unreachable,
     /// The requested address is in use
     AddrInUse,
+    /// Provided buffer is too small
+    NoSpace,
+    /// Operation is unsupported
+    Unsupported,
     /// Other error type
     Other,
+    /// Internal error
+    InternalError,
     /// IO error from transport binding
     #[cfg(feature = "std")]
     Io(std::io::Error),
