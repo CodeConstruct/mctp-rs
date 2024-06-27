@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /*
- * MCTP support through Linux kernel-based sockets
+ * MCTP common types and traits.
  *
  * Copyright (c) 2024 Code Construct
  */
@@ -229,7 +229,7 @@ pub trait Endpoint {
         self.send_vectored(typ, tag, &[buf])
     }
 
-    /// Blocking recieve from this endpoint.
+    /// Blocking receive from this endpoint.
     ///
     /// Returns a filled slice of `buf`, EID, and tag.
     ///
