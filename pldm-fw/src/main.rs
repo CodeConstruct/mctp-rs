@@ -91,7 +91,7 @@ fn print_device(dev: &pldm_fw::DeviceIdentifiers) {
     println!("Device: {}", dev);
 }
 
-fn print_update(update: &pldm_fw::Update) {
+fn print_update(update: &pldm_fw::ua::Update) {
     println!("Update:");
     println!("  Package version: {}", update.package.version);
     println!("  Apply to index:  {}", update.index);
@@ -298,8 +298,8 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         Command::Inventory(i) => {
             let mut ep = i.addr.create_endpoint()?;
-            let dev = pldm_fw::query_device_identifiers(&mut ep)?;
-            let params = pldm_fw::query_firmware_parameters(&mut ep)?;
+            let dev = pldm_fw::ua::query_device_identifiers(&mut ep)?;
+            let params = pldm_fw::ua::query_firmware_parameters(&mut ep)?;
 
             print_device_info(&dev, &params)
         }
@@ -307,9 +307,9 @@ fn main() -> anyhow::Result<()> {
             let pkg = open_package(u.file)?;
             let mut ep = u.addr.create_endpoint()?;
             let ep = &mut ep;
-            let dev = pldm_fw::query_device_identifiers(ep)?;
-            let fwp = pldm_fw::query_firmware_parameters(ep)?;
-            let mut update = pldm_fw::Update::new(
+            let dev = pldm_fw::ua::query_device_identifiers(ep)?;
+            let fwp = pldm_fw::ua::query_firmware_parameters(ep)?;
+            let mut update = pldm_fw::ua::Update::new(
                 &dev,
                 &fwp,
                 pkg,
@@ -327,14 +327,14 @@ fn main() -> anyhow::Result<()> {
                 return Ok(())
             }
 
-            let _ = pldm_fw::request_update(ep, &update)?;
-            pldm_fw::pass_component_table(ep, &update)?;
-            pldm_fw::update_components_progress(ep, &mut update, progress)?;
-            pldm_fw::activate_firmware(ep, u.self_contained_activation)?;
+            let _ = pldm_fw::ua::request_update(ep, &update)?;
+            pldm_fw::ua::pass_component_table(ep, &update)?;
+            pldm_fw::ua::update_components_progress(ep, &mut update, progress)?;
+            pldm_fw::ua::activate_firmware(ep, u.self_contained_activation)?;
         }
         Command::Cancel(c) => {
             let mut ep = c.addr.create_endpoint()?;
-            let _ = pldm_fw::cancel_update(&mut ep);
+            let _ = pldm_fw::ua::cancel_update(&mut ep);
         }
         Command::PkgInfo(p) => {
             let pkg = open_package(p.file)?;
