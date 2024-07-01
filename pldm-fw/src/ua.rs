@@ -10,6 +10,8 @@
 //! Update Agent requires `std` feature.
 use log::{debug, error};
 
+use thiserror::Error;
+
 use nom::{
     combinator::{all_consuming, complete, map},
     multi::length_value,
@@ -23,9 +25,40 @@ use pldm::PldmError;
 use crate::pkg;
 use crate::{
     DeviceIdentifiers, FirmwareParameters, GetStatusResponse, PldmFDState,
-    PldmUpdateError, RequestUpdateResponse, Result, UpdateTransferProgress,
-    PLDM_TYPE_FW,
+    RequestUpdateResponse, UpdateTransferProgress, PLDM_TYPE_FW,
 };
+
+pub type Result<T> = core::result::Result<T, PldmUpdateError>;
+
+#[derive(Error, Debug)]
+pub enum PldmUpdateError {
+    #[error("PLDM error: {0}")]
+    Pldm(#[from] PldmError),
+    #[error("PLDM protocol error: {0}")]
+    Protocol(String),
+    #[error("PLDM command (0x{0:02x}) failed with 0x{1:02x}")]
+    Command(u8, u8),
+    #[error("PLDM Update error: {0}")]
+    Update(String),
+    #[error("PLDM Package error: {0}")]
+    Package(#[from] pkg::PldmPackageError),
+    // #[error("MCTP IO error: {0}")]
+    // MCTPIO(#[from] std::io::Error)
+}
+
+impl PldmUpdateError {
+    fn new_command(cmd: u8, cc: u8) -> Self {
+        Self::Command(cmd, cc)
+    }
+
+    fn new_proto(desc: String) -> Self {
+        Self::Protocol(desc)
+    }
+
+    fn new_update(desc: String) -> Self {
+        Self::Update(desc)
+    }
+}
 
 #[derive(Debug)]
 pub struct Update {
@@ -196,9 +229,8 @@ pub fn pass_component_table(
         let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x13);
 
         req.data.push(xfer_flags(n, len));
-        req.data.extend_from_slice(
-            &component.classification.as_u16().to_le_bytes(),
-        );
+        let c = u16::from(&component.classification);
+        req.data.extend_from_slice(&c.to_le_bytes());
         req.data
             .extend_from_slice(&component.identifier.to_le_bytes());
 
@@ -271,8 +303,8 @@ where
 
     let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x14);
 
-    req.data
-        .extend_from_slice(&component.classification.as_u16().to_le_bytes());
+    let c = u16::from(&component.classification);
+    req.data.extend_from_slice(&c.to_le_bytes());
     req.data
         .extend_from_slice(&component.identifier.to_le_bytes());
 
@@ -368,7 +400,7 @@ where
 
                     progress(&u);
                 } else {
-                    error!("fimware transfer error: 0x{:02x}", res);
+                    error!("firmware transfer error: 0x{:02x}", res);
                 }
                 let mut fw_resp = fw_req.response()?;
                 fw_resp.cc = 0;
