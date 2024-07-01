@@ -4,71 +4,54 @@
  *
  * Copyright (c) 2023 Code Construct
  */
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![forbid(unsafe_code)]
 
-use thiserror::Error;
 use core::fmt;
-
-use log::{error};
+use log::debug;
 
 use enumset::{EnumSet, EnumSetType};
-use itertools::Itertools;
 
 use nom::{
     branch::alt,
     bytes::complete::{tag, take},
     character::complete::{i32 as c_i32, u32 as c_u32},
     combinator::{
-        all_consuming, flat_map, map, map_parser, map_res, rest, value,
+        all_consuming, flat_map, map, map_opt, map_parser, map_res, rest, value,
     },
-    multi::{count, length_count},
     number::complete::{le_u16, le_u32, le_u8},
     sequence::tuple,
     IResult,
 };
 
-use pldm::PldmError;
+#[cfg(feature = "alloc")]
+use nom::multi::{count, length_count};
 
-/// PLDM firmware packaging
-pub mod pkg;
-/// Update Agent specific
-#[cfg(feature = "std")]
-pub mod ua;
 /// Firmware Device specific
 pub mod fd;
-
-pub type Result<T> = core::result::Result<T, PldmUpdateError>;
-
-#[derive(Error, Debug)]
-pub enum PldmUpdateError {
-    #[error("PLDM error: {0}")]
-    Pldm(#[from] PldmError),
-    #[error("PLDM protocol error: {0}")]
-    Protocol(String),
-    #[error("PLDM command (0x{0:02x}) failed with 0x{1:02x}")]
-    Command(u8, u8),
-    #[error("PLDM Update error: {0}")]
-    Update(String),
-    #[error("PLDM Package error: {0}")]
-    Package(#[from] pkg::PldmPackageError),
-    // #[error("MCTP IO error: {0}")]
-    // MCTPIO(#[from] std::io::Error)
-}
-
-impl PldmUpdateError {
-    fn new_command(cmd: u8, cc: u8) -> Self {
-        Self::Command(cmd, cc)
-    }
-
-    fn new_proto(desc: String) -> Self {
-        Self::Protocol(desc)
-    }
-
-    fn new_update(desc: String) -> Self {
-        Self::Update(desc)
-    }
-}
+/// PLDM firmware packaging
+#[cfg(feature = "alloc")]
+pub mod pkg;
+/// Update Agent specific
+#[cfg(feature = "alloc")]
+pub mod ua;
 
 pub const PLDM_TYPE_FW: u8 = 5;
+
+/// PLDM Firmware Specification requires 255 byte length.
+///
+/// Can be reduced when strings are a known length.
+#[cfg(not(feature = "alloc"))]
+const MAX_DESC_STRING: usize = 64;
+
+/// PLDM Firmware Specification has no length limit.
+///
+/// Can be reduced length is known.
+#[cfg(not(feature = "alloc"))]
+const MAX_VENDORDATA: usize = 64;
+
+#[cfg(not(feature = "alloc"))]
+const MAX_COMPONENTS: usize = 3;
 
 #[derive(Debug, PartialEq)]
 #[repr(u8)]
@@ -84,7 +67,7 @@ pub enum PldmFDState {
 
 impl TryFrom<u8> for PldmFDState {
     type Error = &'static str;
-    fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: u8) -> core::result::Result<Self, Self::Error> {
         match value {
             0 => Ok(Self::Idle),
             1 => Ok(Self::LearnComponents),
@@ -107,10 +90,18 @@ impl PldmFDState {
 //type VResult<I,O> = IResult<I, O, VerboseError<I>>;
 type VResult<I, O> = IResult<I, O>;
 
+#[cfg(feature = "alloc")]
 #[derive(Debug)]
 pub enum DescriptorString {
     String(String),
     Bytes(Vec<u8>),
+}
+
+#[cfg(not(feature = "alloc"))]
+#[derive(Debug)]
+pub enum DescriptorString {
+    String(heapless::String<MAX_DESC_STRING>),
+    Bytes(heapless::Vec<u8, MAX_DESC_STRING>),
 }
 
 impl fmt::Display for DescriptorString {
@@ -125,7 +116,7 @@ impl fmt::Display for DescriptorString {
                 )
             }
             Self::Bytes(bs) => {
-                for b in bs {
+                for b in bs.iter() {
                     write!(f, "{:02x}", b)?;
                 }
                 Ok(())
@@ -134,6 +125,7 @@ impl fmt::Display for DescriptorString {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl DescriptorString {
     pub fn write_utf8_bytes(&self, v: &mut Vec<u8>) {
         match self {
@@ -149,6 +141,48 @@ impl DescriptorString {
             }
         }
     }
+
+    pub fn new_utf8(v: &[u8]) -> Option<Self> {
+        let s = core::str::from_utf8(v).ok()?;
+        Some(Self::String(s.to_string()))
+    }
+
+    pub fn new_bytes(v: &[u8]) -> Option<Self> {
+        Some(Self::Bytes(v.to_vec()))
+    }
+
+    // // TODO: use encoding_rs to handle BOM, LE, BE.
+    // pub fn new_utf16(v: &[u8], _strtyp: u8) -> VResult<&[u8], Self> {
+    //     let b16 = v
+    //         .iter()
+    //         .tuples()
+    //         .map(|(a, b)| ((*a as u16) << 8 | (*b as u16)))
+    //         .collect::<Vec<u16>>();
+
+    //     let s = String::from_utf16(b16)
+    //         .map_err(|_| nom::Err::Failure((v, nom::ErrorKind::Fail)))?;
+    //     Ok(&[], Self::String(s))
+    // }
+}
+
+#[cfg(not(feature = "alloc"))]
+impl DescriptorString {
+    pub fn new_utf8(v: &[u8]) -> Option<Self> {
+        let s = core::str::from_utf8(v).ok()?;
+        let s = heapless::String::try_from(s).ok()?;
+        Some(Self::String(s))
+    }
+
+    pub fn new_bytes(v: &[u8]) -> Option<Self> {
+        v.try_into().ok().map(|v| Self::Bytes(v))
+    }
+
+    // pub fn new_utf16(v: &[u8]) -> VResult<&[u8], Self> {
+    //     debug!("from_utf16 unimplemented")
+    //     let s = String::from_utf16(v)
+    //         .map_err(|_| nom::Err::Failure((v, nom::ErrorKind::Fail)))?;
+    //     Ok(&[], Self::String(s))
+    // }
 }
 
 #[derive(Debug)]
@@ -158,7 +192,10 @@ pub enum Descriptor {
     Uuid(uuid::Uuid),
     Vendor {
         title: Option<DescriptorString>,
+        #[cfg(feature = "alloc")]
         data: Vec<u8>,
+        #[cfg(not(feature = "alloc"))]
+        data: heapless::Vec<u8, MAX_VENDORDATA>,
     },
 }
 
@@ -166,21 +203,12 @@ pub fn parse_string<'a>(
     typ: u8,
     len: u8,
 ) -> impl FnMut(&'a [u8]) -> VResult<&'a [u8], DescriptorString> {
-    map(take(len), move |d: &[u8]| {
-        let v = d.to_vec();
-        match typ {
-            0 => DescriptorString::Bytes(v),
-            1 | 2 => DescriptorString::String(String::from_utf8(v).unwrap()),
-            3 => {
-                let b16 = v
-                    .iter()
-                    .tuples()
-                    .map(|(a, b)| ((*a as u16) << 8 | (*b as u16)))
-                    .collect::<Vec<u16>>();
-
-                DescriptorString::String(String::from_utf16(&b16).unwrap())
-            }
-            _ => unimplemented!(),
+    map_opt(take(len), move |d: &[u8]| match typ {
+        0 => DescriptorString::new_bytes(d),
+        1 | 2 => DescriptorString::new_utf8(d),
+        _ => {
+            debug!("unimplemented string type {typ}");
+            None
         }
     })
 }
@@ -207,18 +235,29 @@ impl Descriptor {
         })(buf)
     }
 
+    #[cfg(feature = "alloc")]
+    fn new_vendor(t: Option<DescriptorString>, d: &[u8]) -> Option<Self> {
+        Some(Self::Vendor {
+            title: t,
+            data: d.to_vec(),
+        })
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    fn new_vendor(t: Option<DescriptorString>, d: &[u8]) -> Option<Self> {
+        let data = d.try_into().ok()?;
+        Some(Self::Vendor { title: t, data })
+    }
+
     pub fn parse_vendor(buf: &[u8]) -> VResult<&[u8], Self> {
         // Attempt to parse with a proper title string; if not present just
         // consume everything as byte data
-        let f1 = |(t, d): (_, &[u8])| Self::Vendor {
-            title: Some(t),
-            data: d.to_vec(),
-        };
-        let f2 = |d: &[u8]| Self::Vendor {
-            title: None,
-            data: d.to_vec(),
-        };
-        alt((map(tuple((parse_string_adjacent, rest)), f1), map(rest, f2)))(buf)
+        let f1 = |(t, d): (_, &[u8])| Self::new_vendor(Some(t), d);
+        let f2 = |d: &[u8]| Self::new_vendor(None, d);
+        alt((
+            map_opt(tuple((parse_string_adjacent, rest)), f1),
+            map_opt(rest, f2),
+        ))(buf)
     }
 
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
@@ -274,7 +313,10 @@ impl PartialEq for Descriptor {
 
 #[derive(Debug)]
 pub struct DeviceIdentifiers {
+    #[cfg(feature = "alloc")]
     pub ids: Vec<Descriptor>,
+    #[cfg(not(feature = "alloc"))]
+    pub ids: &'static [Descriptor],
 }
 
 impl PartialEq for DeviceIdentifiers {
@@ -284,6 +326,7 @@ impl PartialEq for DeviceIdentifiers {
 }
 
 impl DeviceIdentifiers {
+    #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         length_count(le_u8, Descriptor::parse)(buf)
             .map(|(rest, ids)| (rest, Self { ids }))
@@ -361,12 +404,12 @@ impl From<u16> for ComponentClassification {
     }
 }
 
-impl ComponentClassification {
-    fn as_u16(&self) -> u16 {
-        match self {
-            Self::Unknown => 0x0000,
-            Self::Other => 0x0001,
-            Self::Firmware => 0x000a,
+impl From<&ComponentClassification> for u16 {
+    fn from(c: &ComponentClassification) -> u16 {
+        match c {
+            ComponentClassification::Unknown => 0x0000,
+            ComponentClassification::Other => 0x0001,
+            ComponentClassification::Firmware => 0x000a,
         }
     }
 }
@@ -397,35 +440,43 @@ pub enum DeviceCapability {
 }
 
 impl DeviceCapability {
+    #[cfg(feature = "alloc")]
     pub fn to_desc(&self, is_set: bool) -> String {
         match self {
-            Self::ComponentUpdateFailureRecovery =>
-                format!("Device will{} revert to previous component on failure",
-                        if is_set { " not" } else { "" }),
-            Self::ComponentUpdateFailureRetry =>
-                format!("{} restarting update on failure",
-                        if is_set { "Requires" } else { "Does not require" }),
-            Self::FDHostFunctionalityDuringUpdate =>
-                format!("Host functionality is{} reduced during update",
-                        if is_set { "" } else { " not" }),
-            Self::FDPartialUpdates =>
-                format!("Device can{} accept a partial update",
-                        if is_set { "" } else { "not" }),
-            Self::FDUpdateModeRestrictionOSActive =>
-                String::from(if is_set {
-                    "No host OS restrictions during update"
+            Self::ComponentUpdateFailureRecovery => format!(
+                "Device will{} revert to previous component on failure",
+                if is_set { " not" } else { "" }
+            ),
+            Self::ComponentUpdateFailureRetry => format!(
+                "{} restarting update on failure",
+                if is_set {
+                    "Requires"
                 } else {
-                    "Device unable to update while host OS active"
-                }),
-            Self::FDDowngradeRestrictions =>
-                String::from(if is_set {
-                    "No downgrade restrictions"
-                } else {
-                    "Downgrades may be restricted"
-                }),
-            Self::SecurityRevisionUpdateRequest =>
-                format!("Device components {} have security revision numbers",
-                        if is_set { "may" } else { "do not" }),
+                    "Does not require"
+                }
+            ),
+            Self::FDHostFunctionalityDuringUpdate => format!(
+                "Host functionality is{} reduced during update",
+                if is_set { "" } else { " not" }
+            ),
+            Self::FDPartialUpdates => format!(
+                "Device can{} accept a partial update",
+                if is_set { "" } else { "not" }
+            ),
+            Self::FDUpdateModeRestrictionOSActive => String::from(if is_set {
+                "No host OS restrictions during update"
+            } else {
+                "Device unable to update while host OS active"
+            }),
+            Self::FDDowngradeRestrictions => String::from(if is_set {
+                "No downgrade restrictions"
+            } else {
+                "Downgrades may be restricted"
+            }),
+            Self::SecurityRevisionUpdateRequest => format!(
+                "Device components {} have security revision numbers",
+                if is_set { "may" } else { "do not" }
+            ),
         }
     }
 }
@@ -447,6 +498,7 @@ impl DeviceCapabilities {
         self.0.is_empty()
     }
 
+    #[cfg(feature = "alloc")]
     pub fn values(&self) -> Vec<(DeviceCapability, bool)> {
         EnumSet::<DeviceCapability>::all()
             .iter()
@@ -478,6 +530,8 @@ pub struct Component {
 }
 
 impl Component {
+    /// Specific to a ComponentParameterTable entry in Get Firmware Parameters
+    #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (
             r,
@@ -531,12 +585,16 @@ impl Component {
 #[allow(dead_code)]
 pub struct FirmwareParameters {
     pub caps: DeviceCapabilities,
+    #[cfg(feature = "alloc")]
     pub components: Vec<Component>,
+    #[cfg(not(feature = "alloc"))]
+    pub components: heapless::Vec<Component, MAX_COMPONENTS>,
     pub active: DescriptorString,
     pub pending: DescriptorString,
 }
 
 impl FirmwareParameters {
+    #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (r, p) = tuple((le_u32, le_u16, le_u8, le_u8, le_u8, le_u8))(buf)?;
 
@@ -598,9 +656,13 @@ pub struct GetStatusResponse {
 impl GetStatusResponse {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (r, t) = tuple((
-                PldmFDState::parse, PldmFDState::parse,
-                le_u8, le_u8,
-                le_u8, le_u8, le_u32
+            PldmFDState::parse,
+            PldmFDState::parse,
+            le_u8,
+            le_u8,
+            le_u8,
+            le_u8,
+            le_u32,
         ))(buf)?;
         Ok((
             r,
@@ -623,7 +685,6 @@ impl fmt::Display for GetStatusResponse {
     }
 }
 
-
 pub struct UpdateTransferProgress {
     pub cur_xfer: Option<(u32, u32)>,
     pub percent: u8,
@@ -632,4 +693,3 @@ pub struct UpdateTransferProgress {
     pub remaining: chrono::Duration,
     pub complete: bool,
 }
-
