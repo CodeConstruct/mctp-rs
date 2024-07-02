@@ -20,7 +20,7 @@ fn main() -> std::io::Result<()> {
     // Get Endpoint ID message: command 0x02, no data. Allow the MCTP stack
     // to allocate an owned tag.
     let tx_buf = vec![0x02u8];
-    ep.send(MCTP_TYPE_CONTROL, Tag::OwnedAuto, &tx_buf)?;
+    ep.send(MCTP_TYPE_CONTROL, None, &tx_buf)?;
 
     // Receive a response. We create a 16-byte vec to read into; ep.recv()
     // will return the sub-slice containing just the response data.

@@ -51,7 +51,6 @@ use mctp::{
     MsgType,
     Result,
     Tag,
-    TagValue,
 };
 
 /* until we have these in libc... */
@@ -317,17 +316,28 @@ impl MctpLinuxEp {
 }
 
 impl mctp::Endpoint for MctpLinuxEp {
+    /// Send a MCTP message
+    ///
+    /// `tag` can be `None` to allocate an owned tag, or `Some(Tag::Unowned(tv))`
+    /// to use an unowned tag.
+    ///
+    /// Linux MCTP can also send a preallocated owned tag, but that is not
+    /// yet supported in `MctpLinuxEp`.
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        tag: Tag,
+        tag: Option<Tag>,
         bufs: &[&[u8]],
     ) -> Result<()> {
-        // Linux expects tag 0, owner bit set to allocate.
-        let mut t = tag.tag().unwrap_or(TagValue(0)).0;
-        if tag.is_owner() {
-            t |= mctp::MCTP_TAG_OWNER;
-        }
+        let t = match tag {
+            // Linux expects tag 0, owner bit set to allocate.
+            None => mctp::MCTP_TAG_OWNER,
+            Some(Tag::Owned(_tv)) => {
+                // Requires setting prealloc bit, see function comment.
+                return Err(mctp::Error::Unsupported);
+            }
+            Some(Tag::Unowned(tv)) => tv.0,
+        };
 
         let addr = MctpSockAddr::new(self.eid, self.net, typ.0, t);
         // TODO: implement sendmsg() with iovecs
