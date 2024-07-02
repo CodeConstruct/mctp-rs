@@ -8,9 +8,11 @@
 #![forbid(unsafe_code)]
 
 use core::fmt;
+use core::mem::size_of;
 use log::debug;
 
 use enumset::{EnumSet, EnumSetType};
+use num_derive::FromPrimitive;
 
 use nom::{
     branch::alt,
@@ -26,6 +28,10 @@ use nom::{
 
 #[cfg(feature = "alloc")]
 use nom::multi::{count, length_count};
+use pldm::PldmError;
+
+#[macro_use]
+extern crate pldm;
 
 /// Firmware Device specific
 pub mod fd;
@@ -33,10 +39,14 @@ pub mod fd;
 #[cfg(feature = "alloc")]
 pub mod pkg;
 /// Update Agent specific
-#[cfg(feature = "alloc")]
+#[cfg(feature = "std")]
 pub mod ua;
 
+// Firmware Update PLDM Type 5
 pub const PLDM_TYPE_FW: u8 = 5;
+
+// Baseline transfer size
+pub const PLDM_FW_BASELINE_TRANSFER: usize = 32;
 
 /// PLDM Firmware Specification requires 255 byte length.
 ///
@@ -52,6 +62,9 @@ const MAX_VENDORDATA: usize = 64;
 
 #[cfg(not(feature = "alloc"))]
 const MAX_COMPONENTS: usize = 3;
+
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub struct ComponentId(pub u16);
 
 #[derive(Debug, PartialEq)]
 #[repr(u8)]
@@ -85,6 +98,77 @@ impl PldmFDState {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         map_res(le_u8, TryInto::<PldmFDState>::try_into)(buf)
     }
+}
+
+#[derive(FromPrimitive, Debug, PartialEq)]
+#[repr(u8)]
+pub enum Cmd {
+    QueryDeviceIdentifiers = 0x01,
+    GetFirmwareParameters = 0x02,
+    QueryDownstreamDevices = 0x03,
+    QueryDownstreamIdentifiers = 0x04,
+    GetDownstreamFirmwareParameters = 0x05,
+    RequestUpdate = 0x10,
+    GetPackageData = 0x11,
+    GetDeviceMetaData = 0x12,
+    PassComponentTable = 0x13,
+    UpdateComponent = 0x14,
+    RequestFirmwareData = 0x15,
+    TransferComplete = 0x16,
+    VerifyComplete = 0x17,
+    ApplyComplete = 0x18,
+    GetMetaData = 0x19,
+    ActivateFirmware = 0x1A,
+    GetStatus = 0x1B,
+    CancelUpdateComponent = 0x1C,
+    CancelUpdate = 0x1D,
+    ActivatePendingComponentImageSet = 0x1E,
+    ActivatePendingComponentImage = 0x1F,
+    RequestDownstreamDeviceUpdate = 0x20,
+}
+
+impl Cmd {
+    const fn is_ua(&self) -> bool {
+        !self.is_fd()
+    }
+
+    const fn is_fd(&self) -> bool {
+        match self {
+            | Self::GetPackageData
+            | Self::RequestFirmwareData
+            | Self::TransferComplete
+            | Self::VerifyComplete
+            | Self::ApplyComplete
+            | Self::GetMetaData
+            => true,
+            _ => false,
+        }
+    }
+}
+
+#[repr(u8)]
+#[allow(non_camel_case_types)]
+pub enum FwCode {
+    NOT_IN_UPDATE_MODE = 0x80,
+    ALREADY_IN_UPDATE_MODE = 0x81,
+    DATA_OUT_OF_RANGE = 0x82,
+    INVALID_TRANSFER_LENGTH = 0x83,
+    INVALID_STATE_FOR_COMMAND = 0x84,
+    INCOMPLETE_UPDATE = 0x85,
+    BUSY_IN_BACKGROUND = 0x86,
+    CANCEL_PENDING = 0x87,
+    COMMAND_NOT_EXPECTED = 0x88,
+    RETRY_REQUEST_FW_DATA = 0x89,
+    UNABLE_TO_INITIATE_UPDATE = 0x8A,
+    ACTIVATION_NOT_REQUIRED = 0x8B,
+    SELF_CONTAINED_ACTIVATION_ = 0x8C,
+    NO_DEVICE_METADATA = 0x8D,
+    RETRY_REQUEST_UPDATE = 0x8E,
+    NO_PACKAGE_DATA = 0x8F,
+    INVALID_TRANSFER_HANDLE = 0x90,
+    INVALID_TRANSFER_OPERATION = 0x91,
+    ACTIVATE_PENDING_IMAGE_NOT = 0x92,
+    PACKAGE_DATA_ERROR = 0x93,
 }
 
 //type VResult<I,O> = IResult<I, O, VerboseError<I>>;
@@ -274,6 +358,40 @@ impl Descriptor {
         };
         flat_map(tuple((le_u16, le_u16)), f)(buf)
     }
+
+    pub fn desc_type(&self) -> u16 {
+        match self {
+            Self::PciVid(_) => 0x0000,
+            Self::Iana(_) => 0x0001,
+            Self::Uuid(_) => 0x0002,
+            Self::Vendor { .. } => 0xffff,
+        }
+    }
+
+    pub fn write_buf(&self, buf: &mut [u8]) -> Result<usize, PldmError> {
+        match self {
+            Self::PciVid(v) => {
+                let b = buf.get_mut(..2).ok_or(PldmError::NoSpace)?;
+                b.copy_from_slice(&v.to_le_bytes());
+                Ok(b.len())
+            }
+            Self::Iana(v) => {
+                let b = buf.get_mut(..4).ok_or(PldmError::NoSpace)?;
+                b.copy_from_slice(&v.to_le_bytes());
+                Ok(b.len())
+            }
+            Self::Uuid(v) => {
+                let b = buf.get_mut(..16).ok_or(PldmError::NoSpace)?;
+                b.copy_from_slice(v.as_bytes());
+                Ok(b.len())
+            }
+            Self::Vendor { .. } => {
+                // TODO encode Vendor
+                debug!("Vendor descriptor write not implemented");
+                Err(PldmError::InvalidArgument)
+            }
+        }
+    }
 }
 
 impl fmt::Display for Descriptor {
@@ -326,11 +444,48 @@ impl PartialEq for DeviceIdentifiers {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl DeviceIdentifiers {
-    #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         length_count(le_u8, Descriptor::parse)(buf)
             .map(|(rest, ids)| (rest, Self { ids }))
+    }
+}
+
+impl DeviceIdentifiers {
+    /// Returns a response for QueryDeviceIdentifiers
+    pub fn write_buf(&self, buf: &mut [u8]) -> Result<usize, PldmError> {
+        if buf.len() < 5 {
+            return Err(PldmError::NoSpace);
+        }
+
+        if self.ids.is_empty() {
+            return Err(PldmError::InvalidArgument);
+        }
+
+        // to be filled after the length is known
+        let (desc_len, buf) = buf.split_at_mut(4);
+        let (desc_count, buf) = buf.split_at_mut(1);
+        desc_count[0] = u8::try_from(self.ids.len())
+            .map_err(|_| PldmError::InvalidArgument)?;
+
+        let mut buf = buf;
+        let mut dl = 0;
+        for v in self.ids.iter() {
+            let id_typ;
+            let id_len;
+            (id_typ, buf) = buf.split_at_mut(2);
+            (id_len, buf) = buf.split_at_mut(2);
+            id_typ.copy_from_slice(&v.desc_type().to_le_bytes());
+
+            let l = v.write_buf(buf)?;
+            buf = &mut buf[l..];
+            id_len.copy_from_slice(&(l as u16).to_le_bytes());
+            dl += 4 + l;
+        }
+
+        desc_len.copy_from_slice(&(dl as u32).to_le_bytes());
+        Ok(dl + 5)
     }
 }
 
@@ -518,6 +673,7 @@ pub enum ComponentCapability {
 
 pub type ComponentCapabilities = EnumSet<ComponentCapability>;
 
+/// Specific to a ComponentParameterTable entry in Get Firmware Parameters
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct Component {
@@ -531,7 +687,6 @@ pub struct Component {
 }
 
 impl Component {
-    /// Specific to a ComponentParameterTable entry in Get Firmware Parameters
     #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (
@@ -639,6 +794,30 @@ impl RequestUpdateResponse {
                 fd_metadata_len: t.0,
                 fd_will_sent_gpd: t.1,
             },
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub struct RequestUpdateRequest {
+    pub max_transfer: u32,
+    pub num_components: u16,
+    pub max_outstanding: u16,
+    pub package_data_length: u16,
+    pub component_image_set_version: DescriptorString,
+}
+
+impl RequestUpdateRequest {
+    pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
+        let (r, t) = tuple((le_u32, le_u16, le_u16, le_u16, parse_string_adjacent))(buf)?;
+        Ok((r,
+            RequestUpdateRequest {
+                max_transfer: t.0,
+                num_components: t.1,
+                max_outstanding: t.2,
+                package_data_length: t.3,
+                component_image_set_version: t.4,
+            }
         ))
     }
 }
