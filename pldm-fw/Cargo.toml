@@ -1,11 +1,11 @@
 [package]
 name = "pldm-fw"
-description = "Platform Level Data Model (PLDM) for Firmware Update library and utilities"
+description = "Platform Level Data Model (PLDM) for Firmware Update library"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/CodeConstruct/mctp-rs"
-categories = ["network-programming", "embedded", "hardware-support", "command-line-utilities"]
+categories = ["network-programming", "embedded", "hardware-support"]
 
 [dependencies]
 pldm = { workspace = true }
@@ -16,10 +16,7 @@ chrono = {version = "0.4", default-features = false, features = ["clock"] }
 enumset = "1.1"
 uuid = { version = "1.3", features = ["v1"] }
 thiserror = "1.0"
-argh = "0.1.12"
-anyhow = "1.0.80"
 log = "0.4"
-env_logger = "0.11.3"
 crc = "3.0"
 heapless = "0.8"
 
