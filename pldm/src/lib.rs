@@ -23,20 +23,30 @@ use mctp::Tag;
 pub const PLDM_MAX_MSGSIZE: usize = 1024;
 
 /// Generic PLDM error type
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum PldmError {
     /// PLDM protocol error
-    #[error("PLDM protocol error: {0}")]
-    Protocol(String),
+    Protocol(ErrStr),
     /// MCTP communication error
-    #[error("MCTP error")]
     Mctp(mctp::Error),
 }
 
-impl PldmError {
-    /// Construct a new PLDM protocol error with a description
-    pub fn new_proto(s: String) -> Self {
-        Self::Protocol(s)
+impl core::fmt::Display for PldmError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Protocol(s) => write!(f, "PLDM protocol error: {s}"),
+            Self::Mctp(s) => write!(f, "MCTP error: {s}"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for PldmError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Mctp(s) => Some(s),
+            _ => None,
+        }
     }
 }
 
@@ -45,6 +55,54 @@ impl From<mctp::Error> for PldmError {
         PldmError::Mctp(e)
     }
 }
+
+#[cfg(feature = "alloc")]
+type ErrStr = String;
+#[cfg(not(feature = "alloc"))]
+type ErrStr = &'static str;
+
+/// Create a `PldmError::Protocol` from a message and optional description.
+///
+/// When building without `alloc` feature only the message is kept.
+///
+/// Example
+///
+/// ```
+/// # let iid = 1;
+/// # let actual_iid = 2;
+/// use pldm::proto_error;
+/// proto_error!("Mismatching IID", "Expected {iid:02x}, received {actual_iid:02x}");
+/// proto_error!("Rq bit wasn't expected");
+/// ```
+#[macro_export]
+#[cfg(feature = "alloc")]
+macro_rules! proto_error {
+    ($msg: expr, $desc_str: expr)
+        => { $crate::PldmError::Protocol(format!("{}. {}", $msg, $desc_str)) };
+    ($msg: expr)
+        => { $crate::PldmError::Protocol(format!("{}.", $msg)) };
+}
+
+/// Create a `PldmError::Protocol` from a message and optional description.
+///
+/// When building without `alloc` feature only the message is kept.
+///
+/// Example
+///
+/// ```
+/// # let iid = 1;
+/// # let actual_iid = 2;
+/// use pldm::proto_error;
+/// proto_error!("Mismatching IID", "Expected {iid:02x}, received {actual_iid:02x}");
+/// proto_error!("Rq bit wasn't expected");
+/// ```
+#[macro_export]
+#[cfg(not(feature = "alloc"))]
+macro_rules! proto_error {
+    ($msg: expr, $desc_str: expr), => { $crate::PldmError::Protocol($msg) };
+    ($msg: expr), => { $crate::PldmError::Protocol($msg) };
+}
+
 
 /// PLDM protocol return type
 pub type Result<T> = std::result::Result<T, PldmError>;
@@ -236,10 +294,7 @@ pub fn pldm_xfer_buf<'f>(
     let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
 
     if rx_buf.len() < 4 {
-        return Err(PldmError::new_proto(format!(
-            "short response, {} bytes",
-            rx_buf.len()
-        )));
+        return Err(proto_error!("Short response", format!("{} bytes", rx_buf.len())));
     }
 
     // TODO: should check eid, but against what? Or should mctp::Endpoint impl check it?
@@ -250,22 +305,18 @@ pub fn pldm_xfer_buf<'f>(
     let cc = rx_buf[3];
 
     if iid != REQ_IID {
-        return Err(PldmError::new_proto(format!(
-            "Incorrect instance ID in reply. Expected 0x{REQ_IID:02x} got 0x{iid:02x}")));
+        return Err(proto_error!("Incorrect instance ID in reply",
+            format!("Expected 0x{REQ_IID:02x} got 0x{iid:02x}")));
     }
 
     if typ != req.typ {
-        return Err(PldmError::new_proto(format!(
-            "Incorrect PLDM type in reply. Expected 0x{:02x} got 0x{:02x}",
-            req.typ, typ
-        )));
+        return Err(proto_error!("Incorrect PLDM type in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, typ)));
     }
 
     if cmd != req.cmd {
-        return Err(PldmError::new_proto(format!(
-            "Incorrect PLDM command in reply. Expected 0x{:02x} got 0x{:02x}",
-            req.cmd, cmd
-        )));
+        return Err(proto_error!("Incorrect PLDM command in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, cmd)));
     }
 
     let rsp = PldmResponse {
