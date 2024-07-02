@@ -48,6 +48,18 @@ impl From<mctp::Error> for PldmError {
 /// PLDM protocol return type
 pub type Result<T> = std::result::Result<T, PldmError>;
 
+#[repr(u8)]
+#[allow(non_camel_case_types)]
+pub enum CCode {
+    SUCCESS = 0,
+    ERROR = 1,
+    ERROR_INVALID_DATA = 2,
+    ERROR_INVALID_LENGTH = 3,
+    ERROR_NOT_READY = 4,
+    ERROR_UNSUPPORTED_PLDM_CMD = 5,
+    ERROR_INVALID_PLDM_TYPE = 32,
+}
+
 /// Base PLDM request type
 #[derive(Debug)]
 pub struct PldmRequest {
