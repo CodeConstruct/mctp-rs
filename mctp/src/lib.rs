@@ -96,8 +96,6 @@ pub const MCTP_TAG_MAX: u8 = 7;
 /// `Owned` and `OwnedAuto` indicate that the tag is allocated locally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tag {
-    /// MCTP stack will allocate a tag on `send()`, owner bit is set
-    OwnedAuto,
     /// Existing tag is passed to `send()`. Owner bit is unset, used for responses.
     Unowned(TagValue),
     /// Preallocated tag is passed to `send()`, owner bit is set
@@ -115,29 +113,24 @@ impl Tag {
         }
     }
 
-    /// Returns the tag, or `None` for `OwnedAuto`
-    pub fn tag(&self) -> Option<TagValue> {
+    /// Returns the tag
+    pub fn tag(&self) -> TagValue {
         match self {
-            Self::OwnedAuto => None,
             Self::Unowned(tag) | Self::Owned(tag) => {
-                Some(*tag)
+                *tag
             }
         }
     }
 
-    /// Returns `true` for `Owned` or `OwnedAuto`
+    /// Returns `true` for `Owned`
     pub fn is_owner(&self) -> bool {
-        match self {
-            Self::OwnedAuto | Self::Owned(_) => true,
-            Self::Unowned(_) => false,
-        }
+        matches!(self, Self::Owned(_))
     }
 }
 
 impl core::fmt::Display for Tag {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
-            Tag::OwnedAuto => write!(fmt, "TO,?"),
             Tag::Owned(v) => write!(fmt, "TO,{:x}", v.0),
             Tag::Unowned(v) => write!(fmt, "!TO,{:x}", v.0)
         }
@@ -214,6 +207,9 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub trait Endpoint {
     /// Send a message to this endpoint, blocking.
     ///
+    /// A `tag` argument will request the MCTP stack to allocate a
+    /// new `Owned` tag.
+    ///
     /// The slice of buffers will be sent as a single message
     /// (as if concatenated). Accepting multiple buffers allows
     /// higher level protocols to more easily append their own
@@ -222,7 +218,7 @@ pub trait Endpoint {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        tag: Tag,
+        tag: Option<Tag>,
         bufs: &[&[u8]],
     ) -> Result<()>;
 
@@ -230,7 +226,7 @@ pub trait Endpoint {
     fn send(
         &mut self,
         typ: MsgType,
-        tag: Tag,
+        tag: Option<Tag>,
         buf: &[u8],
     ) -> Result<()> {
         self.send_vectored(typ, tag, &[buf])
