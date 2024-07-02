@@ -4,6 +4,8 @@
  *
  * Copyright (c) 2023 Code Construct
  */
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![forbid(unsafe_code)]
 
 #![warn(missing_docs)]
 
@@ -12,8 +14,9 @@
 //! This crate implements some base communication primitives for PLDM,
 //! used to construct higher-level PLDM messaging applications.
 
+use core::ops::Deref;
+
 use managed::ManagedSlice;
-use thiserror::Error;
 
 use mctp::Tag;
 
@@ -29,6 +32,10 @@ pub enum PldmError {
     Protocol(ErrStr),
     /// MCTP communication error
     Mctp(mctp::Error),
+    /// Invalid argument
+    InvalidArgument,
+    /// No buffer space available
+    NoSpace,
 }
 
 impl core::fmt::Display for PldmError {
@@ -36,6 +43,8 @@ impl core::fmt::Display for PldmError {
         match self {
             Self::Protocol(s) => write!(f, "PLDM protocol error: {s}"),
             Self::Mctp(s) => write!(f, "MCTP error: {s}"),
+            Self::InvalidArgument => write!(f, "Invalid Argument"),
+            Self::NoSpace => write!(f, "Insufficient buffer space available"),
         }
     }
 }
@@ -99,13 +108,13 @@ macro_rules! proto_error {
 #[macro_export]
 #[cfg(not(feature = "alloc"))]
 macro_rules! proto_error {
-    ($msg: expr, $desc_str: expr), => { $crate::PldmError::Protocol($msg) };
-    ($msg: expr), => { $crate::PldmError::Protocol($msg) };
+    ($msg: expr, $desc_str: expr) => { $crate::PldmError::Protocol($msg) };
+    ($msg: expr) => { $crate::PldmError::Protocol($msg) };
 }
 
 
 /// PLDM protocol return type
-pub type Result<T> = std::result::Result<T, PldmError>;
+pub type Result<T> = core::result::Result<T, PldmError>;
 
 #[repr(u8)]
 #[allow(non_camel_case_types)]
@@ -184,7 +193,7 @@ impl<'a> PldmRequest<'a> {
     }
 
     /// Create a new PLDM request for a given PLDM message type and command
-
+    ///
     /// Convert this request to a response, using the correct MCTP tag value
     /// (swapping to a non-owned tag), and the instance, type and command
     /// from the original request.
@@ -228,6 +237,32 @@ impl<'a> PldmRequest<'a> {
             data: (&mut data[3..]).into(),
         })
     }
+
+    /// Create a new PLDM request for a given PLDM message type and command
+    ///
+    ///
+    /// Convert this request to a response, using the correct MCTP tag value
+    /// (swapping to a non-owned tag), and the instance, type and command
+    /// from the original request.
+    ///
+    /// The payload buffer is borrowed from input.
+    ///
+    /// May fail on invalid tag values.
+    pub fn response_borrowed<'f>(&self, data: &'f mut [u8]) -> Result<PldmResponse<'f>> {
+        let tag = self
+            .mctp_tag
+            .tag()
+            .ok_or(PldmError::Protocol("OwnedAuto tag".into()))?;
+        let resp_tag = Tag::Unowned(tag);
+        Ok(PldmResponse {
+            mctp_tag: resp_tag,
+            iid: self.iid,
+            typ: self.typ,
+            cmd: self.cmd,
+            cc: 0,
+            data: data.into(),
+        })
+    }
 }
 
 /// Base PLDM response type
@@ -269,6 +304,7 @@ impl<'a> PldmResponse<'a> {
 ///
 /// Sends a Request, and waits for a response, blocking. This is generally
 /// used by PLDM Requesters, which issue commands to Responders.
+#[cfg(feature = "alloc")]
 pub fn pldm_xfer<'f>(
     ep: &mut impl mctp::Endpoint,
     req: PldmRequest,
@@ -277,19 +313,26 @@ pub fn pldm_xfer<'f>(
     pldm_xfer_buf(ep, req, &mut rx_buf).map(|r| r.make_owned())
 }
 
+/// Main PLDM transfer operation.
+///
+/// Sends a Request, and waits for a response, blocking. This is generally
+/// used by PLDM Requesters, which issue commands to Responders.
+///
+/// This function requires an external `rx_buf`.
 pub fn pldm_xfer_buf<'f>(
     ep: &mut impl mctp::Endpoint,
     req: PldmRequest,
     rx_buf: &'f mut [u8],
 ) -> Result<PldmResponse<'f>> {
     const REQ_IID: u8 = 0;
-    let mut tx_buf = Vec::with_capacity(req.data.len() + 2);
-    tx_buf.push(1 << 7 | REQ_IID);
-    tx_buf.push(req.typ & 0x3f);
-    tx_buf.push(req.cmd);
-    tx_buf.extend_from_slice(&req.data);
+    let tx_buf = [
+        1 << 7 | REQ_IID,
+        req.typ & 0x3f,
+        req.cmd,
+    ];
 
-    ep.send(mctp::MCTP_TYPE_PLDM, req.mctp_tag, &tx_buf)?;
+    let txs = &[&tx_buf, req.data.deref()];
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, req.mctp_tag, txs)?;
 
     let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
 
@@ -339,6 +382,7 @@ pub fn pldm_xfer_buf<'f>(
 ///
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
+#[cfg(feature = "alloc")]
 pub fn pldm_rx_req<'f>(
     ep: &mut impl mctp::Endpoint,
 ) -> Result<PldmRequest<'f>> {
@@ -357,14 +401,9 @@ pub fn pldm_tx_resp(
     ep: &mut impl mctp::Endpoint,
     resp: &PldmResponse,
 ) -> Result<()> {
-    let mut tx_buf = Vec::with_capacity(resp.data.len() + 4);
-    tx_buf.push(resp.iid);
-    tx_buf.push(resp.typ);
-    tx_buf.push(resp.cmd);
-    tx_buf.push(resp.cc);
-    tx_buf.extend_from_slice(&resp.data);
-
-    ep.send(mctp::MCTP_TYPE_PLDM, resp.mctp_tag, &tx_buf)?;
+    let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
+    let txs = &[&tx_buf, resp.data.deref()];
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, resp.mctp_tag, txs)?;
 
     Ok(())
 }
