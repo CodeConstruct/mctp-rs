@@ -1,0 +1,19 @@
+[package]
+name = "pldm-fw-cli"
+description = "Platform Level Data Model (PLDM) for Firmware utilities"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/CodeConstruct/mctp-rs"
+categories = ["network-programming", "embedded", "hardware-support", "command-line-utilities"]
+
+[dependencies]
+pldm-fw = { workspace = true, features = ["std"] }
+mctp-linux = { workspace = true }
+
+argh = "0.1.12"
+anyhow = "1.0.80"
+env_logger = "0.11.3"
+log = "0.4"
+chrono = {version = "0.4", default-features = false, features = ["clock"] }
+enumset = "1.1"
