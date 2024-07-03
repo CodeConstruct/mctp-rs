@@ -14,11 +14,10 @@
 //! This crate implements some base communication primitives for PLDM,
 //! used to construct higher-level PLDM messaging applications.
 
-use core::ops::Deref;
-
-use managed::ManagedSlice;
-
 use mctp::Tag;
+
+pub mod util;
+use util::*;
 
 /// Maximum size of a PLDM message, defining our buffer sizes.
 ///
@@ -141,7 +140,7 @@ pub struct PldmRequest<'a> {
     /// PLDM command code
     pub cmd: u8,
     /// PLDM command data payload
-    pub data: ManagedSlice<'a, u8>,
+    pub data: VecOrSlice<'a, u8>,
 }
 
 #[cfg(feature = "alloc")]
@@ -174,8 +173,8 @@ impl<'a> PldmRequest<'a> {
     /// Converts any `PldmRequest` into one with allocated storage
     pub fn make_owned(self) -> PldmRequest<'static> {
         let d = match self.data {
-            ManagedSlice::Borrowed(b) => b.to_vec().into(),
-            ManagedSlice::Owned(b) => ManagedSlice::Owned(b),
+            VecOrSlice::Borrowed(b) => b.to_vec().into(),
+            VecOrSlice::Owned(b) => VecOrSlice::Owned(b),
         };
         PldmRequest { data: d, ..self }
     }
@@ -184,7 +183,7 @@ impl<'a> PldmRequest<'a> {
     ///
     /// May fail if the message data is not parsable as a PLDM message.
     /// Pass a `tag` of `None` to specify an automatically allocated owned tag.
-    pub fn from_buf<'f>(tag: Option<Tag>, data: &'f mut [u8]) -> Result<Self> {
+    pub fn from_buf<'f>(tag: Option<Tag>, data: &'f [u8]) -> Result<Self> {
         Self::from_buf_borrowed(tag, data).map(|p| p.make_owned())
     }
 
@@ -220,7 +219,7 @@ impl<'a> PldmRequest<'a> {
     ///
     /// The payload is borrowed from the input data.
     /// May fail if the message data is not parsable as a PLDM message.
-    pub fn from_buf_borrowed(tag: Option<Tag>, data: &mut [u8]) -> Result<PldmRequest> {
+    pub fn from_buf_borrowed(tag: Option<Tag>, data: &[u8]) -> Result<PldmRequest> {
         if data.len() < 3 {
             panic!("request too short");
         }
@@ -234,7 +233,7 @@ impl<'a> PldmRequest<'a> {
             iid,
             typ,
             cmd,
-            data: (&mut data[3..]).into(),
+            data: (&data[3..]).into(),
         })
     }
 
@@ -248,7 +247,7 @@ impl<'a> PldmRequest<'a> {
     /// The payload buffer is borrowed from input.
     ///
     /// May fail on invalid tag values.
-    pub fn response_borrowed<'f>(&self, data: &'f mut [u8]) -> Result<PldmResponse<'f>> {
+    pub fn response_borrowed<'f>(&self, data: &'f [u8]) -> Result<PldmResponse<'f>> {
         let Some(Tag::Owned(tv)) = self.mctp_tag else {
             return Err(PldmError::InvalidArgument);
         };
@@ -279,7 +278,7 @@ pub struct PldmResponse<'a> {
     /// PLDM completion code
     pub cc: u8,
     /// PLDM response data payload. Does not include the cc field.
-    pub data: ManagedSlice<'a, u8>,
+    pub data: VecOrSlice<'a, u8>,
 }
 
 #[cfg(feature = "alloc")]
@@ -292,8 +291,8 @@ impl<'a> PldmResponse<'a> {
     /// Converts any `PldmResponse` into one with allocated storage
     pub fn make_owned(self) -> PldmResponse<'static> {
         let d = match self.data {
-            ManagedSlice::Borrowed(b) => b.to_vec().into(),
-            ManagedSlice::Owned(b) => ManagedSlice::Owned(b),
+            VecOrSlice::Borrowed(b) => b.to_vec().into(),
+            VecOrSlice::Owned(b) => VecOrSlice::Owned(b),
         };
         PldmResponse { data: d, ..self }
     }
@@ -330,7 +329,7 @@ pub fn pldm_xfer_buf<'f>(
         req.cmd,
     ];
 
-    let txs = &[&tx_buf, req.data.deref()];
+    let txs = &[&tx_buf, req.data.as_ref()];
     ep.send_vectored(mctp::MCTP_TYPE_PLDM, req.mctp_tag, txs)?;
 
     let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
@@ -401,7 +400,7 @@ pub fn pldm_tx_resp(
     resp: &PldmResponse,
 ) -> Result<()> {
     let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
-    let txs = &[&tx_buf, resp.data.deref()];
+    let txs = &[&tx_buf, resp.data.as_ref()];
     ep.send_vectored(mctp::MCTP_TYPE_PLDM, Some(resp.mctp_tag), txs)?;
 
     Ok(())
