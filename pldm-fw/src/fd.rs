@@ -85,7 +85,7 @@ impl Responder {
             trace!("request_in for response");
             return Err(PldmError::InvalidArgument);
         }
-        let req = PldmRequest::from_buf_borrowed(tag, payload)?;
+        let req = PldmRequest::from_buf_borrowed(Some(tag), payload)?;
 
         let Some(cmd) = Cmd::from_u8(req.cmd) else {
             self.reply_error(&req, ep, CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8);
@@ -129,7 +129,6 @@ impl Responder {
         ep: &mut impl Endpoint,
         cc: u8,
     ) {
-        // TODO: unwrap is for OwnedAuto, get rid of that.
         let mut resp = req.response_borrowed(&mut []).unwrap();
         resp.cc = cc as u8;
         let _ = pldm_tx_resp(ep, &resp)
