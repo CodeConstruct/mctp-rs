@@ -131,9 +131,9 @@ pub enum CCode {
 /// Base PLDM request type
 #[derive(Debug)]
 pub struct PldmRequest<'a> {
-    /// MCTP tag used for the request. Typically an owned tag
-    /// ([`mctp::Tag::Owned`] or [`mctp::Tag::OwnedAuto`])
-    pub mctp_tag: Tag,
+    /// MCTP tag used for the request. Set to `None` to allocate for outgoing
+    /// requests, set to `Some(Tag::Owned)` for incoming requests.
+    pub mctp_tag: Option<Tag>,
     /// PLDM Instance ID
     pub iid: u8,
     /// PLDM type.
@@ -149,8 +149,8 @@ impl<'a> PldmRequest<'a> {
     /// Create a new PLDM request for a given PLDM message type and command
     /// number.
     ///
-    /// Since this creates a request, it specifies an
-    /// [`mctp::Tag::OwnedAuto`] tag, for the lower-level MCTP stack to assign
+    /// Since this creates a request, it specifies a `None`
+    /// tag, for the lower-level MCTP stack to assign
     /// an actual tag value.
     pub fn new(typ: u8, cmd: u8) -> Self {
         Self::new_data(typ, cmd, Vec::new())
@@ -158,12 +158,12 @@ impl<'a> PldmRequest<'a> {
 
     /// Create a new PLDM request with a data payload.
     ///
-    /// Since this creates a request, it specifies an
-    /// [`mctp::Tag::OwnedAuto`] tag, for the lower-level MCTP stack to assign
+    /// Since this creates a request, it specifies a `None`
+    /// tag, for the lower-level MCTP stack to assign
     /// an actual tag value.
     pub fn new_data(typ: u8, cmd: u8, data: Vec<u8>) -> Self {
         Self {
-            mctp_tag: Tag::OwnedAuto,
+            mctp_tag: None,
             iid: 0,
             typ,
             cmd,
@@ -183,7 +183,8 @@ impl<'a> PldmRequest<'a> {
     /// Create a PLDM request given a MCTP tag value and message data.
     ///
     /// May fail if the message data is not parsable as a PLDM message.
-    pub fn from_buf<'f>(tag: Tag, data: &'f mut [u8]) -> Result<Self> {
+    /// Pass a `tag` of `None` to specify an automatically allocated owned tag.
+    pub fn from_buf<'f>(tag: Option<Tag>, data: &'f mut [u8]) -> Result<Self> {
         Self::from_buf_borrowed(tag, data).map(|p| p.make_owned())
     }
 
@@ -198,13 +199,12 @@ impl<'a> PldmRequest<'a> {
     /// (swapping to a non-owned tag), and the instance, type and command
     /// from the original request.
     ///
-    /// May fail on invalid tag values.
+    /// Will fail if this `PldmRequest` does not have an allocated tag.
     pub fn response(&self) -> Result<PldmResponse> {
-        let tag = self
-            .mctp_tag
-            .tag()
-            .ok_or(PldmError::Protocol("OwnedAuto tag".into()))?;
-        let resp_tag = Tag::Unowned(tag);
+        let Some(Tag::Owned(tv)) = self.mctp_tag else {
+            return Err(PldmError::InvalidArgument);
+        };
+        let resp_tag = Tag::Unowned(tv);
         Ok(PldmResponse {
             mctp_tag: resp_tag,
             iid: self.iid,
@@ -220,7 +220,7 @@ impl<'a> PldmRequest<'a> {
     ///
     /// The payload is borrowed from the input data.
     /// May fail if the message data is not parsable as a PLDM message.
-    pub fn from_buf_borrowed(tag: Tag, data: &mut [u8]) -> Result<PldmRequest> {
+    pub fn from_buf_borrowed(tag: Option<Tag>, data: &mut [u8]) -> Result<PldmRequest> {
         if data.len() < 3 {
             panic!("request too short");
         }
@@ -249,11 +249,10 @@ impl<'a> PldmRequest<'a> {
     ///
     /// May fail on invalid tag values.
     pub fn response_borrowed<'f>(&self, data: &'f mut [u8]) -> Result<PldmResponse<'f>> {
-        let tag = self
-            .mctp_tag
-            .tag()
-            .ok_or(PldmError::Protocol("OwnedAuto tag".into()))?;
-        let resp_tag = Tag::Unowned(tag);
+        let Some(Tag::Owned(tv)) = self.mctp_tag else {
+            return Err(PldmError::InvalidArgument);
+        };
+        let resp_tag = Tag::Unowned(tv);
         Ok(PldmResponse {
             mctp_tag: resp_tag,
             iid: self.iid,
@@ -389,7 +388,7 @@ pub fn pldm_rx_req<'f>(
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
     let (rx_buf, _eid, tag) = ep.recv(&mut rx_buf)?;
 
-    let req = PldmRequest::from_buf(tag, rx_buf)?;
+    let req = PldmRequest::from_buf(Some(tag), rx_buf)?;
 
     Ok(req)
 }
@@ -403,7 +402,7 @@ pub fn pldm_tx_resp(
 ) -> Result<()> {
     let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
     let txs = &[&tx_buf, resp.data.deref()];
-    ep.send_vectored(mctp::MCTP_TYPE_PLDM, resp.mctp_tag, txs)?;
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, Some(resp.mctp_tag), txs)?;
 
     Ok(())
 }
