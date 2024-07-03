@@ -5,7 +5,11 @@
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
-use heapless::Vec;
+/// Re-exported so that callers can use the same `heapless` version.
+///
+/// TODO: will be replaced with something else, maybe `heapless::VecView` once
+/// released.
+pub use heapless::Vec;
 
 use mctp::{Eid, MsgType, TagValue, Tag, Error, Result};
 

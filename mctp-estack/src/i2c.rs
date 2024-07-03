@@ -130,6 +130,11 @@ impl core::fmt::Debug for MctpI2cHandler {
 }
 
 impl MctpI2cHandler {
+    /// Constructs a new `MctpI2cHandler`.
+    ///
+    /// Note that the `heapless::Vec` for `fill_msg` is the version
+    /// specified by `mctp-estack` crate. The re-export
+    /// [`mctp_estack::Vec`](crate::Vec) can be used for API compatibility.
     pub fn new(
         port: u8,
         own_addr: u8,
@@ -223,6 +228,10 @@ impl MctpI2cHandler {
     ///
     /// `send_enqueue()` must only be called when `send_idle()` is true.
     /// TODO `fill_msg` will take something that isn't a Vec.
+    ///
+    /// Note that the `heapless::Vec` for `fill_msg` is the version
+    /// specified by `mctp-estack` crate. The re-export
+    /// [`mctp_estack::Vec`](crate::Vec) can be used for API compatibility.
     pub fn send_enqueue<F>(
         &mut self,
         eid: Eid,
