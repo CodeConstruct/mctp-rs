@@ -1,0 +1,11 @@
+[package]
+name = "mctp-estack"
+description = "Embedded MCTP stack"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mctp = { path = "../mctp", default-features = false }
+libmctp = "0.1"
+heapless = "0.8"
+log = "0.4"
