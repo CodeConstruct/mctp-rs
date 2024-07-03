@@ -401,3 +401,15 @@ pub struct MctpMessage<'a> {
     /// "Response" message refers having `TO` bit unset.
     pub cookie: Option<AppCookie>,
 }
+
+
+#[cfg(test)]
+mod tests {
+
+    use crate::*;
+
+    // TODO:
+    // back to back fragmenter/reassembler
+
+    // back to back stacks?
+}

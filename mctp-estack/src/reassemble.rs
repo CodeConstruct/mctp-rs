@@ -56,7 +56,7 @@ impl Reassembler {
         })
     }
 
-    /// Receive a message
+    /// Receive a packet, returning a message when complete.
     ///
     /// Returns `Ok(Some(_))` when a full message is reassembled.
     /// Returns `Ok(None)` on success when the message is incomplete.

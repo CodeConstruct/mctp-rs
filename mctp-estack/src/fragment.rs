@@ -77,9 +77,8 @@ impl Fragmenter {
 
     /// Returns fragments for the MCTP payload, like an iterator.
     ///
+    /// `None` is returned after all fragments have been returned.
     /// `out` buffer is borrowed as the returned fragment, filled with packet contents
-    // TODO: should `out` instead be `impl Extend<u8>` ?
-    // TODO: it might be useful if payload were &[&[u8]]
     pub fn fragment<'f>(
         &mut self,
         payload: &[u8],
