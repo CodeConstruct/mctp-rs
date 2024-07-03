@@ -113,27 +113,30 @@ impl Stack {
         &mut self,
         dest: Eid,
         typ: MsgType,
-        tag: Tag,
+        tag: Option<Tag>,
         mtu: Option<usize>,
         // TODO: should cookie be not-Option?
         cookie: Option<AppCookie>,
     ) -> Result<Fragmenter> {
 
-        // Add an entry to the flow table, and allocate OwnedAuto tags.
-        let flow_cookie = if tag.is_owner() {
-            cookie
-        } else {
-            None
+        // Add an entry to the flow table for owned tags
+        let flow_cookie = match tag {
+            Some(t) if !t.is_owner() => None,
+            _ => cookie,
         };
+
         let tag = match tag {
-            Tag::OwnedAuto => Tag::Owned(self.new_flow(dest, flow_cookie)?),
-            Tag::Owned(t) => {
+            None => {
+                // allocate a tag
+                Tag::Owned(self.new_flow(dest, flow_cookie)?)
+            }
+            Some(Tag::Owned(tv)) => {
                  // A pre-known owned tag isn't normally used.
                  // Useful for future preallocated tag API
-                 self.add_flow_tag(dest, t, flow_cookie)?;
-                 tag
-            },
-            Tag::Unowned(_) => tag,
+                 self.add_flow_tag(dest, tv, flow_cookie)?;
+                 Tag::Owned(tv)
+            }
+            Some(Tag::Unowned(tv)) => Tag::Unowned(tv),
         };
 
         let mut frag_mtu = self.mtu;
@@ -166,10 +169,7 @@ impl Stack {
 
             if !re.tag.is_owner() {
                 // Only allow it if we had an existing flow
-                let Some(tv) = re.tag.tag() else {
-                    return Err(Error::Unreachable);
-                };
-                if let Some(f) = self.lookup_flow(re.peer, tv) {
+                if let Some(f) = self.lookup_flow(re.peer, re.tag.tag()) {
                     re.set_cookie(f.cookie);
                 } else {
                     return Err(Error::Unreachable);

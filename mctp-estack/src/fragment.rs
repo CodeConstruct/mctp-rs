@@ -28,10 +28,8 @@ impl Fragmenter {
         mtu: usize,
         cookie: Option<AppCookie>,
     ) -> Result<Self> {
-        // tag must be allocated and valid
-        match tag.tag() {
-            Some(t) if t.0 <= mctp::MCTP_TAG_MAX => (),
-            _ => return Err(Error::InvalidInput),
+        if tag.tag().0 > mctp::MCTP_TAG_MAX {
+            return Err(Error::InvalidInput);
         }
         // TODO other validity checks
 
@@ -69,8 +67,7 @@ impl Fragmenter {
         if self.first {
             header.set_som(self.first as u8);
         }
-        // OK unwrap, checked in new()
-        header.set_msg_tag(self.tag.tag().unwrap().0);
+        header.set_msg_tag(self.tag.tag().0);
         header.set_to(self.tag.is_owner() as u8);
         header
     }

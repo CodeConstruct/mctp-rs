@@ -236,7 +236,7 @@ impl MctpI2cHandler {
         &mut self,
         eid: Eid,
         typ: MsgType,
-        tag: Tag,
+        tag: Option<Tag>,
         i2c_dest: u8,
         cookie: Option<AppCookie>,
         mctp: &mut Stack,

@@ -164,7 +164,7 @@ impl Reassembler {
 
         self.peer == Eid(header.source_endpoint_id())
             && self.own_eid == Eid(header.dest_endpoint_id())
-            && self.tag.tag() == Some(TagValue(header.msg_tag()))
+            && self.tag.tag() == TagValue(header.msg_tag())
             && self.tag.is_owner() == (header.to() == 1)
     }
 
