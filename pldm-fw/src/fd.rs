@@ -70,14 +70,11 @@ impl Responder {
     /// Handle an incoming PLDM FW message
     ///
     /// Returns `Ok` if a reply is sent to the UA, including for error responses.
-    ///
-    // TODO: payload is only mut becaused ManagedSlice needs it. Maybe could
-    // find/implement something similar.
     pub fn request_in(
         &mut self,
         eid: Eid,
         tag: Tag,
-        payload: &mut [u8],
+        payload: &[u8],
         ep: &mut impl Endpoint,
         d: &mut impl Device,
     ) -> Result<()> {
@@ -124,12 +121,12 @@ impl Responder {
     }
 
     fn reply_error(
-        &mut self,
+        &self,
         req: &PldmRequest,
         ep: &mut impl Endpoint,
         cc: u8,
     ) {
-        let mut resp = req.response_borrowed(&mut []).unwrap();
+        let mut resp = req.response_borrowed(&[]).unwrap();
         resp.cc = cc as u8;
         let _ = pldm_tx_resp(ep, &resp)
             .inspect_err(|e| trace!("Error sending failure response. {e:?}"));
@@ -146,7 +143,7 @@ impl Responder {
 
         let l = d.dev_identifiers().write_buf(&mut self.send_buf)?;
         self.send_buf.truncate(l);
-        let resp = req.response_borrowed(&mut self.send_buf)?;
+        let resp = req.response_borrowed(&self.send_buf)?;
 
         pldm_tx_resp(ep, &resp)
     }
@@ -168,7 +165,7 @@ impl Responder {
         };
         self.max_transfer = ru.max_transfer as usize;
 
-        let resp = req.response_borrowed(&mut self.send_buf)?;
+        let resp = req.response_borrowed(&self.send_buf)?;
         pldm_tx_resp(ep, &resp)
     }
 

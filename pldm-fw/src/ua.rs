@@ -342,7 +342,7 @@ where
             0x15 => {
                 /* Request Firmware Data */
                 let res: IResult<_, _> = all_consuming(tuple((le_u32, le_u32)))(
-                    fw_req.data.deref(),
+                    fw_req.data.as_ref(),
                 );
 
                 let (_, (offset, len)) = res.map_err(|_e| {
@@ -533,7 +533,7 @@ fn check_fd_state(
         return Err(PldmUpdateError::new_command(0x1b, rsp.cc));
     }
 
-    let (_, res) = complete(GetStatusResponse::parse)(&rsp.data)
+    let (_, res) = complete(GetStatusResponse::parse)(rsp.data.as_ref())
         .map_err(|_e| {
             PldmUpdateError::new_proto("can't parse Get Status response".into())
         })?;
