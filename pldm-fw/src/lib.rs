@@ -42,6 +42,8 @@ pub mod pkg;
 #[cfg(feature = "std")]
 pub mod ua;
 
+use pldm::util::*;
+
 // Firmware Update PLDM Type 5
 pub const PLDM_TYPE_FW: u8 = 5;
 
@@ -739,17 +741,14 @@ impl Component {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct FirmwareParameters {
+pub struct FirmwareParameters<'a> {
     pub caps: DeviceCapabilities,
-    #[cfg(feature = "alloc")]
-    pub components: Vec<Component>,
-    #[cfg(not(feature = "alloc"))]
-    pub components: heapless::Vec<Component, MAX_COMPONENTS>,
+    pub components: VecOrSlice<'a, Component>,
     pub active: DescriptorString,
     pub pending: DescriptorString,
 }
 
-impl FirmwareParameters {
+impl FirmwareParameters<'_> {
     #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (r, p) = tuple((le_u32, le_u16, le_u8, le_u8, le_u8, le_u8))(buf)?;
@@ -770,7 +769,7 @@ impl FirmwareParameters {
 
         let fp = FirmwareParameters {
             caps: DeviceCapabilities::from_u32(caps),
-            components,
+            components: components.into(),
             active,
             pending,
         };
