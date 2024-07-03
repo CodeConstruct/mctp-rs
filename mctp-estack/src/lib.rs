@@ -26,8 +26,10 @@ use heapless::LinearMap;
 use mctp::{Eid, MsgType, TagValue, Tag, Error, Result};
 
 mod fragment;
+mod i2c;
 mod reassemble;
 
+pub use crate::i2c::{MctpI2cEncap, MCTP_I2C_COMMAND_CODE, MctpI2cHandler};
 pub use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
 
