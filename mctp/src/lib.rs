@@ -18,7 +18,7 @@
 //! communicate with a remote endpoint.
 
 /// MCTP endpoint ID
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Eid(pub u8);
 
 impl Eid {
@@ -46,7 +46,7 @@ pub const MCTP_ADDR_ANY: Eid = Eid(0xff);
 pub const MCTP_ADDR_NULL: Eid = Eid(0x00);
 
 /// MCTP Message Tag
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TagValue(pub u8);
 
 /// Tag Owner (TO) field; generally set in a request, clear in a response.
@@ -58,7 +58,7 @@ pub const MCTP_TAG_OWNER: u8 = 0x08;
 /// most-significant bit will always be zero.
 ///
 /// Defined values are in DSP0239
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MsgType(pub u8);
 
 impl core::fmt::Display for MsgType {
