@@ -125,6 +125,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
+name = "bitfield"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46afbd2983a5d5a7bd740ccb198caf5b82f45c40c09c0eed36052d91cb92e719"
+
+[[package]]
 name = "bumpalo"
 version = "3.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -220,6 +226,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "embedded-crc-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd8659882a4d3c3f5c11eb0e54c59d636ee95a5e6c18d6bdca17c536bfc1b681"
 
 [[package]]
 name = "enumset"
@@ -347,6 +359,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
 
 [[package]]
+name = "libmctp"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "519b10d8e6f25aa3d5c9b036dca380af160149200de1ba34ac244edd39158b09"
+dependencies = [
+ "bitfield",
+ "smbus-pec",
+]
+
+[[package]]
 name = "log"
 version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,6 +377,16 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 [[package]]
 name = "mctp"
 version = "0.1.0"
+
+[[package]]
+name = "mctp-estack"
+version = "0.1.0"
+dependencies = [
+ "heapless",
+ "libmctp",
+ "log",
+ "mctp",
+]
 
 [[package]]
 name = "mctp-linux"
@@ -518,6 +550,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "smbus-pec"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27704f2c758164d4c2fbb55587462e277b067b46cb4a3df59c964cb13a80d143"
+dependencies = [
+ "embedded-crc-macros",
 ]
 
 [[package]]

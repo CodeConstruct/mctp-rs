@@ -24,6 +24,11 @@ Component Crates
    This targets `mctp-linux` though could be adapted to any implementation of the
    `mctp` crate traits.
 
+ * [`mctp-estack`](mctp-estack) is a MCTP stack suitable for embedded devices,
+   running `no_std` with fixed allocations.  It includes a MCTP over I2C transport
+   handler. The stack handles message fragmentation/reassembly and tag tracking.
+   At present routing is left for specific platform code to handle.
+
 Examples
 --------
 

@@ -1,5 +1,5 @@
 [workspace]
-members = [ "mctp", "mctp-linux", "pldm", "pldm-fw", "pldm-fw-cli"]
+members = [ "mctp", "mctp-linux", "mctp-estack", "pldm", "pldm-fw", "pldm-fw-cli"]
 resolver = "2"
 
 [workspace.dependencies]
