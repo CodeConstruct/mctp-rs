@@ -9,6 +9,7 @@ categories = ["network-programming", "embedded", "hardware-support"]
 
 [dependencies]
 mctp = { workspace = true }
+num-traits = { version = "0.2", default-features = false }
 
 [features]
 default = ["std"]
