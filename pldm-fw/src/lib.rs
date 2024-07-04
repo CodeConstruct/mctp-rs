@@ -6,18 +6,19 @@
  */
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
+// #![warn(missing_docs)]
 
 use core::fmt;
-use core::mem::size_of;
 use log::debug;
 
 use enumset::{EnumSet, EnumSetType};
 use num_derive::FromPrimitive;
+use chrono::Datelike;
 
 use nom::{
     branch::alt,
     bytes::complete::{tag, take},
-    character::complete::{i32 as c_i32, u32 as c_u32},
+    character::complete::{u32 as c_u32},
     combinator::{
         all_consuming, flat_map, map, map_opt, map_parser, map_res, rest, value,
     },
@@ -50,24 +51,24 @@ pub const PLDM_TYPE_FW: u8 = 5;
 // Baseline transfer size
 pub const PLDM_FW_BASELINE_TRANSFER: usize = 32;
 
-/// PLDM Firmware Specification requires 255 byte length.
+/// PLDM firmware specification requires 255 byte length.
 ///
 /// Can be reduced when strings are a known length.
 #[cfg(not(feature = "alloc"))]
 const MAX_DESC_STRING: usize = 64;
 
-/// PLDM Firmware Specification has no length limit.
+/// Maximum length allowed for vendor data in no-alloc
 ///
-/// Can be reduced length is known.
+/// PLDM firmware specification has no length limit.
+/// Can be reduced if length is known.
 #[cfg(not(feature = "alloc"))]
 const MAX_VENDORDATA: usize = 64;
 
-#[cfg(not(feature = "alloc"))]
-const MAX_COMPONENTS: usize = 3;
-
+/// Component Identifier
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct ComponentId(pub u16);
 
+/// PLDM firmware device state definitions
 #[derive(Debug, PartialEq)]
 #[repr(u8)]
 pub enum PldmFDState {
@@ -97,11 +98,14 @@ impl TryFrom<u8> for PldmFDState {
 }
 
 impl PldmFDState {
+    /// Parse from a buffer
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         map_res(le_u8, TryInto::<PldmFDState>::try_into)(buf)
     }
 }
 
+/// PLDM Firmware Commands
+#[allow(missing_docs)]
 #[derive(FromPrimitive, Debug, PartialEq)]
 #[repr(u8)]
 pub enum Cmd {
@@ -130,11 +134,11 @@ pub enum Cmd {
 }
 
 impl Cmd {
-    const fn is_ua(&self) -> bool {
+    pub const fn is_ua(&self) -> bool {
         !self.is_fd()
     }
 
-    const fn is_fd(&self) -> bool {
+    pub const fn is_fd(&self) -> bool {
         match self {
             | Self::GetPackageData
             | Self::RequestFirmwareData
@@ -148,6 +152,8 @@ impl Cmd {
     }
 }
 
+/// PLDM firmware response codes
+#[allow(missing_docs)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 pub enum FwCode {
@@ -211,6 +217,26 @@ impl fmt::Display for DescriptorString {
     }
 }
 
+impl DescriptorString {
+    pub fn string_type(&self) -> u8 {
+        match self {
+            Self::Bytes(_) => 0,
+            Self::String(_) => 1,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Bytes(b) => b,
+            Self::String(b) => b.as_bytes(),
+        }
+    }
+
+    fn bytes_len(&self) -> u8 {
+        self.as_bytes().len() as u8
+    }
+}
+
 #[cfg(feature = "alloc")]
 impl DescriptorString {
     pub fn write_utf8_bytes(&self, v: &mut Vec<u8>) {
@@ -229,11 +255,24 @@ impl DescriptorString {
     }
 
     pub fn new_utf8(v: &[u8]) -> Option<Self> {
+        if v.len() > 0xff {
+            return None
+        }
         let s = core::str::from_utf8(v).ok()?;
         Some(Self::String(s.to_string()))
     }
 
+    pub fn new_str(s: &str) -> Option<Self> {
+        if s.as_bytes().len() > 0xff {
+            return None
+        }
+        Some(Self::String(s.to_string()))
+    }
+
     pub fn new_bytes(v: &[u8]) -> Option<Self> {
+        if v.len() > 0xff {
+            return None
+        }
         Some(Self::Bytes(v.to_vec()))
     }
 
@@ -255,6 +294,10 @@ impl DescriptorString {
 impl DescriptorString {
     pub fn new_utf8(v: &[u8]) -> Option<Self> {
         let s = core::str::from_utf8(v).ok()?;
+        Self::new_str(s)
+    }
+
+    pub fn new_str(s: &str) -> Option<Self> {
         let s = heapless::String::try_from(s).ok()?;
         Some(Self::String(s))
     }
@@ -271,6 +314,7 @@ impl DescriptorString {
     // }
 }
 
+/// A device descriptor
 #[derive(Debug)]
 pub enum Descriptor {
     PciVid(u16),
@@ -285,6 +329,7 @@ pub enum Descriptor {
     },
 }
 
+/// Parse a string with type and length
 pub fn parse_string<'a>(
     typ: u8,
     len: u8,
@@ -370,27 +415,16 @@ impl Descriptor {
         }
     }
 
-    pub fn write_buf(&self, buf: &mut [u8]) -> Result<usize, PldmError> {
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(buf);
         match self {
-            Self::PciVid(v) => {
-                let b = buf.get_mut(..2).ok_or(PldmError::NoSpace)?;
-                b.copy_from_slice(&v.to_le_bytes());
-                Ok(b.len())
-            }
-            Self::Iana(v) => {
-                let b = buf.get_mut(..4).ok_or(PldmError::NoSpace)?;
-                b.copy_from_slice(&v.to_le_bytes());
-                Ok(b.len())
-            }
-            Self::Uuid(v) => {
-                let b = buf.get_mut(..16).ok_or(PldmError::NoSpace)?;
-                b.copy_from_slice(v.as_bytes());
-                Ok(b.len())
-            }
+            Self::PciVid(v) => b.push_le16(*v),
+            Self::Iana(v) => b.push_le32(*v),
+            Self::Uuid(v) => b.push(v.as_bytes()),
             Self::Vendor { .. } => {
                 // TODO encode Vendor
                 debug!("Vendor descriptor write not implemented");
-                Err(PldmError::InvalidArgument)
+                None
             }
         }
     }
@@ -456,38 +490,32 @@ impl DeviceIdentifiers {
 
 impl DeviceIdentifiers {
     /// Returns a response for QueryDeviceIdentifiers
-    pub fn write_buf(&self, buf: &mut [u8]) -> Result<usize, PldmError> {
-        if buf.len() < 5 {
-            return Err(PldmError::NoSpace);
-        }
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(buf);
 
         if self.ids.is_empty() {
-            return Err(PldmError::InvalidArgument);
+            return None;
         }
 
-        // to be filled after the length is known
-        let (desc_len, buf) = buf.split_at_mut(4);
-        let (desc_count, buf) = buf.split_at_mut(1);
-        desc_count[0] = u8::try_from(self.ids.len())
-            .map_err(|_| PldmError::InvalidArgument)?;
+        // To be filled after the length is known
+        b.push_le32(0)?;
+        b.push_le8(self.ids.len() as u8)?;
 
-        let mut buf = buf;
-        let mut dl = 0;
         for v in self.ids.iter() {
-            let id_typ;
-            let id_len;
-            (id_typ, buf) = buf.split_at_mut(2);
-            (id_len, buf) = buf.split_at_mut(2);
-            id_typ.copy_from_slice(&v.desc_type().to_le_bytes());
-
-            let l = v.write_buf(buf)?;
-            buf = &mut buf[l..];
-            id_len.copy_from_slice(&(l as u16).to_le_bytes());
-            dl += 4 + l;
+            b.push_le16(v.desc_type())?;
+            b.push_prefix_le::<u16, _>(|m| {
+                v.write_buf(m)
+            })?;
         }
 
-        desc_len.copy_from_slice(&(dl as u32).to_le_bytes());
-        Ok(dl + 5)
+        let written = b.written();
+
+        // Now fill out the DeviceIdentifiersLength the the start.
+        // Doesn't include ids len.
+        let mut b = SliceWriter::new(buf);
+        b.push_le32((written - 5) as u32)?;
+
+        Some(written)
     }
 }
 
@@ -512,6 +540,31 @@ pub struct ComponentVersion {
     pub date: Option<PldmDate>,
 }
 
+impl ComponentVersion {
+    /// Creates a new utf-8 string `ComponentVersion`
+    ///
+    /// May fail on non-`alloc` if the string is too long
+    pub fn new_str(s: &str) -> Option<Self> {
+        Some(Self {
+            stamp: 0,
+            version: DescriptorString::new_str(s)?,
+            date: None,
+        })
+    }
+
+    /// Writes stamp, type, length, date
+    ///
+    /// As used for the ComponentParameterTable
+    pub fn write_initial(&self, b: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(b);
+        b.push_le32(self.stamp)?;
+        b.push_le8(self.version.string_type())?;
+        b.push_le8(self.version.bytes_len())?;
+        b.push_with(|m| pldm_date_write_buf(&self.date, m))?;
+        Some(b.written())
+    }
+}
+
 impl fmt::Display for ComponentVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.version)?;
@@ -531,7 +584,7 @@ pub fn pldm_date_parse(buf: &[u8]) -> VResult<&[u8], Option<PldmDate>> {
         value(None, tag([0u8; 8])),
         map(
             tuple((
-                map_parser(take(4u8), c_i32),
+                map_parser(take(4u8), c_u32),
                 map_parser(take(2u8), c_u32),
                 map_parser(take(2u8), c_u32),
             )),
@@ -539,9 +592,41 @@ pub fn pldm_date_parse(buf: &[u8]) -> VResult<&[u8], Option<PldmDate>> {
         ),
     ))(buf)?;
 
-    let d = o.and_then(|(y, m, d)| PldmDate::from_ymd_opt(y, m, d));
+    let d = o.and_then(|(y, m, d)| PldmDate::from_ymd_opt(y as i32, m, d));
 
     Ok((r, d))
+}
+
+pub fn pldm_date_write_buf(date: &Option<PldmDate>, b: &mut [u8]) -> Option<usize> {
+    let mut b = SliceWriter::new(b);
+    if let Some(date) = date {
+        let mut y = date.year();
+        if y < 0 {
+            return None
+        }
+        let m = date.month();
+        let d = date.day();
+
+        // hand written to avoid fmt code bloat
+        let mut w = [0u8; 8];
+        for i in 0..4 {
+            w[3-i] = (y % 10) as u8;
+            y /= 10;
+        }
+        w[4] = (m / 10) as u8;
+        w[5] = (m % 10) as u8;
+        w[6] = (d / 10) as u8;
+        w[7] = (d % 10) as u8;
+        let w = w.map(|c| b'0' + c);
+        b.push(&w)?;
+
+        // // TODO: This is 3kB of code size.
+        // write!(b, "{:04}{:02}{:02}", y, date.month(), date.day()).ok()?;
+    } else {
+        b.push(&[0u8; 8])?;
+    }
+
+    Some(b.written())
 }
 
 #[derive(Debug)]
@@ -639,7 +724,7 @@ impl DeviceCapability {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DeviceCapabilities(EnumSet<DeviceCapability>);
 
 impl DeviceCapabilities {
@@ -737,6 +822,21 @@ impl Component {
 
         Ok((r, c))
     }
+
+    pub fn write_buf(&self, b: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(b);
+        b.push_le16(u16::from(&self.classification))?;
+        b.push_le16(self.identifier)?;
+        b.push_le8(self.classificationindex)?;
+        b.push_with(|m| self.active.write_initial(m))?;
+        b.push_with(|m| self.pending.write_initial(m))?;
+        b.push_le16(self.activation_methods.as_u16())?;
+        b.push_le32(self.caps_during_update.as_u32())?;
+        b.push(self.active.version.as_bytes())?;
+        b.push(self.pending.version.as_bytes())?;
+
+        Some(b.written())
+    }
 }
 
 #[derive(Debug)]
@@ -748,8 +848,8 @@ pub struct FirmwareParameters<'a> {
     pub pending: DescriptorString,
 }
 
+#[cfg(feature = "alloc")]
 impl FirmwareParameters<'_> {
-    #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (r, p) = tuple((le_u32, le_u16, le_u8, le_u8, le_u8, le_u8))(buf)?;
 
@@ -775,6 +875,27 @@ impl FirmwareParameters<'_> {
         };
 
         Ok((r, fp))
+    }
+}
+
+impl FirmwareParameters<'_> {
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut w = SliceWriter::new(buf);
+
+        w.push_le32(self.caps.as_u32())?;
+        w.push_le16(self.components.len() as u16)?;
+        w.push_le8(self.active.string_type())?;
+        w.push_le8(self.active.bytes_len())?;
+        w.push_le8(self.pending.string_type())?;
+        w.push_le8(self.pending.bytes_len())?;
+        w.push(self.active.as_bytes())?;
+        w.push(self.pending.as_bytes())?;
+
+        for c in self.components.as_ref() {
+            w.push_with(|b| c.write_buf(b))?;
+        }
+
+        Some(w.written())
     }
 }
 
@@ -871,4 +992,88 @@ pub struct UpdateTransferProgress {
     pub duration: chrono::Duration,
     pub remaining: chrono::Duration,
     pub complete: bool,
+}
+
+
+#[cfg(test)]
+mod tests {
+
+    use crate::*;
+
+    #[test]
+    fn date_parse() {
+        let x = b"20240704x";
+        let d = pldm_date_parse(x).unwrap();
+        let expect = PldmDate::parse_from_str("20240704", "%Y%m%d").unwrap();
+        assert_eq!(d, ("x".as_bytes(), Some(expect)));
+
+        // negative date rejected
+        let x = b"-0240704x";
+        pldm_date_parse(x).unwrap_err();
+
+        // short fails
+        let x = b"2024070";
+        pldm_date_parse(x).unwrap_err();
+
+        // space rejected
+        let x = b" 0240704x";
+        pldm_date_parse(x).unwrap_err();
+
+        // bad date returns None
+        let x = b"20240732";
+        let (_, d) = pldm_date_parse(x).unwrap();
+        assert_eq!(d, None);
+    }
+
+    #[test]
+    fn date_write() {
+        let d = PldmDate::parse_from_str("20240704", "%Y%m%d").unwrap();
+
+        let mut b = [99u8; 9];
+        let l = pldm_date_write_buf(&Some(d), &mut b).unwrap();
+        assert_eq!(b[8], 99);
+        assert_eq!(l, 8);
+        let b = &b[..l];
+        assert_eq!(b"20240704", b);
+
+        // short fails
+        let mut b = [99u8; 7];
+        assert!(pldm_date_write_buf(&Some(d), &mut b).is_none());
+
+        // None date is all 0x00 bytes
+        let mut b = [99u8; 8];
+        let l = pldm_date_write_buf(&None, &mut b).unwrap();
+        assert_eq!(l, 8);
+        assert_eq!(b, [0u8; 8]);
+    }
+
+
+    #[test]
+    fn write_device_identifier() {
+        let ids = vec![Descriptor::PciVid(0xccde), Descriptor::Iana(1234)];
+        let di = DeviceIdentifiers { ids };
+
+        let mut sendbuf = [0u8; 50];
+        let l = di.write_buf(&mut sendbuf).unwrap();
+        let sendbuf = &sendbuf[..l];
+        let expect = [
+            // length
+            0x0e, 0x00, 0x00, 0x00,
+            // count
+            0x02,
+            // desc 1 type
+            0x00, 0x00,
+            // data
+            0x02, 0x00,
+            // length
+            0xde, 0xcc,
+            // desc 2 type
+            0x01, 0x00,
+            // length
+            0x04, 0x00,
+            // data
+            0xd2, 0x04, 0x00, 0x00,
+        ];
+        assert_eq!(sendbuf, expect);
+    }
 }

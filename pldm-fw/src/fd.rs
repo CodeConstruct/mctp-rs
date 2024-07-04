@@ -141,7 +141,7 @@ impl Responder {
         // Valid in any state, doesn't change state
         let _ = self.send_buf.resize_default(self.send_buf.capacity());
 
-        let l = d.dev_identifiers().write_buf(&mut self.send_buf)?;
+        let l = d.dev_identifiers().write_buf(&mut self.send_buf).ok_or(PldmError::NoSpace)?;
         self.send_buf.truncate(l);
         let resp = req.response_borrowed(&self.send_buf)?;
 
@@ -189,35 +189,4 @@ pub trait Device {
 mod tests {
 
     use crate::*;
-
-    use super::SENDBUF;
-
-    // struct Dev {
-    //     ids: DeviceIdentifiers,
-    // }
-
-    // impl Dev {
-    //     fn new() -> Self {
-    //         let ids = vec![
-    //             Descriptor::PciVid(0xccde),
-    //             Descriptor::Iana(1234),
-    //         ];
-    //         DeviceIdentifiers { ids },
-    //     }
-    // }
-
-    #[test]
-    fn qdi() {
-        let ids = vec![Descriptor::PciVid(0xccde), Descriptor::Iana(1234)];
-        let di = DeviceIdentifiers { ids };
-
-        let mut sendbuf = [0u8; SENDBUF];
-        let l = di.write_buf(&mut sendbuf).unwrap();
-        let sendbuf = &sendbuf[..l];
-        let expect = [
-            0x0e, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x02, 0x00, 0xde, 0xcc,
-            0x01, 0x00, 0x04, 0x00, 0xd2, 0x04, 0x00, 0x00,
-        ];
-        assert_eq!(sendbuf, expect);
-    }
 }
