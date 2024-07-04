@@ -115,6 +115,7 @@ macro_rules! proto_error {
 /// PLDM protocol return type
 pub type Result<T> = core::result::Result<T, PldmError>;
 
+#[allow(missing_docs)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 pub enum CCode {
