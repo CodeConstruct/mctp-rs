@@ -10,8 +10,6 @@
 //! Update Agent requires `std` feature.
 use log::{debug, error};
 
-use core::ops::Deref;
-
 use thiserror::Error;
 
 use nom::{

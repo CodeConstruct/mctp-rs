@@ -11,14 +11,14 @@
 use core::fmt;
 use log::debug;
 
+use chrono::Datelike;
 use enumset::{EnumSet, EnumSetType};
 use num_derive::FromPrimitive;
-use chrono::Datelike;
 
 use nom::{
     branch::alt,
     bytes::complete::{tag, take},
-    character::complete::{u32 as c_u32},
+    character::complete::u32 as c_u32,
     combinator::{
         all_consuming, flat_map, map, map_opt, map_parser, map_res, rest, value,
     },
@@ -140,13 +140,12 @@ impl Cmd {
 
     pub const fn is_fd(&self) -> bool {
         match self {
-            | Self::GetPackageData
+            Self::GetPackageData
             | Self::RequestFirmwareData
             | Self::TransferComplete
             | Self::VerifyComplete
             | Self::ApplyComplete
-            | Self::GetMetaData
-            => true,
+            | Self::GetMetaData => true,
             _ => false,
         }
     }
@@ -181,6 +180,14 @@ pub enum FwCode {
 
 //type VResult<I,O> = IResult<I, O, VerboseError<I>>;
 type VResult<I, O> = IResult<I, O>;
+
+#[derive(FromPrimitive, Debug, PartialEq)]
+#[repr(u8)]
+enum TransferFlag {
+    Start = 0x01,
+    Middle = 0x02,
+    End = 0x04,
+}
 
 #[cfg(feature = "alloc")]
 #[derive(Debug)]
@@ -256,7 +263,7 @@ impl DescriptorString {
 
     pub fn new_utf8(v: &[u8]) -> Option<Self> {
         if v.len() > 0xff {
-            return None
+            return None;
         }
         let s = core::str::from_utf8(v).ok()?;
         Some(Self::String(s.to_string()))
@@ -264,14 +271,14 @@ impl DescriptorString {
 
     pub fn new_str(s: &str) -> Option<Self> {
         if s.as_bytes().len() > 0xff {
-            return None
+            return None;
         }
         Some(Self::String(s.to_string()))
     }
 
     pub fn new_bytes(v: &[u8]) -> Option<Self> {
         if v.len() > 0xff {
-            return None
+            return None;
         }
         Some(Self::Bytes(v.to_vec()))
     }
@@ -503,9 +510,7 @@ impl DeviceIdentifiers {
 
         for v in self.ids.iter() {
             b.push_le16(v.desc_type())?;
-            b.push_prefix_le::<u16, _>(|m| {
-                v.write_buf(m)
-            })?;
+            b.push_prefix_le::<u16, _>(|m| v.write_buf(m))?;
         }
 
         let written = b.written();
@@ -597,12 +602,15 @@ pub fn pldm_date_parse(buf: &[u8]) -> VResult<&[u8], Option<PldmDate>> {
     Ok((r, d))
 }
 
-pub fn pldm_date_write_buf(date: &Option<PldmDate>, b: &mut [u8]) -> Option<usize> {
+pub fn pldm_date_write_buf(
+    date: &Option<PldmDate>,
+    b: &mut [u8],
+) -> Option<usize> {
     let mut b = SliceWriter::new(b);
     if let Some(date) = date {
         let mut y = date.year();
         if y < 0 {
-            return None
+            return None;
         }
         let m = date.month();
         let d = date.day();
@@ -610,7 +618,7 @@ pub fn pldm_date_write_buf(date: &Option<PldmDate>, b: &mut [u8]) -> Option<usiz
         // hand written to avoid fmt code bloat
         let mut w = [0u8; 8];
         for i in 0..4 {
-            w[3-i] = (y % 10) as u8;
+            w[3 - i] = (y % 10) as u8;
             y /= 10;
         }
         w[4] = (m / 10) as u8;
@@ -629,11 +637,15 @@ pub fn pldm_date_write_buf(date: &Option<PldmDate>, b: &mut [u8]) -> Option<usiz
     Some(b.written())
 }
 
+/// Component classification
+#[allow(missing_docs)]
 #[derive(Debug)]
 pub enum ComponentClassification {
     Unknown,
     Other,
     Firmware,
+    /// Other values
+    Value(u16),
 }
 
 impl From<u16> for ComponentClassification {
@@ -642,7 +654,7 @@ impl From<u16> for ComponentClassification {
             0x0000 => Self::Unknown,
             0x0001 => Self::Other,
             0x000a => Self::Firmware,
-            _ => unimplemented!(),
+            v => Self::Value(v),
         }
     }
 }
@@ -653,6 +665,7 @@ impl From<&ComponentClassification> for u16 {
             ComponentClassification::Unknown => 0x0000,
             ComponentClassification::Other => 0x0001,
             ComponentClassification::Firmware => 0x000a,
+            ComponentClassification::Value(v) => *v,
         }
     }
 }
@@ -774,7 +787,7 @@ pub struct Component {
 }
 
 impl Component {
-    #[cfg(feature = "alloc")]
+    // #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (
             r,
@@ -836,6 +849,88 @@ impl Component {
         b.push(self.pending.version.as_bytes())?;
 
         Some(b.written())
+    }
+}
+
+/// An entry for Pass Component Table or Update Component
+///
+/// The same structure is used for both, with `size` and `flags`
+/// unpopulated for Pass Component
+#[allow(missing_docs)]
+pub struct UpdateComponent {
+    pub classification: ComponentClassification,
+    pub identifier: u16,
+    pub classificationindex: u8,
+    pub comparisonstamp: u32,
+    pub version: DescriptorString,
+    /// Size, not set for Pass Component
+    pub size: Option<u32>,
+    /// Flags, not set for Pass Component
+    pub flags: Option<u32>,
+}
+
+impl UpdateComponent {
+    pub fn parse_pass_component(buf: &[u8]) -> VResult<&[u8], Self> {
+        let (
+            r,
+            (
+                classification,
+                identifier,
+                classificationindex,
+                comparisonstamp,
+                version,
+            ),
+        ) = tuple((
+            le_u16,
+            le_u16,
+            le_u8,
+            le_u32,
+            parse_string_adjacent,
+        ))(&buf)?;
+
+        let s = Self {
+            classification: classification.into(),
+            identifier,
+            classificationindex,
+            comparisonstamp,
+            version,
+            size: None,
+            flags: None,
+        };
+        Ok((r, s))
+    }
+    pub fn parse_update(buf: &[u8]) -> VResult<&[u8], Self> {
+        let (
+            r,
+            (
+                classification,
+                identifier,
+                classificationindex,
+                comparisonstamp,
+                size,
+                flags,
+                version,
+            ),
+        ) = tuple((
+            le_u16,
+            le_u16,
+            le_u8,
+            le_u32,
+            le_u32,
+            le_u32,
+            parse_string_adjacent,
+        ))(&buf)?;
+
+        let s = Self {
+            classification: classification.into(),
+            identifier,
+            classificationindex,
+            comparisonstamp,
+            version,
+            size: Some(size),
+            flags: Some(flags),
+        };
+        Ok((r, s))
     }
 }
 
@@ -929,15 +1024,19 @@ pub struct RequestUpdateRequest {
 
 impl RequestUpdateRequest {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
-        let (r, t) = tuple((le_u32, le_u16, le_u16, le_u16, parse_string_adjacent))(buf)?;
-        Ok((r,
+        let (r, t) =
+            tuple((le_u32, le_u16, le_u16, le_u16, parse_string_adjacent))(
+                buf,
+            )?;
+        Ok((
+            r,
             RequestUpdateRequest {
                 max_transfer: t.0,
                 num_components: t.1,
                 max_outstanding: t.2,
                 package_data_length: t.3,
                 component_image_set_version: t.4,
-            }
+            },
         ))
     }
 }
@@ -994,7 +1093,6 @@ pub struct UpdateTransferProgress {
     pub complete: bool,
 }
 
-
 #[cfg(test)]
 mod tests {
 
@@ -1047,8 +1145,8 @@ mod tests {
         assert_eq!(b, [0u8; 8]);
     }
 
-
     #[test]
+    #[rustfmt::skip]
     fn write_device_identifier() {
         let ids = vec![Descriptor::PciVid(0xccde), Descriptor::Iana(1234)];
         let di = DeviceIdentifiers { ids };
