@@ -16,7 +16,9 @@ Component Crates
    on top of the generic MCTP support
 
  * [`pldm-fw`](pldm-fw) uses the `pldm` base definitions to implement the
-   PLDM for Firmware Update protocol as a library.
+   PLDM for Firmware Update protocol as a library. It include a Firmware Device (`fd`)
+   responder that can run on embedded devices with `no_std`, and an
+   Update Agent (`ua`) for `std` platforms.
 
  * [`pldm-fw-cli`](pldm-fw-cli) is a command-line PLDM Firmware Update utility.
    This targets `mctp-linux` though could be adapted to any implementation of the
