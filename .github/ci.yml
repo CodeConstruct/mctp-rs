@@ -1,0 +1,21 @@
+# This is a wrapper around ci/runtests.sh
+# ci/runtests.sh is intended to be usable locally without github.
+
+name: ci
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  all:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build and test
+        run: ./ci/runtests.sh
