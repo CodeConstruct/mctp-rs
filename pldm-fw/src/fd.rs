@@ -27,8 +27,8 @@ use mctp::{Eid, Endpoint, Tag};
 use pldm::{pldm_tx_resp, CCode, PldmError, PldmRequest, PldmResponse};
 
 use crate::{
-    Cmd, ComponentId, Descriptor, DeviceIdentifiers, FwCode, PldmFDState,
-    RequestUpdateRequest, PLDM_FW_BASELINE_TRANSFER,
+    Cmd, Component, ComponentId, Descriptor, DeviceIdentifiers, FwCode, PldmFDState,
+    RequestUpdateRequest, PLDM_FW_BASELINE_TRANSFER, FirmwareParameters, DescriptorString,
 };
 
 // TODO, borrow from somewhere.
@@ -101,6 +101,7 @@ impl Responder {
         // Handlers will return Ok if they have replied
         let r = match cmd {
             Cmd::QueryDeviceIdentifiers => self.cmd_qdi(&req, ep, d),
+            Cmd::GetFirmwareParameters => self.cmd_fwparams(&req, ep, d),
             Cmd::RequestUpdate => self.cmd_update(&req, ep, d),
             _ => {
                 trace!("unhandled command {cmd:?}");
@@ -132,6 +133,7 @@ impl Responder {
             .inspect_err(|e| trace!("Error sending failure response. {e:?}"));
     }
 
+    /// Query Device Identifiers
     fn cmd_qdi(
         &mut self,
         req: &PldmRequest,
@@ -147,6 +149,31 @@ impl Responder {
 
         pldm_tx_resp(ep, &resp)
     }
+
+    /// Get Firmware Parameters
+    fn cmd_fwparams(
+        &mut self,
+        req: &PldmRequest,
+        ep: &mut impl Endpoint,
+        d: &mut impl Device,
+    ) -> Result<()> {
+        // Valid in any state, doesn't change state
+
+        let fwp = FirmwareParameters {
+            caps: Default::default(),
+            components: d.components().into(),
+            active: d.active_image_set_version(),
+            pending: d.pending_image_set_version(),
+        };
+
+        let _ = self.send_buf.resize_default(self.send_buf.capacity());
+        let l = fwp.write_buf(&mut self.send_buf).ok_or(PldmError::NoSpace)?;
+        self.send_buf.truncate(l);
+        let resp = req.response_borrowed(&self.send_buf)?;
+
+        pldm_tx_resp(ep, &resp)
+    }
+
 
     fn cmd_update(
         &mut self,
@@ -175,9 +202,11 @@ impl Responder {
 pub trait Device {
     fn dev_identifiers(&self) -> &DeviceIdentifiers;
 
-    fn num_components() -> usize;
+    fn components(&self) -> &[Component];
 
-    fn get_component(index: usize) -> ();
+    fn active_image_set_version(&self) -> DescriptorString;
+
+    fn pending_image_set_version(&self) -> DescriptorString;
 
     // Runs at the start of UpdateComponent
     fn allow_update_component() -> bool;
