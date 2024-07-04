@@ -1,0 +1,45 @@
+# This is a wrapper around ci/runtests.sh
+# ci/runtests.sh is intended to be usable locally without github.
+
+name: ci
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    strategy:
+      matrix:
+        # 1.82 is the earliest version that will build. Notice if it breaks,
+        # though MSRV may be bumped as needed.
+        rust_version: [stable, 1.82, nightly]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Rust files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/
+            target/ci/
+          # Save a unique cache each time
+          # (https://github.com/actions/cache/blob/main/tips-and-workarounds.md#update-a-cache)
+          key: rust-${{ matrix.rust_version }}-${{ github.run_id }}
+          # Load from the most recent match
+          restore-keys: |
+            rust-${{ matrix.rust_version }}
+
+      - name: Rustup ${{ matrix.rust_version }}
+        run: |
+          rustup override set ${{ matrix.rust_version }}
+
+      - name: Build and test ${{ matrix.rust_version }}
+        run: ./ci/runtests.sh
