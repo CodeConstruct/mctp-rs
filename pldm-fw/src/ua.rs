@@ -10,12 +10,10 @@
 //! Update Agent requires `std` feature.
 use log::{debug, error};
 
-use core::ops::Deref;
-
 use thiserror::Error;
 
 use nom::{
-    combinator::{all_consuming, complete, map},
+    combinator::{all_consuming, map},
     multi::length_value,
     number::complete::le_u32,
     sequence::tuple,
@@ -27,7 +25,8 @@ use pldm::PldmError;
 use crate::pkg;
 use crate::{
     DeviceIdentifiers, FirmwareParameters, GetStatusResponse, PldmFDState,
-    RequestUpdateResponse, UpdateTransferProgress, PLDM_TYPE_FW,
+    RequestUpdateResponse, UpdateTransferProgress, PLDM_TYPE_FW, FwCode,
+    UpdateComponentResponse,
 };
 
 pub type Result<T> = core::result::Result<T, PldmUpdateError>;
@@ -331,11 +330,27 @@ where
         return Err(PldmUpdateError::new_command(0x14, rsp.cc));
     }
 
+    let (_, res) = all_consuming(UpdateComponentResponse::parse)(rsp.data.as_ref())
+        .map_err(|_e| {
+            PldmUpdateError::new_proto("can't parse Update Component response".into())
+        })?;
+
+    if res.response_code != 0 {
+        return Err(PldmUpdateError::new_update(
+            format!("Update Component rejected with code 0x{:02x}", res.response_code)));
+    }
+
     let start = chrono::Utc::now();
 
     loop {
         // we should be in update mode, handle incoming data requests
         let fw_req = pldm::pldm_rx_req(ep)?;
+
+        if fw_req.typ != PLDM_TYPE_FW {
+            return Err(PldmUpdateError::new_proto(format!(
+                "unexpected type during update: {fw_req:?}"
+            )));
+        }
 
         match fw_req.cmd {
             0x15 => {
@@ -514,11 +529,11 @@ pub fn activate_firmware(
     let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x1a, data);
     let rsp = pldm::pldm_xfer(ep, req)?;
 
-    if rsp.cc != 0 {
-        return Err(PldmUpdateError::new_command(0x1a, rsp.cc));
+    if rsp.cc == 0 || rsp.cc == FwCode::ACTIVATION_NOT_REQUIRED as u8 {
+        Ok(())
+    } else {
+        Err(PldmUpdateError::new_command(0x1a, rsp.cc))
     }
-
-    Ok(())
 }
 
 fn check_fd_state(

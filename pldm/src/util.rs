@@ -2,6 +2,8 @@
 use core::mem::size_of;
 
 /// Holds either an allocated `Vec` or borrowed slice.
+///
+/// Can be constructed using `.into()` on a `Vec` (`std` feature) or `&[u8]` (always)
 #[derive(Debug)]
 pub enum VecOrSlice<'a, V> {
     /// An allocated `std::Vec` buffer

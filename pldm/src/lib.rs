@@ -120,6 +120,7 @@ pub type Result<T> = core::result::Result<T, PldmError>;
 #[allow(missing_docs)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
+#[derive(Debug, PartialEq)]
 pub enum CCode {
     SUCCESS = 0,
     ERROR = 1,

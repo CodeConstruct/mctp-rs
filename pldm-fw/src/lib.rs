@@ -6,18 +6,19 @@
  */
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
+// #![warn(missing_docs)]
 
 use core::fmt;
-use core::mem::size_of;
 use log::debug;
 
+use chrono::Datelike;
 use enumset::{EnumSet, EnumSetType};
 use num_derive::FromPrimitive;
 
 use nom::{
     branch::alt,
     bytes::complete::{tag, take},
-    character::complete::{i32 as c_i32, u32 as c_u32},
+    character::complete::u32 as c_u32,
     combinator::{
         all_consuming, flat_map, map, map_opt, map_parser, map_res, rest, value,
     },
@@ -28,9 +29,7 @@ use nom::{
 
 #[cfg(feature = "alloc")]
 use nom::multi::{count, length_count};
-use pldm::PldmError;
 
-#[macro_use]
 extern crate pldm;
 
 /// Firmware Device specific
@@ -50,25 +49,25 @@ pub const PLDM_TYPE_FW: u8 = 5;
 // Baseline transfer size
 pub const PLDM_FW_BASELINE_TRANSFER: usize = 32;
 
-/// PLDM Firmware Specification requires 255 byte length.
+/// PLDM firmware specification requires 255 byte length.
 ///
 /// Can be reduced when strings are a known length.
 #[cfg(not(feature = "alloc"))]
 const MAX_DESC_STRING: usize = 64;
 
-/// PLDM Firmware Specification has no length limit.
+/// Maximum length allowed for vendor data in no-alloc
 ///
-/// Can be reduced length is known.
+/// PLDM firmware specification has no length limit.
+/// Can be reduced if length is known.
 #[cfg(not(feature = "alloc"))]
 const MAX_VENDORDATA: usize = 64;
 
-#[cfg(not(feature = "alloc"))]
-const MAX_COMPONENTS: usize = 3;
-
+/// Component Identifier
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct ComponentId(pub u16);
 
-#[derive(Debug, PartialEq)]
+/// PLDM firmware device state definitions
+#[derive(Debug, PartialEq, Copy, Clone)]
 #[repr(u8)]
 pub enum PldmFDState {
     Idle = 0,
@@ -97,11 +96,29 @@ impl TryFrom<u8> for PldmFDState {
 }
 
 impl PldmFDState {
+    /// Parse from a buffer
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         map_res(le_u8, TryInto::<PldmFDState>::try_into)(buf)
     }
 }
 
+/// Idle Reason Codes for Get Status response
+#[allow(missing_docs)]
+#[derive(FromPrimitive, Debug, PartialEq, Copy, Clone)]
+#[repr(u8)]
+pub enum PldmIdleReason {
+    Init = 0,
+    Activate = 1,
+    Cancel = 2,
+    TimeoutLearn = 3,
+    TimeoutReadyXfer = 4,
+    TimeoutDownload = 5,
+    TimeoutVerify = 6,
+    TimeoutApply = 7,
+}
+
+/// PLDM Firmware Commands
+#[allow(missing_docs)]
 #[derive(FromPrimitive, Debug, PartialEq)]
 #[repr(u8)]
 pub enum Cmd {
@@ -130,26 +147,28 @@ pub enum Cmd {
 }
 
 impl Cmd {
-    const fn is_ua(&self) -> bool {
+    pub const fn is_ua(&self) -> bool {
         !self.is_fd()
     }
 
-    const fn is_fd(&self) -> bool {
+    pub const fn is_fd(&self) -> bool {
         match self {
-            | Self::GetPackageData
+            Self::GetPackageData
             | Self::RequestFirmwareData
             | Self::TransferComplete
             | Self::VerifyComplete
             | Self::ApplyComplete
-            | Self::GetMetaData
-            => true,
+            | Self::GetMetaData => true,
             _ => false,
         }
     }
 }
 
+/// PLDM firmware response codes
+#[allow(missing_docs)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
+#[derive(Debug, PartialEq)]
 pub enum FwCode {
     NOT_IN_UPDATE_MODE = 0x80,
     ALREADY_IN_UPDATE_MODE = 0x81,
@@ -163,18 +182,164 @@ pub enum FwCode {
     RETRY_REQUEST_FW_DATA = 0x89,
     UNABLE_TO_INITIATE_UPDATE = 0x8A,
     ACTIVATION_NOT_REQUIRED = 0x8B,
-    SELF_CONTAINED_ACTIVATION_ = 0x8C,
+    SELF_CONTAINED_ACTIVATION_NOT_PERMITTED = 0x8C,
     NO_DEVICE_METADATA = 0x8D,
     RETRY_REQUEST_UPDATE = 0x8E,
     NO_PACKAGE_DATA = 0x8F,
     INVALID_TRANSFER_HANDLE = 0x90,
     INVALID_TRANSFER_OPERATION = 0x91,
-    ACTIVATE_PENDING_IMAGE_NOT = 0x92,
+    ACTIVATE_PENDING_IMAGE_NOT_PERMITTED = 0x92,
     PACKAGE_DATA_ERROR = 0x93,
+}
+
+/// Transfer Result codes for TransferComplete
+///
+/// Not all defined Transfer Result codes are defined in this enum,
+/// arbitrary `u8` values may be expected.
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum TransferResult {
+    Success,
+    Corrupt,
+    VersionMismatch,
+    Aborted,
+    Timeout,
+    GenericError,
+    Other(u8),
+}
+
+impl From<u8> for TransferResult {
+    fn from(v: u8) -> Self {
+        match v {
+            0x00 => Self::Success,
+            0x01 => Self::Corrupt,
+            0x02 => Self::VersionMismatch,
+            0x03 => Self::Aborted,
+            0x09 => Self::Timeout,
+            0x0a => Self::GenericError,
+            v => Self::Other(v),
+        }
+    }
+}
+
+impl From<TransferResult> for u8 {
+    fn from(v: TransferResult) -> u8 {
+        match v {
+            TransferResult::Success => 0x00,
+            TransferResult::Corrupt => 0x01,
+            TransferResult::VersionMismatch => 0x02,
+            TransferResult::Aborted => 0x03,
+            TransferResult::Timeout => 0x09,
+            TransferResult::GenericError => 0x0a,
+            TransferResult::Other(v) => v,
+        }
+    }
+}
+
+/// Verify Result codes for VerifyComplete
+///
+/// Not all defined Verify Result codes are defined in this enum,
+/// arbitrary `u8` values may be expected in `Other` variant.
+///
+/// Ref "VerifyComplete command format" Table 31 of DSP0267 1.1.0
+#[allow(missing_docs)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum VerifyResult {
+    Success,
+    Failure,
+    VersionMismatch,
+    SecurityChecksFailed,
+    IncompleteImage,
+    // 0x5 - 0x8 reserved
+    Timeout,
+    GenericError,
+    Other(u8),
+}
+
+impl From<u8> for VerifyResult {
+    fn from(v: u8) -> Self {
+        match v {
+            0x00 => Self::Success,
+            0x01 => Self::Failure,
+            0x02 => Self::VersionMismatch,
+            0x03 => Self::SecurityChecksFailed,
+            0x04 => Self::IncompleteImage,
+            0x09 => Self::Timeout,
+            0x0a => Self::GenericError,
+            v => Self::Other(v),
+        }
+    }
+}
+
+impl From<VerifyResult> for u8 {
+    fn from(v: VerifyResult) -> u8 {
+        match v {
+            VerifyResult::Success => 0x00,
+            VerifyResult::Failure => 0x01,
+            VerifyResult::VersionMismatch => 0x02,
+            VerifyResult::SecurityChecksFailed => 0x03,
+            VerifyResult::IncompleteImage => 0x04,
+            VerifyResult::Timeout => 0x09,
+            VerifyResult::GenericError => 0x0a,
+            VerifyResult::Other(v) => v,
+        }
+    }
+}
+
+/// Apply Result codes for ApplyComplete
+///
+/// Not all defined Verify Result codes are defined in this enum,
+/// arbitrary `u8` values may be expected in `Other` variant.
+///
+/// Ref "ApplyComplete command format" Table 32 of DSP0267 1.1.0
+#[allow(missing_docs)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ApplyResult {
+    Success,
+    SuccessModActivation,
+    FailedMemoryWrite,
+    Timeout,
+    GenericError,
+    Other(u8),
+}
+
+impl From<u8> for ApplyResult {
+    fn from(v: u8) -> Self {
+        match v {
+            0x00 => Self::Success,
+            0x01 => Self::SuccessModActivation,
+            0x02 => Self::FailedMemoryWrite,
+            0x09 => Self::Timeout,
+            0x0a => Self::GenericError,
+            v => Self::Other(v),
+        }
+    }
+}
+
+impl From<ApplyResult> for u8 {
+    fn from(v: ApplyResult) -> u8 {
+        match v {
+            ApplyResult::Success => 0x00,
+            ApplyResult::SuccessModActivation => 0x01,
+            ApplyResult::FailedMemoryWrite => 0x02,
+            ApplyResult::Timeout => 0x09,
+            ApplyResult::GenericError => 0x0a,
+            ApplyResult::Other(v) => v,
+        }
+    }
 }
 
 //type VResult<I,O> = IResult<I, O, VerboseError<I>>;
 type VResult<I, O> = IResult<I, O>;
+
+#[derive(FromPrimitive, Debug, PartialEq)]
+#[repr(u8)]
+enum TransferFlag {
+    Start = 0x01,
+    Middle = 0x02,
+    End = 0x04,
+}
 
 #[cfg(feature = "alloc")]
 #[derive(Debug)]
@@ -211,6 +376,30 @@ impl fmt::Display for DescriptorString {
     }
 }
 
+impl DescriptorString {
+    pub fn empty() -> Self {
+        Self::Bytes(Default::default())
+    }
+
+    pub fn string_type(&self) -> u8 {
+        match self {
+            Self::Bytes(_) => 0,
+            Self::String(_) => 1,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Bytes(b) => b,
+            Self::String(b) => b.as_bytes(),
+        }
+    }
+
+    fn bytes_len(&self) -> u8 {
+        self.as_bytes().len() as u8
+    }
+}
+
 #[cfg(feature = "alloc")]
 impl DescriptorString {
     pub fn write_utf8_bytes(&self, v: &mut Vec<u8>) {
@@ -229,11 +418,24 @@ impl DescriptorString {
     }
 
     pub fn new_utf8(v: &[u8]) -> Option<Self> {
+        if v.len() > 0xff {
+            return None;
+        }
         let s = core::str::from_utf8(v).ok()?;
         Some(Self::String(s.to_string()))
     }
 
+    pub fn new_str(s: &str) -> Option<Self> {
+        if s.as_bytes().len() > 0xff {
+            return None;
+        }
+        Some(Self::String(s.to_string()))
+    }
+
     pub fn new_bytes(v: &[u8]) -> Option<Self> {
+        if v.len() > 0xff {
+            return None;
+        }
         Some(Self::Bytes(v.to_vec()))
     }
 
@@ -255,6 +457,10 @@ impl DescriptorString {
 impl DescriptorString {
     pub fn new_utf8(v: &[u8]) -> Option<Self> {
         let s = core::str::from_utf8(v).ok()?;
+        Self::new_str(s)
+    }
+
+    pub fn new_str(s: &str) -> Option<Self> {
         let s = heapless::String::try_from(s).ok()?;
         Some(Self::String(s))
     }
@@ -271,6 +477,7 @@ impl DescriptorString {
     // }
 }
 
+/// A device descriptor
 #[derive(Debug)]
 pub enum Descriptor {
     PciVid(u16),
@@ -285,6 +492,7 @@ pub enum Descriptor {
     },
 }
 
+/// Parse a string with type and length
 pub fn parse_string<'a>(
     typ: u8,
     len: u8,
@@ -347,6 +555,10 @@ impl Descriptor {
         ))(buf)
     }
 
+    fn parse_fail(buf: &[u8]) -> VResult<&[u8], Self> {
+        nom::combinator::fail(buf)
+    }
+
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let f = |(typ, len)| {
             let g = match typ {
@@ -354,7 +566,7 @@ impl Descriptor {
                 0x0001 => Self::parse_iana,
                 0x0002 => Self::parse_uuid,
                 0xffff => Self::parse_vendor,
-                _ => unimplemented!(),
+                _ => Self::parse_fail,
             };
             map_parser(take(len), all_consuming(g))
         };
@@ -370,27 +582,16 @@ impl Descriptor {
         }
     }
 
-    pub fn write_buf(&self, buf: &mut [u8]) -> Result<usize, PldmError> {
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(buf);
         match self {
-            Self::PciVid(v) => {
-                let b = buf.get_mut(..2).ok_or(PldmError::NoSpace)?;
-                b.copy_from_slice(&v.to_le_bytes());
-                Ok(b.len())
-            }
-            Self::Iana(v) => {
-                let b = buf.get_mut(..4).ok_or(PldmError::NoSpace)?;
-                b.copy_from_slice(&v.to_le_bytes());
-                Ok(b.len())
-            }
-            Self::Uuid(v) => {
-                let b = buf.get_mut(..16).ok_or(PldmError::NoSpace)?;
-                b.copy_from_slice(v.as_bytes());
-                Ok(b.len())
-            }
+            Self::PciVid(v) => b.push_le16(*v),
+            Self::Iana(v) => b.push_le32(*v),
+            Self::Uuid(v) => b.push(v.as_bytes()),
             Self::Vendor { .. } => {
                 // TODO encode Vendor
                 debug!("Vendor descriptor write not implemented");
-                Err(PldmError::InvalidArgument)
+                None
             }
         }
     }
@@ -456,38 +657,30 @@ impl DeviceIdentifiers {
 
 impl DeviceIdentifiers {
     /// Returns a response for QueryDeviceIdentifiers
-    pub fn write_buf(&self, buf: &mut [u8]) -> Result<usize, PldmError> {
-        if buf.len() < 5 {
-            return Err(PldmError::NoSpace);
-        }
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(buf);
 
         if self.ids.is_empty() {
-            return Err(PldmError::InvalidArgument);
+            return None;
         }
 
-        // to be filled after the length is known
-        let (desc_len, buf) = buf.split_at_mut(4);
-        let (desc_count, buf) = buf.split_at_mut(1);
-        desc_count[0] = u8::try_from(self.ids.len())
-            .map_err(|_| PldmError::InvalidArgument)?;
+        // To be filled after the length is known
+        b.push_le32(0)?;
+        b.push_le8(self.ids.len() as u8)?;
 
-        let mut buf = buf;
-        let mut dl = 0;
         for v in self.ids.iter() {
-            let id_typ;
-            let id_len;
-            (id_typ, buf) = buf.split_at_mut(2);
-            (id_len, buf) = buf.split_at_mut(2);
-            id_typ.copy_from_slice(&v.desc_type().to_le_bytes());
-
-            let l = v.write_buf(buf)?;
-            buf = &mut buf[l..];
-            id_len.copy_from_slice(&(l as u16).to_le_bytes());
-            dl += 4 + l;
+            b.push_le16(v.desc_type())?;
+            b.push_prefix_le::<u16, _>(|m| v.write_buf(m))?;
         }
 
-        desc_len.copy_from_slice(&(dl as u32).to_le_bytes());
-        Ok(dl + 5)
+        let written = b.written();
+
+        // Now fill out the DeviceIdentifiersLength the the start.
+        // Doesn't include ids len.
+        let mut b = SliceWriter::new(buf);
+        b.push_le32((written - 5) as u32)?;
+
+        Some(written)
     }
 }
 
@@ -512,6 +705,31 @@ pub struct ComponentVersion {
     pub date: Option<PldmDate>,
 }
 
+impl ComponentVersion {
+    /// Creates a new utf-8 string `ComponentVersion`
+    ///
+    /// May fail on non-`alloc` if the string is too long
+    pub fn new_str(s: &str) -> Option<Self> {
+        Some(Self {
+            stamp: 0,
+            version: DescriptorString::new_str(s)?,
+            date: None,
+        })
+    }
+
+    /// Writes stamp, type, length, date
+    ///
+    /// As used for the ComponentParameterTable
+    pub fn write_initial(&self, b: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(b);
+        b.push_le32(self.stamp)?;
+        b.push_le8(self.version.string_type())?;
+        b.push_le8(self.version.bytes_len())?;
+        b.push_with(|m| pldm_date_write_buf(&self.date, m))?;
+        Some(b.written())
+    }
+}
+
 impl fmt::Display for ComponentVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.version)?;
@@ -531,7 +749,7 @@ pub fn pldm_date_parse(buf: &[u8]) -> VResult<&[u8], Option<PldmDate>> {
         value(None, tag([0u8; 8])),
         map(
             tuple((
-                map_parser(take(4u8), c_i32),
+                map_parser(take(4u8), c_u32),
                 map_parser(take(2u8), c_u32),
                 map_parser(take(2u8), c_u32),
             )),
@@ -539,16 +757,55 @@ pub fn pldm_date_parse(buf: &[u8]) -> VResult<&[u8], Option<PldmDate>> {
         ),
     ))(buf)?;
 
-    let d = o.and_then(|(y, m, d)| PldmDate::from_ymd_opt(y, m, d));
+    let d = o.and_then(|(y, m, d)| PldmDate::from_ymd_opt(y as i32, m, d));
 
     Ok((r, d))
 }
 
-#[derive(Debug)]
+pub fn pldm_date_write_buf(
+    date: &Option<PldmDate>,
+    b: &mut [u8],
+) -> Option<usize> {
+    let mut b = SliceWriter::new(b);
+    if let Some(date) = date {
+        let mut y = date.year();
+        if y < 0 {
+            return None;
+        }
+        let m = date.month();
+        let d = date.day();
+
+        // hand written to avoid fmt code bloat
+        let mut w = [0u8; 8];
+        for i in 0..4 {
+            w[3 - i] = (y % 10) as u8;
+            y /= 10;
+        }
+        w[4] = (m / 10) as u8;
+        w[5] = (m % 10) as u8;
+        w[6] = (d / 10) as u8;
+        w[7] = (d % 10) as u8;
+        let w = w.map(|c| b'0' + c);
+        b.push(&w)?;
+
+        // This is 3kB of code size.
+        // write!(b, "{:04}{:02}{:02}", y, date.month(), date.day()).ok()?;
+    } else {
+        b.push(&[0u8; 8])?;
+    }
+
+    Some(b.written())
+}
+
+/// Component classification
+#[allow(missing_docs)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ComponentClassification {
     Unknown,
     Other,
     Firmware,
+    /// Other values
+    Value(u16),
 }
 
 impl From<u16> for ComponentClassification {
@@ -557,7 +814,7 @@ impl From<u16> for ComponentClassification {
             0x0000 => Self::Unknown,
             0x0001 => Self::Other,
             0x000a => Self::Firmware,
-            _ => unimplemented!(),
+            v => Self::Value(v),
         }
     }
 }
@@ -568,6 +825,7 @@ impl From<&ComponentClassification> for u16 {
             ComponentClassification::Unknown => 0x0000,
             ComponentClassification::Other => 0x0001,
             ComponentClassification::Firmware => 0x000a,
+            ComponentClassification::Value(v) => *v,
         }
     }
 }
@@ -584,7 +842,7 @@ pub enum ActivationMethod {
     Automatic = 0,
 }
 
-type ActivationMethods = EnumSet<ActivationMethod>;
+pub type ActivationMethods = EnumSet<ActivationMethod>;
 
 #[derive(EnumSetType, Debug)]
 pub enum DeviceCapability {
@@ -639,7 +897,7 @@ impl DeviceCapability {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DeviceCapabilities(EnumSet<DeviceCapability>);
 
 impl DeviceCapabilities {
@@ -689,7 +947,6 @@ pub struct Component {
 }
 
 impl Component {
-    #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (
             r,
@@ -737,6 +994,139 @@ impl Component {
 
         Ok((r, c))
     }
+
+    pub fn write_buf(&self, b: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(b);
+        b.push_le16(u16::from(&self.classification))?;
+        b.push_le16(self.identifier)?;
+        b.push_le8(self.classificationindex)?;
+        b.push_with(|m| self.active.write_initial(m))?;
+        b.push_with(|m| self.pending.write_initial(m))?;
+        b.push_le16(self.activation_methods.as_u16())?;
+        b.push_le32(self.caps_during_update.as_u32())?;
+        b.push(self.active.version.as_bytes())?;
+        b.push(self.pending.version.as_bytes())?;
+
+        Some(b.written())
+    }
+}
+
+/// An entry for Pass Component Table or Update Component
+///
+/// The same structure is used for both, with `size` and `flags`
+/// unpopulated for Pass Component
+#[allow(missing_docs)]
+pub struct UpdateComponent {
+    pub classification: ComponentClassification,
+    pub identifier: u16,
+    pub classificationindex: u8,
+    pub comparisonstamp: u32,
+    pub version: DescriptorString,
+    /// Size, not set for Pass Component
+    pub size: Option<u32>,
+    /// Flags, not set for Pass Component
+    pub flags: Option<u32>,
+}
+
+impl UpdateComponent {
+    pub fn parse_pass_component(buf: &[u8]) -> VResult<&[u8], Self> {
+        let (
+            r,
+            (
+                classification,
+                identifier,
+                classificationindex,
+                comparisonstamp,
+                version,
+            ),
+        ) = tuple((le_u16, le_u16, le_u8, le_u32, parse_string_adjacent))(
+            &buf,
+        )?;
+
+        let s = Self {
+            classification: classification.into(),
+            identifier,
+            classificationindex,
+            comparisonstamp,
+            version,
+            size: None,
+            flags: None,
+        };
+        Ok((r, s))
+    }
+    pub fn parse_update(buf: &[u8]) -> VResult<&[u8], Self> {
+        let (
+            r,
+            (
+                classification,
+                identifier,
+                classificationindex,
+                comparisonstamp,
+                size,
+                flags,
+                version,
+            ),
+        ) = tuple((
+            le_u16,
+            le_u16,
+            le_u8,
+            le_u32,
+            le_u32,
+            le_u32,
+            parse_string_adjacent,
+        ))(&buf)?;
+
+        let s = Self {
+            classification: classification.into(),
+            identifier,
+            classificationindex,
+            comparisonstamp,
+            version,
+            size: Some(size),
+            flags: Some(flags),
+        };
+        Ok((r, s))
+    }
+}
+
+#[derive(Debug)]
+pub struct UpdateComponentResponse {
+    /// A ComponentResponseCode
+    pub response_code: u8,
+    pub update_flags: u32,
+    pub estimate_time: u16,
+}
+
+/// Response Codes for Update Component and Pass Component Table
+///
+/// This list is not complete, refer to the specification
+#[allow(missing_docs)]
+#[repr(u8)]
+#[derive(Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ComponentResponseCode {
+    Success = 0x00,
+    IdenticalVersion = 0x01,
+    DowngradeVersion = 0x02,
+    InvalidVersion = 0x03,
+    Conflict = 0x04,
+    MissingPrerequisite = 0x05,
+    NotSupported = 0x06,
+    SecurityPreventDowngrade = 0x07,
+}
+
+impl UpdateComponentResponse {
+    pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
+        let (r, (_response, response_code, update_flags, estimate_time)) =
+            tuple((le_u8, le_u8, le_u32, le_u16))(buf)?;
+
+        let s = Self {
+            response_code,
+            update_flags,
+            estimate_time,
+        };
+        Ok((r, s))
+    }
 }
 
 #[derive(Debug)]
@@ -748,8 +1138,8 @@ pub struct FirmwareParameters<'a> {
     pub pending: DescriptorString,
 }
 
+#[cfg(feature = "alloc")]
 impl FirmwareParameters<'_> {
-    #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (r, p) = tuple((le_u32, le_u16, le_u8, le_u8, le_u8, le_u8))(buf)?;
 
@@ -778,6 +1168,27 @@ impl FirmwareParameters<'_> {
     }
 }
 
+impl FirmwareParameters<'_> {
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut w = SliceWriter::new(buf);
+
+        w.push_le32(self.caps.as_u32())?;
+        w.push_le16(self.components.len() as u16)?;
+        w.push_le8(self.active.string_type())?;
+        w.push_le8(self.active.bytes_len())?;
+        w.push_le8(self.pending.string_type())?;
+        w.push_le8(self.pending.bytes_len())?;
+        w.push(self.active.as_bytes())?;
+        w.push(self.pending.as_bytes())?;
+
+        for c in self.components.as_ref() {
+            w.push_with(|b| c.write_buf(b))?;
+        }
+
+        Some(w.written())
+    }
+}
+
 #[derive(Debug)]
 pub struct RequestUpdateResponse {
     pub fd_metadata_len: u16,
@@ -795,28 +1206,37 @@ impl RequestUpdateResponse {
             },
         ))
     }
+
+    pub fn write_buf(&self, b: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(b);
+        b.push_le16(self.fd_metadata_len)?;
+        b.push_le8(self.fd_will_sent_gpd)?;
+        Some(b.written())
+    }
 }
 
 #[derive(Debug)]
 pub struct RequestUpdateRequest {
     pub max_transfer: u32,
     pub num_components: u16,
-    pub max_outstanding: u16,
+    pub max_outstanding: u8,
     pub package_data_length: u16,
     pub component_image_set_version: DescriptorString,
 }
 
 impl RequestUpdateRequest {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
-        let (r, t) = tuple((le_u32, le_u16, le_u16, le_u16, parse_string_adjacent))(buf)?;
-        Ok((r,
+        let (r, t) =
+            tuple((le_u32, le_u16, le_u8, le_u16, parse_string_adjacent))(buf)?;
+        Ok((
+            r,
             RequestUpdateRequest {
                 max_transfer: t.0,
                 num_components: t.1,
                 max_outstanding: t.2,
                 package_data_length: t.3,
                 component_image_set_version: t.4,
-            }
+            },
         ))
     }
 }
@@ -856,6 +1276,18 @@ impl GetStatusResponse {
             },
         ))
     }
+
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(buf);
+        b.push_le8(self.current_state as u8)?;
+        b.push_le8(self.previous_state as u8)?;
+        b.push_le8(self.aux_state)?;
+        b.push_le8(self.aux_state_status)?;
+        b.push_le8(self.progress_percent)?;
+        b.push_le8(self.reason_code)?;
+        b.push_le32(self.update_option_flags_enabled)?;
+        Some(b.written())
+    }
 }
 
 impl fmt::Display for GetStatusResponse {
@@ -871,4 +1303,87 @@ pub struct UpdateTransferProgress {
     pub duration: chrono::Duration,
     pub remaining: chrono::Duration,
     pub complete: bool,
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::*;
+
+    #[test]
+    fn date_parse() {
+        let x = b"20240704x";
+        let d = pldm_date_parse(x).unwrap();
+        let expect = PldmDate::parse_from_str("20240704", "%Y%m%d").unwrap();
+        assert_eq!(d, ("x".as_bytes(), Some(expect)));
+
+        // negative date rejected
+        let x = b"-0240704x";
+        pldm_date_parse(x).unwrap_err();
+
+        // short fails
+        let x = b"2024070";
+        pldm_date_parse(x).unwrap_err();
+
+        // space rejected
+        let x = b" 0240704x";
+        pldm_date_parse(x).unwrap_err();
+
+        // bad date returns None
+        let x = b"20240732";
+        let (_, d) = pldm_date_parse(x).unwrap();
+        assert_eq!(d, None);
+    }
+
+    #[test]
+    fn date_write() {
+        let d = PldmDate::parse_from_str("20240704", "%Y%m%d").unwrap();
+
+        let mut b = [99u8; 9];
+        let l = pldm_date_write_buf(&Some(d), &mut b).unwrap();
+        assert_eq!(b[8], 99);
+        assert_eq!(l, 8);
+        let b = &b[..l];
+        assert_eq!(b"20240704", b);
+
+        // short fails
+        let mut b = [99u8; 7];
+        assert!(pldm_date_write_buf(&Some(d), &mut b).is_none());
+
+        // None date is all 0x00 bytes
+        let mut b = [99u8; 8];
+        let l = pldm_date_write_buf(&None, &mut b).unwrap();
+        assert_eq!(l, 8);
+        assert_eq!(b, [0u8; 8]);
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn write_device_identifier() {
+        let ids = vec![Descriptor::PciVid(0xccde), Descriptor::Iana(1234)];
+        let di = DeviceIdentifiers { ids };
+
+        let mut sendbuf = [0u8; 50];
+        let l = di.write_buf(&mut sendbuf).unwrap();
+        let sendbuf = &sendbuf[..l];
+        let expect = [
+            // length
+            0x0e, 0x00, 0x00, 0x00,
+            // count
+            0x02,
+            // desc 1 type
+            0x00, 0x00,
+            // data
+            0x02, 0x00,
+            // length
+            0xde, 0xcc,
+            // desc 2 type
+            0x01, 0x00,
+            // length
+            0x04, 0x00,
+            // data
+            0xd2, 0x04, 0x00, 0x00,
+        ];
+        assert_eq!(sendbuf, expect);
+    }
 }
