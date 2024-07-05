@@ -374,7 +374,7 @@ impl Responder {
                 st.aux_state = 3;
             }
             State::Download { size, offset, update_flags, .. } => {
-                st.progress_percent = (size / offset * 100) as u8;
+                st.progress_percent = ((*offset as u64) * 100 / (*size as u64)) as u8;
                 st.update_option_flags_enabled = *update_flags;
                 // TODO auxstate
             }
