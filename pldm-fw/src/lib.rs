@@ -1030,6 +1030,13 @@ impl RequestUpdateResponse {
             },
         ))
     }
+
+    pub fn write_buf(&self, b: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(b);
+        b.push_le16(self.fd_metadata_len)?;
+        b.push_le8(self.fd_will_sent_gpd)?;
+        Some(b.written())
+    }
 }
 
 #[derive(Debug)]

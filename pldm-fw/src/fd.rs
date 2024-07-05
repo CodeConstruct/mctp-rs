@@ -211,6 +211,7 @@ impl Responder {
         pldm_tx_resp(ep, &resp)
     }
 
+    // Request Update
     fn cmd_update(
         &mut self,
         req: &PldmRequest,
@@ -234,14 +235,12 @@ impl Responder {
 
         self.update_timestamp_fd_t1 = dev.now();
 
-        let mut b = SliceWriter::new(&mut self.msg_buf);
-        // FirmwareDeviceMetaDataLength, no metadata, 0
-        // FDWillSendGetPackageDataCommand, not supported, 0
-        b.push_le16(0).space()?;
-        b.push_le16(0).space()?;
-        let b = b.done();
+        let l = RequestUpdateResponse {
+            fd_metadata_len: 0,
+            fd_will_sent_gpd: 0,
+        }.write_buf(&mut self.msg_buf).space()?;
 
-        let resp = req.response_borrowed(b)?;
+        let resp = req.response_borrowed(&self.msg_buf[..l])?;
         pldm_tx_resp(ep, &resp)?;
         self.set_state(State::LearnComponents);
         Ok(())
