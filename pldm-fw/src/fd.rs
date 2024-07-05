@@ -232,7 +232,7 @@ impl Responder {
         }
 
         let Ok((_, (transferflag, up))) =
-            complete(tuple((le_u8, UpdateComponent::parse_pass_component)))(&req.data)
+            all_consuming(tuple((le_u8, UpdateComponent::parse_pass_component)))(&req.data)
         else {
             trace!("error parsing PassComponent");
             self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
@@ -267,7 +267,7 @@ impl Responder {
         }
 
         let Ok((_, up)) =
-            complete(UpdateComponent::parse_update)(&req.data)
+            all_consuming(UpdateComponent::parse_update)(&req.data)
         else {
             trace!("error parsing UpdateComponent");
             self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
