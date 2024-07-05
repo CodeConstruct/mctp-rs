@@ -24,26 +24,33 @@ use nom::{
 use num_traits::FromPrimitive;
 
 use mctp::{Eid, Endpoint, Tag};
-use pldm::{pldm_tx_resp, CCode, PldmError, PldmRequest};
+use pldm::{pldm_tx_req, pldm_tx_resp, CCode, PldmError, PldmRequest};
 
 use crate::*;
 
 // TODO, borrow from somewhere.
-const SENDBUF: usize = 1024;
+const MSGBUF: usize = 1024;
 
 type Result<T> = core::result::Result<T, PldmError>;
 
 enum State {
-    Idle,
+    Idle { reason: PldmIdleReason },
     LearnComponents,
     ReadyXfer,
     Download {
+        // limited to u32 on construction
         size: usize,
         offset: usize,
-        last_req_fd_t2: u64,
+        // whether we are waiting for a response from the UA.
+        // when this is true, it is valid to send a new request
+        // for the current offset.
+        // `offset` is incremented on the `requested` true->false transition.
+        requested: bool,
+        req_time: u64,
         classification: ComponentClassification,
         identifier: u16,
         index: u8,
+        update_flags: u32,
     },
     Verify,
     Apply,
@@ -53,7 +60,7 @@ enum State {
 impl From<&State> for PldmFDState {
     fn from(s: &State) -> PldmFDState {
         match s {
-            State::Idle => PldmFDState::Idle,
+            State::Idle { .. } => PldmFDState::Idle,
             State::LearnComponents => PldmFDState::LearnComponents,
             State::ReadyXfer => PldmFDState::ReadyXfer,
             State::Download { .. } => PldmFDState::Download,
@@ -66,9 +73,12 @@ impl From<&State> for PldmFDState {
 
 pub struct Responder {
     ua_eid: Option<Eid>,
+    /// state should be modified via set_state()
     state: State,
+    prev_state: PldmFDState,
 
-    send_buf: heapless::Vec<u8, SENDBUF>,
+    msg_buf: [u8; MSGBUF],
+    // Maximum size allowed by the UA
     max_transfer: usize,
 
     // Timestamp for FD T1 timeout, milliseconds
@@ -76,11 +86,21 @@ pub struct Responder {
 }
 
 impl Responder {
+    /// Update mode idle timeout, 120 seconds
+    pub const FD_T1_TIMEOUT: u64 = 120_000;
+
+    /// Retry req firmware time, 2 seconds
+    pub const REQ_FW_RETRY_TIME: u64 = 1_000;
+
+    /// Specification baseline request size
+    pub const BASELINE_MTU: usize = 32;
+
     pub fn new() -> Self {
         Self {
             ua_eid: None,
-            state: State::Idle,
-            send_buf: heapless::Vec::new(),
+            state: State::Idle { reason: PldmIdleReason::Init },
+            prev_state: PldmFDState::Idle,
+            msg_buf: [0; MSGBUF],
             max_transfer: PLDM_FW_BASELINE_TRANSFER,
             update_timestamp_fd_t1: 0,
         }
@@ -97,10 +117,6 @@ impl Responder {
         ep: &mut impl Endpoint,
         d: &mut impl Device,
     ) -> Result<()> {
-        if !tag.is_owner() {
-            trace!("request_in for response");
-            return Err(PldmError::InvalidArgument);
-        }
         let req = PldmRequest::from_buf_borrowed(Some(tag), payload)?;
 
         let Some(cmd) = Cmd::from_u8(req.cmd) else {
@@ -123,6 +139,8 @@ impl Responder {
             Cmd::GetFirmwareParameters => self.cmd_fwparams(&req, ep, d),
             Cmd::RequestUpdate => self.cmd_update(&req, ep, d),
             Cmd::PassComponentTable => self.cmd_pass_components(&req, ep, d),
+            Cmd::UpdateComponent => self.cmd_update_component(&req, ep, d),
+            Cmd::GetStatus => self.cmd_get_status(&req, ep, d),
             _ => {
                 trace!("unhandled command {cmd:?}");
                 self.reply_error(
@@ -143,7 +161,7 @@ impl Responder {
 
     fn reply_error(&self, req: &PldmRequest, ep: &mut impl Endpoint, cc: u8) {
         let mut resp = req.response_borrowed(&[]).unwrap();
-        resp.cc = cc as u8;
+        resp.cc = cc;
         let _ = pldm_tx_resp(ep, &resp)
             .inspect_err(|e| trace!("Error sending failure response. {e:?}"));
     }
@@ -156,14 +174,13 @@ impl Responder {
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
-        let _ = self.send_buf.resize_default(self.send_buf.capacity());
+        if !req.data.is_empty() {
+            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            return Ok(());
+        }
 
-        let l = dev
-            .dev_identifiers()
-            .write_buf(&mut self.send_buf)
-            .ok_or(PldmError::NoSpace)?;
-        self.send_buf.truncate(l);
-        let resp = req.response_borrowed(&self.send_buf)?;
+        let l = dev.dev_identifiers().write_buf(&mut self.msg_buf).space()?;
+        let resp = req.response_borrowed(&self.msg_buf[..l])?;
 
         pldm_tx_resp(ep, &resp)
     }
@@ -176,6 +193,10 @@ impl Responder {
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
+        if !req.data.is_empty() {
+            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            return Ok(());
+        }
 
         let fwp = FirmwareParameters {
             caps: Default::default(),
@@ -184,12 +205,8 @@ impl Responder {
             pending: dev.pending_image_set_version(),
         };
 
-        let _ = self.send_buf.resize_default(self.send_buf.capacity());
-        let l = fwp
-            .write_buf(&mut self.send_buf)
-            .ok_or(PldmError::NoSpace)?;
-        self.send_buf.truncate(l);
-        let resp = req.response_borrowed(&self.send_buf)?;
+        let l = fwp.write_buf(&mut self.msg_buf).space()?;
+        let resp = req.response_borrowed(&self.msg_buf[..l])?;
 
         pldm_tx_resp(ep, &resp)
     }
@@ -200,23 +217,33 @@ impl Responder {
         ep: &mut impl Endpoint,
         dev: &mut impl Device,
     ) -> Result<()> {
-        if !matches!(self.state, State::Idle) {
+        if !matches!(self.state, State::Idle { .. }) {
             self.reply_error(req, ep, FwCode::ALREADY_IN_UPDATE_MODE as u8);
             return Ok(());
         }
 
-        let Ok((_, ru)) = RequestUpdateRequest::parse(&req.data) else {
+        let Ok((_, ru)) = all_consuming(RequestUpdateRequest::parse)(&req.data) else {
             trace!("error parsing RequestUpdate");
             self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         };
-        self.max_transfer = ru.max_transfer as usize;
+
+        // Don't let it be 0
+        self.max_transfer =
+            (ru.max_transfer as usize).max(PLDM_FW_BASELINE_TRANSFER);
 
         self.update_timestamp_fd_t1 = dev.now();
 
-        let resp = req.response_borrowed(&self.send_buf)?;
+        let mut b = SliceWriter::new(&mut self.msg_buf);
+        // FirmwareDeviceMetaDataLength, no metadata, 0
+        // FDWillSendGetPackageDataCommand, not supported, 0
+        b.push_le16(0).space()?;
+        b.push_le16(0).space()?;
+        let b = b.done();
+
+        let resp = req.response_borrowed(b)?;
         pldm_tx_resp(ep, &resp)?;
-        self.state = State::LearnComponents;
+        self.set_state(State::LearnComponents);
         Ok(())
     }
 
@@ -250,7 +277,7 @@ impl Responder {
         pldm_tx_resp(ep, &resp)?;
 
         if transferflag & TransferFlag::End as u8 > 0 {
-            self.state = State::ReadyXfer;
+            self.set_state(State::ReadyXfer);
         }
         Ok(())
     }
@@ -276,32 +303,200 @@ impl Responder {
 
         self.update_timestamp_fd_t1 = dev.now();
 
+        // mask to only "Force Update"
         let res = dev.update_component(false, &up);
+
+        let update_flags = up.flags.unwrap() & 0x1;
 
         let mut comp_resp = [0u8; 8];
         let mut b = SliceWriter::new(&mut comp_resp);
         // ComponentResponse, 0 for success, 1 otherwise?
-        b.push_le8((res != 0) as u8).ok_or(PldmError::NoSpace)?;
         // ComponentResponseCode
-        b.push_le8(res).ok_or(PldmError::NoSpace)?;
-        // UpdateOptionFlagsEnabled, mask to only "Force Update"
-        b.push_le32(up.flags.unwrap() & 0x1).ok_or(PldmError::NoSpace)?;
+        // UpdateOptionFlagsEnabled
         // Estimated time until update, seconds
-        b.push_le16(0).ok_or(PldmError::NoSpace)?;
+        b.push_le8((res != 0) as u8).space()?;
+        b.push_le8(res).space()?;
+        b.push_le32(update_flags).space()?;
+        b.push_le16(0).space()?;
 
         let resp = req.response_borrowed(&comp_resp)?;
         pldm_tx_resp(ep, &resp)?;
 
-        self.state = State::Download {
-            // OK unwrap, size is always set for parse_update()
+        self.set_state(State::Download {
+            // OK unwrap, size is always set by parse_update()
             size: up.size.unwrap() as usize,
             offset: 0,
-            last_req_fd_t2: dev.now(),
+            requested: false,
+            req_time: 0,
             classification: up.classification,
             identifier: up.identifier,
             index: up.classificationindex,
-        };
+            update_flags,
+        });
         Ok(())
+    }
+
+    fn cmd_get_status(
+        &mut self,
+        req: &PldmRequest,
+        ep: &mut impl Endpoint,
+        _dev: &mut impl Device,
+    ) -> Result<()> {
+        if !req.data.is_empty() {
+            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            return Ok(());
+        }
+
+        let l = self.get_status().write_buf(&mut self.msg_buf).space()?;
+        let resp = req.response_borrowed(&self.msg_buf[..l])?;
+        pldm_tx_resp(ep, &resp)
+    }
+
+    fn get_status(&self) -> GetStatusResponse {
+        // Defaults for unspecified states
+        let mut st = GetStatusResponse {
+            current_state: (&self.state).into(),
+            previous_state: self.prev_state,
+            aux_state: 0,
+            aux_state_status: 0,
+            progress_percent: 101,
+            reason_code: PldmIdleReason::Init as u8,
+            update_option_flags_enabled: 0,
+        };
+
+        match &self.state {
+            State::Idle { reason } => {
+                st.reason_code = *reason as u8;
+                st.aux_state = 3;
+            }
+            | State::LearnComponents
+            | State::ReadyXfer
+            => {
+                st.aux_state = 3;
+            }
+            State::Download { size, offset, update_flags, .. } => {
+                st.progress_percent = (size / offset * 100) as u8;
+                st.update_option_flags_enabled = *update_flags;
+                // TODO auxstate
+            }
+            State::Verify => {
+                // TODO auxstate
+            }
+            State::Apply => {
+                // TODO auxstate
+            }
+            State::Activate => {
+                // TODO auxstate
+            }
+        }
+
+        st
+
+    }
+
+    pub fn progress(&mut self, ep: &mut impl Endpoint, dev: &mut impl Device) {
+        if !matches!(self.state, State::Idle { .. })
+            && dev.now() - self.update_timestamp_fd_t1 > Self::FD_T1_TIMEOUT
+        {
+            // TODO cancel any updates in Device?
+            self.set_state_idle_timeout();
+        }
+
+        if let State::Download { .. } = self.state {
+            self.progress_download(ep, dev)
+        }
+    }
+
+    /// The size of a request at a given offset
+    fn req_size(&self, size: usize, offset: usize) -> usize {
+        size.saturating_sub(offset)
+            .min(self.max_transfer)
+            .min(self.max_request())
+    }
+
+    fn progress_download(
+        &mut self,
+        ep: &mut impl Endpoint,
+        dev: &mut impl Device,
+    ) {
+        let State::Download {
+            size,
+            offset,
+            requested,
+            req_time,
+            ref classification,
+            identifier,
+            index,
+            update_flags,
+        } = self.state
+        else {
+            return;
+        };
+
+        if requested && dev.now() - req_time < Self::REQ_FW_RETRY_TIME {
+            // waiting for a response, no action
+            return;
+        }
+
+        // send a new request
+        let mut buf = [0u8; 8];
+        let mut b = SliceWriter::new(&mut buf);
+        let _ = b.push_le32(offset as u32);
+        let _ = b.push_le32(self.req_size(size, offset) as u32);
+        debug_assert_eq!(b.written(), 8);
+
+        let req = PldmRequest::new_borrowed(
+            PLDM_TYPE_FW,
+            Cmd::RequestFirmwareData as u8,
+            &buf,
+        );
+
+        // reborrow mut
+        let State::Download {
+            requested,
+            req_time,
+            ..
+        } = &mut self.state
+        else {
+            return;
+        };
+
+        *req_time = dev.now();
+
+        if let Err(e) = pldm_tx_req(ep, &req) {
+            trace!("Error tx request: {e:?}");
+            return;
+        }
+
+        *requested = true;
+    }
+
+    fn set_state(&mut self, new_state: State) {
+        self.prev_state = (&self.state).into();
+        self.state = new_state;
+    }
+
+    fn set_idle(&mut self, reason: PldmIdleReason) {
+        self.prev_state = (&self.state).into();
+        self.state = State::Idle { reason };
+    }
+
+    fn set_state_idle_timeout(&mut self) {
+        let reason = match self.state {
+            State::Idle { .. } => return,
+            State::LearnComponents => PldmIdleReason::TimeoutLearn,
+            State::ReadyXfer => PldmIdleReason::TimeoutReadyXfer,
+            State::Download { .. } => PldmIdleReason::TimeoutDownload,
+            State::Verify => PldmIdleReason::TimeoutVerify,
+            State::Apply => PldmIdleReason::TimeoutApply,
+            // not a timeout
+            State::Activate => PldmIdleReason::Activate,
+        };
+        self.set_idle(reason);
+    }
+
+    fn max_request(&self) -> usize {
+        self.msg_buf.len()
     }
 }
 

@@ -69,7 +69,7 @@ const MAX_VENDORDATA: usize = 64;
 pub struct ComponentId(pub u16);
 
 /// PLDM firmware device state definitions
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 #[repr(u8)]
 pub enum PldmFDState {
     Idle = 0,
@@ -102,6 +102,21 @@ impl PldmFDState {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         map_res(le_u8, TryInto::<PldmFDState>::try_into)(buf)
     }
+}
+
+/// Idle Reason Codes for Get Status response
+#[allow(missing_docs)]
+#[derive(FromPrimitive, Debug, PartialEq, Copy, Clone)]
+#[repr(u8)]
+pub enum PldmIdleReason {
+    Init = 0,
+    Activate = 1,
+    Cancel = 2,
+    TimeoutLearn = 3,
+    TimeoutReadyXfer = 4,
+    TimeoutDownload = 5,
+    TimeoutVerify = 6,
+    TimeoutApply = 7,
 }
 
 /// PLDM Firmware Commands
@@ -632,7 +647,7 @@ pub fn pldm_date_write_buf(
         let w = w.map(|c| b'0' + c);
         b.push(&w)?;
 
-        // // TODO: This is 3kB of code size.
+        // This is 3kB of code size.
         // write!(b, "{:04}{:02}{:02}", y, date.month(), date.day()).ok()?;
     } else {
         b.push(&[0u8; 8])?;
@@ -1021,7 +1036,7 @@ impl RequestUpdateResponse {
 pub struct RequestUpdateRequest {
     pub max_transfer: u32,
     pub num_components: u16,
-    pub max_outstanding: u16,
+    pub max_outstanding: u8,
     pub package_data_length: u16,
     pub component_image_set_version: DescriptorString,
 }
@@ -1029,7 +1044,7 @@ pub struct RequestUpdateRequest {
 impl RequestUpdateRequest {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (r, t) =
-            tuple((le_u32, le_u16, le_u16, le_u16, parse_string_adjacent))(
+            tuple((le_u32, le_u16, le_u8, le_u16, parse_string_adjacent))(
                 buf,
             )?;
         Ok((
@@ -1079,6 +1094,18 @@ impl GetStatusResponse {
                 update_option_flags_enabled: t.6,
             },
         ))
+    }
+
+    pub fn write_buf(&self, buf: &mut [u8]) -> Option<usize> {
+        let mut b = SliceWriter::new(buf);
+        b.push_le8(self.current_state as u8)?;
+        b.push_le8(self.previous_state as u8)?;
+        b.push_le8(self.aux_state)?;
+        b.push_le8(self.aux_state_status)?;
+        b.push_le8(self.progress_percent)?;
+        b.push_le8(self.reason_code)?;
+        b.push_le32(self.update_option_flags_enabled)?;
+        Some(b.written())
     }
 }
 
