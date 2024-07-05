@@ -182,8 +182,8 @@ impl Stack {
 
         // OK unwrap, we just set it.
         let (re, buf) = self.reassemblers[idx].as_mut().unwrap();
-        let handle = re.take_handle(idx);
         match re.receive(packet, buf) {
+            // Received a complete message
             Ok(Some(_msg)) => {
                 // Have received a "response", flow is finished.
                 if !re.tag.is_owner() {
@@ -197,12 +197,16 @@ impl Stack {
                 // checker is added.
                 let (re, buf) = self.reassemblers[idx].as_mut().unwrap();
                 let msg = re.message(buf)?;
+
                 re.set_completion_order(self.ordering);
                 self.ordering += 1;
+                let handle = re.take_handle(idx);
 
                 Ok(Some((msg, handle)))
             }
+            // Message isn't complete, no error
             Ok(None) => Ok(None),
+            // Error
             Err(e) => {
                 // Something went wrong, release the reassembler.
                 self.reassemblers[idx] = None;
@@ -316,6 +320,7 @@ impl Stack {
             }
         }
 
+        trace!("out of reassemblers");
         Err(Error::NoSpace)
     }
 
