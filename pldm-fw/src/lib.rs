@@ -399,6 +399,10 @@ impl Descriptor {
         ))(buf)
     }
 
+    fn parse_fail(buf: &[u8]) -> VResult<&[u8], Self> {
+        nom::combinator::fail(buf)
+    }
+
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let f = |(typ, len)| {
             let g = match typ {
@@ -406,7 +410,7 @@ impl Descriptor {
                 0x0001 => Self::parse_iana,
                 0x0002 => Self::parse_uuid,
                 0xffff => Self::parse_vendor,
-                _ => unimplemented!(),
+                _ => Self::parse_fail,
             };
             map_parser(take(len), all_consuming(g))
         };
