@@ -145,7 +145,7 @@ pub fn query_device_identifiers(
 
     let f = length_value(map(le_u32, |l| l + 1), DeviceIdentifiers::parse);
 
-    let res = complete(f)(&rsp.data);
+    let res = all_consuming(f)(&rsp.data);
 
     res.map(|(_, d)| d).map_err(|_e| {
         PldmUpdateError::new_proto("can't parse QDI response".into())
@@ -165,7 +165,7 @@ pub fn query_firmware_parameters(
 
     let f = FirmwareParameters::parse;
 
-    let res = complete(f)(&rsp.data);
+    let res = all_consuming(f)(&rsp.data);
 
     res.map(|(_, d)| d).map_err(|_e| {
         PldmUpdateError::new_proto("can't parse QFP response".into())
@@ -195,7 +195,7 @@ pub fn request_update(
         return Err(PldmUpdateError::new_command(0x10, rsp.cc));
     }
 
-    let res = complete(RequestUpdateResponse::parse)(&rsp.data);
+    let res = all_consuming(RequestUpdateResponse::parse)(&rsp.data);
 
     res.map(|(_, d)| d).map_err(|_e| {
         PldmUpdateError::new_proto("can't parse RU response".into())
@@ -533,7 +533,7 @@ fn check_fd_state(
         return Err(PldmUpdateError::new_command(0x1b, rsp.cc));
     }
 
-    let (_, res) = complete(GetStatusResponse::parse)(rsp.data.as_ref())
+    let (_, res) = all_consuming(GetStatusResponse::parse)(rsp.data.as_ref())
         .map_err(|_e| {
             PldmUpdateError::new_proto("can't parse Get Status response".into())
         })?;
