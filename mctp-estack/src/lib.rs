@@ -11,6 +11,8 @@ use log::{debug, error, info, trace, warn};
 /// released.
 pub use heapless::Vec;
 
+use heapless::LinearMap;
+
 use mctp::{Eid, MsgType, TagValue, Tag, Error, Result};
 
 mod fragment;
@@ -28,8 +30,6 @@ const RECV_PAYLOAD: usize = 1032;
 
 #[derive(Debug)]
 struct Flow {
-    peer: Eid,
-    tag: TagValue,
     // TODO
     timestamp: u64,
     cookie: Option<AppCookie>,
@@ -59,7 +59,7 @@ pub struct Stack {
     own_eid: Eid,
 
     // flows where we own the tag
-    flows: Vec<Flow, FLOWS>,
+    flows: LinearMap<(Eid, TagValue), Flow, FLOWS>,
 
     // The buffer is kept outside of the Reassembler, in case it is borrowed
     // from other storage locations in future.
@@ -82,7 +82,7 @@ impl Stack {
             own_eid,
             now_millis,
             mtu,
-            flows: Vec::new(),
+            flows: LinearMap::new(),
             reassemblers: Default::default(),
             ordering: 0,
         }
@@ -128,12 +128,12 @@ impl Stack {
         let tag = match tag {
             None => {
                 // allocate a tag
-                Tag::Owned(self.new_flow(dest, flow_cookie)?)
+                Tag::Owned(self.set_flow(dest, None, flow_cookie)?)
             }
             Some(Tag::Owned(tv)) => {
                  // A pre-known owned tag isn't normally used.
                  // Useful for future preallocated tag API
-                 self.add_flow_tag(dest, tv, flow_cookie)?;
+                 self.set_flow(dest, Some(tv), flow_cookie)?;
                  Tag::Owned(tv)
             }
             Some(Tag::Unowned(tv)) => Tag::Unowned(tv),
@@ -330,15 +330,12 @@ impl Stack {
         Err(Error::NoSpace)
     }
 
-    /// Allocates a new flow for the peer. Called when we are the tag owner.
-    ///
-    /// Returns [`Error::TagUnavailable`] if all tags or flows are used.
-    fn new_flow(&mut self, peer: Eid, cookie: Option<AppCookie>) -> Result<TagValue> {
+    fn alloc_tag(&self, peer: Eid) -> Option<TagValue> {
         // Find used tags as a bitmask
         let mut used = 0u8;
-        for f in self.flows.iter().filter(|f| f.peer == peer) {
-            debug_assert!(f.tag.0 <= mctp::MCTP_TAG_MAX);
-            let bit = 1u8 << f.tag.0;
+        for (fpeer, tag) in self.flows.keys().filter(|(fpeer, _tag)| *fpeer == peer) {
+            debug_assert!(tag.0 <= mctp::MCTP_TAG_MAX);
+            let bit = 1u8 << tag.0;
             debug_assert!(used & bit == 0);
             used |= bit;
         }
@@ -354,48 +351,53 @@ impl Stack {
             used >>= 1;
         }
 
+        tag
+    }
+
+    /// Inserts a new flow. Called when we are the tag owner.
+    ///
+    /// A tag will be allocated if fixedtag = None
+    /// Returns [`Error::TagUnavailable`] if all tags or flows are used.
+    fn new_flow(&mut self, peer: Eid, fixedtag: Option<TagValue>, cookie: Option<AppCookie>) -> Result<TagValue> {
+
+        let tag = fixedtag.or_else(|| self.alloc_tag(peer)); 
+        trace!("new flow tag {tag:?}");
+
         let Some(tag) = tag else {
             return Err(Error::TagUnavailable);
         };
 
-        // Create the flow
         let f = Flow {
-            peer,
-            tag,
             timestamp: self.now_millis,
             cookie,
         };
-        self.flows.push(f).map_err(|_| Error::TagUnavailable)?;
+        let r = self.flows.insert((peer, tag), f)
+        .map_err(|_| Error::TagUnavailable)?;
+        debug_assert!(r.is_none(), "Duplicate flow insertion");
+        trace!("new flow {peer:?} {tag:?}");
         Ok(tag)
     }
 
     /// Adds a flow tag, or updates the timestamp if it already exists
-    fn add_flow_tag(&mut self, peer: Eid, tag: TagValue, cookie: Option<AppCookie>) -> Result<()> {
-        if let Some(f) = self
-            .flows
-            .iter_mut()
-            .find(|f| f.peer == peer && f.tag == tag)
-        {
-            f.timestamp = self.now_millis;
-            if f.cookie != cookie {
-                trace!("varying app for flow {f:?}");
+    fn set_flow(&mut self, peer: Eid, tag: Option<TagValue>, cookie: Option<AppCookie>) -> Result<TagValue> {
+        trace!("set flow {peer:?}");
+        if let Some(tv) = tag {
+            if let Some(f) = self.flows.get_mut(&(peer, tv)) {
+                f.timestamp = self.now_millis;
+                if f.cookie != cookie {
+                    trace!("varying app for flow {f:?}");
+                }
+                f.cookie = cookie;
+                return Ok(tv);
             }
-            f.cookie = cookie;
-            return Ok(());
         }
 
-        let f = Flow {
-            peer,
-            tag,
-            timestamp: self.now_millis,
-            cookie,
-        };
-        self.flows.push(f).map_err(|_| Error::TagUnavailable)?;
-        Ok(())
+        self.new_flow(peer, tag, cookie)
     }
 
     fn lookup_flow(&self, peer: Eid, tv: TagValue) -> Option<&Flow> {
-        self.flows.iter().find(|f| f.peer == peer && f.tag == tv)
+        self.flows.get(&(peer, tv))
+        .inspect(|r| trace!("lookup flow {peer:?} {tv:?} got {r:?}"))
     }
 }
 
