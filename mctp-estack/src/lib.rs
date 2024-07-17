@@ -266,13 +266,8 @@ impl Stack {
     /// If multiple match the earliest is returned
     pub fn get_deferred(&mut self, source: Eid, tag: Tag) -> Option<ReceiveHandle> {
         // Find the earliest matching entry
-        self.reassemblers.iter_mut().enumerate().filter_map(|(i, r)| {
-            if let Some((re, _buf)) = r {
-                if re.is_done() && re.tag == tag && re.peer == source {
-                    return Some((i, re))
-                }
-            }
-            None
+        self.done_reassemblers().filter(|(_i, re)| {
+            re.tag == tag && re.peer == source
         })
         .min_by_key(|(_i, re)| re.completion_stamp)
         .map(|(i, re)| re.take_handle(i)) 
@@ -280,20 +275,31 @@ impl Stack {
 
     /// Retrieves a message deferred from a previous [`receive`] callback.
     ///
-    /// If multiple match the earliest is returned
+    /// If multiple match the earliest is returned.
+    /// Multiple cookies to match may be provided.
     // TODO: maybe also give this a `source: Option<Eid>` filter argument.
-    pub fn get_deferred_bycookie(&mut self, cookie: AppCookie) -> Option<ReceiveHandle> {
+    pub fn get_deferred_bycookie(&mut self, cookies: &[AppCookie]) -> Option<ReceiveHandle> {
         // Find the earliest matching entry
-        self.reassemblers.iter_mut().enumerate().filter_map(|(i, r)| {
-            if let Some((re, _buf)) = r {
-                if re.is_done() && re.cookie == Some(cookie) {
-                    return Some((i, re))
+        self.done_reassemblers().filter(|(_i, re)| {
+            if let Some(c) = re.cookie {
+                if cookies.contains(&c) {
+                    return true
                 }
             }
-            None
+            false
         })
         .min_by_key(|(_i, re)| re.completion_stamp)
         .map(|(i, re)| re.take_handle(i)) 
+    }
+
+    /// Returns an iterator over completed reassemblers.
+    ///
+    /// The Item is (enumerate_index, reassembler)
+    fn done_reassemblers(&mut self) -> impl Iterator<Item = (usize, &mut Reassembler)> {
+        self.reassemblers.iter_mut().enumerate().filter_map(|(i, r)| {
+            // re must be Some and is_done
+            r.as_mut().and_then(|(re, _buf)| re.is_done().then(|| (i, re)))
+        })
     }
 
     pub fn set_cookie(&mut self, handle: &ReceiveHandle, cookie: Option<AppCookie>) {
