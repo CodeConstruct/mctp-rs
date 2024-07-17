@@ -146,31 +146,6 @@ pub struct PldmRequest<'a> {
 
 #[cfg(feature = "alloc")]
 impl<'a> PldmRequest<'a> {
-    /// Create a new PLDM request for a given PLDM message type and command
-    /// number.
-    ///
-    /// Since this creates a request, it specifies a `None`
-    /// tag, for the lower-level MCTP stack to assign
-    /// an actual tag value.
-    pub fn new(typ: u8, cmd: u8) -> Self {
-        Self::new_data(typ, cmd, Vec::new())
-    }
-
-    /// Create a new PLDM request with a data payload.
-    ///
-    /// Since this creates a request, it specifies a `None`
-    /// tag, for the lower-level MCTP stack to assign
-    /// an actual tag value.
-    pub fn new_data(typ: u8, cmd: u8, data: Vec<u8>) -> Self {
-        Self {
-            mctp_tag: None,
-            iid: 0,
-            typ,
-            cmd,
-            data: data.into(),
-        }
-    }
-
     /// Converts any `PldmRequest` into one with allocated storage
     pub fn make_owned(self) -> PldmRequest<'static> {
         let d = match self.data {
@@ -178,14 +153,6 @@ impl<'a> PldmRequest<'a> {
             VecOrSlice::Owned(b) => VecOrSlice::Owned(b),
         };
         PldmRequest { data: d, ..self }
-    }
-
-    /// Create a PLDM request given a MCTP tag value and message data.
-    ///
-    /// May fail if the message data is not parsable as a PLDM message.
-    /// Pass a `tag` of `None` to specify an automatically allocated owned tag.
-    pub fn from_buf<'f>(tag: Option<Tag>, data: &'f [u8]) -> Result<Self> {
-        Self::from_buf_borrowed(tag, data).map(|p| p.make_owned())
     }
 
     /// Set the data payload for this request
@@ -215,6 +182,44 @@ impl<'a> PldmRequest<'a> {
         })
     }
 }
+
+// Constructors for allocated requests
+#[cfg(feature = "alloc")]
+impl PldmRequest<'static> {
+    /// Create a new PLDM request for a given PLDM message type and command
+    /// number.
+    ///
+    /// Since this creates a request, it specifies a `None`
+    /// tag, for the lower-level MCTP stack to assign
+    /// an actual tag value.
+    pub fn new(typ: u8, cmd: u8) -> Self {
+        Self::new_data(typ, cmd, Vec::new())
+    }
+
+    /// Create a new PLDM request with a data payload.
+    ///
+    /// Since this creates a request, it specifies a `None`
+    /// tag, for the lower-level MCTP stack to assign
+    /// an actual tag value.
+    pub fn new_data(typ: u8, cmd: u8, data: Vec<u8>) -> Self {
+        Self {
+            mctp_tag: None,
+            iid: 0,
+            typ,
+            cmd,
+            data: data.into(),
+        }
+    }
+
+    /// Create a PLDM request given a MCTP tag value and message data.
+    ///
+    /// May fail if the message data is not parsable as a PLDM message.
+    /// Pass a `tag` of `None` to specify an automatically allocated owned tag.
+    pub fn from_buf<'f>(tag: Option<Tag>, data: &'f [u8]) -> Result<Self> {
+        PldmRequest::from_buf_borrowed(tag, data).map(|p| p.make_owned())
+    }
+}
+
 impl<'a> PldmRequest<'a> {
     /// Create a new PLDM request with a data payload borrowed from a slice.
     ///
@@ -235,7 +240,7 @@ impl<'a> PldmRequest<'a> {
     ///
     /// The payload is borrowed from the input data.
     /// May fail if the message data is not parsable as a PLDM message.
-    pub fn from_buf_borrowed(tag: Option<Tag>, data: &[u8]) -> Result<PldmRequest> {
+    pub fn from_buf_borrowed(tag: Option<Tag>, data: &'a [u8]) -> Result<PldmRequest<'a>> {
         if data.len() < 3 {
             panic!("request too short");
         }
@@ -322,7 +327,7 @@ impl<'a> PldmResponse<'a> {
 pub fn pldm_xfer<'f>(
     ep: &mut impl mctp::Endpoint,
     req: PldmRequest,
-) -> Result<PldmResponse<'f>> {
+) -> Result<PldmResponse<'static>> {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
     pldm_xfer_buf(ep, req, &mut rx_buf).map(|r| r.make_owned())
 }
@@ -390,9 +395,9 @@ pub fn pldm_xfer_buf<'f>(
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
 #[cfg(feature = "alloc")]
-pub fn pldm_rx_req<'f>(
+pub fn pldm_rx_req(
     ep: &mut impl mctp::Endpoint,
-) -> Result<PldmRequest<'f>> {
+) -> Result<PldmRequest<'static>> {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
     let (rx_buf, _eid, tag) = ep.recv(&mut rx_buf)?;
 
