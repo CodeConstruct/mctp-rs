@@ -24,7 +24,7 @@ use reassemble::Reassembler;
 const FLOWS: usize = 8;
 
 const NUM_RECEIVE: usize = 4;
-const RECV_PAYLOAD: usize = 1028;
+const RECV_PAYLOAD: usize = 1032;
 
 #[derive(Debug)]
 struct Flow {
