@@ -118,15 +118,15 @@ impl Reassembler {
             return Err(Error::InvalidInput);
         }
 
-        trace!("message extend {} {:x?}", message.len(), payload);
         message.extend_from_slice(payload).map_err(|_| {
             self.state = State::Bad;
+            trace!("nospace message too long");
             Error::NoSpace
         })?;
 
         if eom {
             self.state = State::Done { typ };
-            trace!("message reassembly complete {:x?}", message);
+            trace!("message reassembly complete, len {}", message.len());
             return Ok(Some(self.message(message)?));
         }
 

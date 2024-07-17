@@ -167,14 +167,14 @@ impl MctpI2cHandler {
         self.encap.receive_done_pec(packet, mctp)
     }
 
-    /// Indicates whether data is ready to send over i2c
+    /// Indicates whether data is pending to send
     pub fn send_ready(&self) -> bool {
         matches!(self.send_state, HandlerSendState::Sending { .. })
     }
 
     /// Fill a buffer with a packet to send over the i2c bus.
     ///
-    /// The `send_complete` closure is called when a message completes sending.
+    /// The `send_complete` closure is called when an entire message completes sending.
     /// It is called with `Some(Tag)` on success (with the tag that was sent)
     /// or `None` on failure. The cookie is the one provided to [`send_enqueue`](Self::send_enqueue).
     pub fn send_fill<F>(
