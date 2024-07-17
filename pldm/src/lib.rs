@@ -69,9 +69,19 @@ type ErrStr = String;
 #[cfg(not(feature = "alloc"))]
 type ErrStr = &'static str;
 
-// alloc has a formatted String, no-alloc has just a &'static str message.
-// `proto_error!(msg, description)` macro will create the full message on alloc,
-// or just keep the &'static msg on no-alloc.
+/// Create a `PldmError::Protocol` from a message and optional description.
+///
+/// When building without `alloc` feature only the message is kept.
+///
+/// Example
+///
+/// ```
+/// # let iid = 1;
+/// # let actual_iid = 2;
+/// use pldm::proto_error;
+/// proto_error!("Mismatching IID", "Expected {iid:02x}, received {actual_iid:02x}");
+/// proto_error!("Rq bit wasn't expected");
+/// ```
 #[macro_export]
 #[cfg(feature = "alloc")]
 macro_rules! proto_error {
@@ -80,6 +90,20 @@ macro_rules! proto_error {
     ($msg: expr)
         => { $crate::PldmError::Protocol(format!("{}.", $msg)) };
 }
+
+/// Create a `PldmError::Protocol` from a message and optional description.
+///
+/// When building without `alloc` feature only the message is kept.
+///
+/// Example
+///
+/// ```
+/// # let iid = 1;
+/// # let actual_iid = 2;
+/// use pldm::proto_error;
+/// proto_error!("Mismatching IID", "Expected {iid:02x}, received {actual_iid:02x}");
+/// proto_error!("Rq bit wasn't expected");
+/// ```
 #[macro_export]
 #[cfg(not(feature = "alloc"))]
 macro_rules! proto_error {
