@@ -335,11 +335,11 @@ pub fn pldm_xfer<'f>(
 /// This function requires an external `rx_buf`.
 pub fn pldm_xfer_buf<'f>(
     ep: &mut impl mctp::Endpoint,
-    req: PldmRequest,
+    mut req: PldmRequest,
     rx_buf: &'f mut [u8],
 ) -> Result<PldmResponse<'f>> {
 
-    let req_iid = pldm_tx_req(ep, &req)?;
+    pldm_tx_req(ep, &mut req)?;
 
     let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
 
@@ -354,9 +354,9 @@ pub fn pldm_xfer_buf<'f>(
     let cmd = rx_buf[2];
     let cc = rx_buf[3];
 
-    if iid != req_iid {
+    if rsp.iid != req.iid {
         return Err(proto_error!("Incorrect instance ID in reply",
-            format!("Expected 0x{req_iid:02x} got 0x{iid:02x}")));
+            format!("Expected 0x{:02x} got 0x{:02x}", req.iid, rsp.iid)));
     }
 
     if typ != req.typ {
@@ -411,26 +411,28 @@ pub fn pldm_tx_resp(
     let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
     let txs = &[&tx_buf, resp.data.as_ref()];
     ep.send_vectored(mctp::MCTP_TYPE_PLDM, Some(resp.mctp_tag), txs)?;
-
     Ok(())
 }
 
 /// Transmit an outgoing PLDM request
 ///
-/// Performs a blocking send on the specified ep.
-/// Returns the request iid
+/// Performs a blocking send on the specified ep. The iid will be
+/// updated in `req`.
 pub fn pldm_tx_req(
     ep: &mut impl mctp::Endpoint,
-    req: &PldmRequest,
-) -> Result<u8> {
+    req: &mut PldmRequest,
+) -> Result<()> {
+    // TODO IID allocation
     const REQ_IID: u8 = 0;
+    req.iid = REQ_IID;
+
     let tx_buf = [
-        1 << 7 | REQ_IID,
+        1 << 7 | req.iid,
         req.typ & 0x3f,
         req.cmd,
     ];
 
     let txs = &[&tx_buf, req.data.as_ref()];
     ep.send_vectored(mctp::MCTP_TYPE_PLDM, req.mctp_tag, txs)?;
-    Ok(REQ_IID)
+    Ok(())
 }
