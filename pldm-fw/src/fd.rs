@@ -31,7 +31,7 @@ use crate::*;
 
 // Buffer for transmit. Must be sufficiently sized for sending
 // components and device identifiers. TODO borrow this from somewhere?
-const MSGBUF: usize = 1028;
+const MSGBUF: usize = 1024 + 3;
 
 type Result<T> = core::result::Result<T, PldmError>;
 
@@ -694,8 +694,12 @@ impl Responder {
             return Ok(())
         };
 
+        if transfer_result.is_some() {
+            debug!("firmware data after result");
+            return Ok(())
+        }
+
         request.validate_response(rsp)?;
-        debug_assert!(transfer_result.is_some(), "transfer_result and FDReq mismatch");
 
         let expect_size = self.req_size();
         if rsp.data.len() != expect_size {
