@@ -242,12 +242,17 @@ impl<'a> PldmRequest<'a> {
     /// May fail if the message data is not parsable as a PLDM message.
     pub fn from_buf_borrowed(tag: Option<Tag>, data: &'a [u8]) -> Result<PldmRequest<'a>> {
         if data.len() < 3 {
-            panic!("request too short");
+            return Err(proto_error!("Short request", format!("{} bytes", data.len())));
         }
 
+        let rq = (data[0] & 0x80) != 0;
         let iid = data[0] & 0x1f;
         let typ = data[1] & 0x3f;
         let cmd = data[2];
+
+        if !rq {
+            return Err(proto_error!("PLDM response, expected request"));
+        }
 
         Ok(PldmRequest {
             mctp_tag: tag,
@@ -258,8 +263,7 @@ impl<'a> PldmRequest<'a> {
         })
     }
 
-    /// Create a new PLDM request for a given PLDM message type and command
-    ///
+    /// Create a new PLDM response for a request
     ///
     /// Convert this request to a response, using the correct MCTP tag value
     /// (swapping to a non-owned tag), and the instance, type and command
@@ -319,6 +323,49 @@ impl<'a> PldmResponse<'a> {
     }
 }
 
+impl<'a> PldmResponse<'a> {
+    /// Create a `PldmResponse` from a payload
+    pub fn from_buf_borrowed(tag: Tag, rx_buf: &'a [u8]) -> Result<Self> {
+        if rx_buf.len() < 4 {
+            return Err(proto_error!("Short response", format!("{} bytes", rx_buf.len())));
+        }
+
+        let rq = (rx_buf[0] & 0x80) != 0;
+        let iid = rx_buf[0] & 0x1f;
+        let typ = rx_buf[1] & 0x3f;
+        let cmd = rx_buf[2];
+        let cc = rx_buf[3];
+
+        if rq {
+            return Err(proto_error!("PLDM request, expected response"));
+        }
+
+        if tag.is_owner() {
+            return Err(proto_error!("Tag Owner set in response"));
+        }
+
+        let rsp = PldmResponse {
+            mctp_tag: tag,
+            iid,
+            typ,
+            cmd,
+            cc,
+            data: (&rx_buf[4..]).into(),
+        };
+
+        Ok(rsp)
+    }
+}
+
+/// Represents either a PLDM request or response message
+#[derive(Debug)]
+pub enum PldmMessage<'a> {
+    /// A PLDM Request
+    Request(PldmRequest<'a>),
+    /// A PLDM Response
+    Response(PldmResponse<'a>),
+}
+
 /// Main PLDM transfer operation.
 ///
 /// Sends a Request, and waits for a response, blocking. This is generally
@@ -348,40 +395,24 @@ pub fn pldm_xfer_buf<'f>(
 
     let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
 
-    if rx_buf.len() < 4 {
-        return Err(proto_error!("Short response", format!("{} bytes", rx_buf.len())));
-    }
+    let rsp = PldmResponse::from_buf_borrowed(tag, rx_buf)?;
 
     // TODO: should check eid, but against what? Or should mctp::Endpoint impl check it?
-
-    let iid = rx_buf[0] & 0x1f;
-    let typ = rx_buf[1] & 0x3f;
-    let cmd = rx_buf[2];
-    let cc = rx_buf[3];
 
     if rsp.iid != req.iid {
         return Err(proto_error!("Incorrect instance ID in reply",
             format!("Expected 0x{:02x} got 0x{:02x}", req.iid, rsp.iid)));
     }
 
-    if typ != req.typ {
+    if rsp.typ != req.typ {
         return Err(proto_error!("Incorrect PLDM type in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, typ)));
+            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, rsp.typ)));
     }
 
-    if cmd != req.cmd {
+    if rsp.cmd != req.cmd {
         return Err(proto_error!("Incorrect PLDM command in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, cmd)));
+            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, rsp.cmd)));
     }
-
-    let rsp = PldmResponse {
-        mctp_tag: tag,
-        iid,
-        typ,
-        cmd,
-        cc,
-        data: (&mut rx_buf[4..]).into(),
-    };
 
     Ok(rsp)
 }
@@ -399,11 +430,48 @@ pub fn pldm_rx_req(
     ep: &mut impl mctp::Endpoint,
 ) -> Result<PldmRequest<'static>> {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
-    let (rx_buf, _eid, tag) = ep.recv(&mut rx_buf)?;
+    let req = pldm_rx_req_borrowed(ep, &mut rx_buf)?;
+    Ok(req.make_owned())
+}
 
-    let req = PldmRequest::from_buf(Some(tag), rx_buf)?;
+/// Receive an incoming PLDM request in a borrowed buffer.
+///
+/// This uses [`mctp::Endpoint::recv`], which performs a blocking wait for
+/// incoming messages. The ep should already be bound (via
+/// [`mctp::Endpoint::bind`]), listening on the PLDM message type.
+///
+/// Responder implementations will typically want to respond via
+/// [`pldm_tx_resp`].
+pub fn pldm_rx_req_borrowed<'f>(
+    ep: &mut impl mctp::Endpoint, rx_buf: &'f mut [u8],
+) -> Result<PldmRequest<'f>> {
+    let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
+    let req = PldmRequest::from_buf_borrowed(Some(tag), rx_buf)?;
 
     Ok(req)
+}
+
+/// Receive either a PLDM request or response message
+///
+/// This uses [`mctp::Endpoint::recv`], which performs a blocking wait for
+/// incoming messages. The ep should already be bound (via
+/// [`mctp::Endpoint::bind`]), listening on the PLDM message type.
+///
+/// The returned message borrows the provided `rx_buf`
+pub fn pldm_rx_any_borrowed<'f>(
+    ep: &mut impl mctp::Endpoint, rx_buf: &'f mut [u8],
+    ) -> Result<(mctp::Eid, PldmMessage<'f>)> {
+    let (rx_buf, eid, tag) = ep.recv(rx_buf)?;
+    if rx_buf.len() < 1 {
+        return Err(proto_error!("Short message", format!("{} bytes", rx_buf.len())));
+    }
+
+    let rq_bit = (rx_buf[0] & 0x80) != 0;
+    if rq_bit {
+        Ok((eid, PldmMessage::Request(PldmRequest::from_buf_borrowed(Some(tag), rx_buf)?)))
+    } else {
+        Ok((eid, PldmMessage::Response(PldmResponse::from_buf_borrowed(tag, rx_buf)?)))
+    }
 }
 
 /// Transmit an outgoing PLDM response
