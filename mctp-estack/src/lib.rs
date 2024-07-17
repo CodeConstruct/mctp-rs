@@ -196,6 +196,12 @@ impl Stack {
                 // These two lines can be removed once Rust "polonius" borrow
                 // checker is added.
                 let (re, buf) = self.reassemblers[idx].as_mut().unwrap();
+
+                // Have received a "response", flow is finished.
+                if !re.tag.is_owner() {
+                    self.remove_flow(re.peer, re.tag.tag())
+                }
+
                 let msg = re.message(buf)?;
 
                 re.set_completion_order(self.ordering);
@@ -398,6 +404,11 @@ impl Stack {
     fn lookup_flow(&self, peer: Eid, tv: TagValue) -> Option<&Flow> {
         self.flows.get(&(peer, tv))
         .inspect(|r| trace!("lookup flow {peer:?} {tv:?} got {r:?}"))
+    }
+
+    fn remove_flow(&mut self, peer: Eid, tv: TagValue) {
+        trace!("remove flow {peer:?} {tv:?}");
+        self.flows.remove(&(peer, tv));
     }
 }
 
