@@ -187,8 +187,12 @@ impl core::fmt::Write for SliceWriter<'_> {
     }
 }
 
-// Helper to for converting `SliceWriter` `None` to `PldmError::NoSpace`
+/// Helper to for converting `Option::None` to `PldmError::NoSpace`
+///
+/// `SliceWriter` returns `None` on failure. This trait converts
+/// that failure to a `PldmError::NoSpace` for brevity.
 pub trait NoneNoSpace<S> {
+    /// Returns `PldmError::NoSpace` on failure
     fn space(self) -> crate::Result<S>;
 }
 
