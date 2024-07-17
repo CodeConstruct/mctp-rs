@@ -193,6 +193,109 @@ pub enum FwCode {
     PACKAGE_DATA_ERROR = 0x93,
 }
 
+/// Transfer Result codes for TransferComplete
+///
+/// Not all defined Transfer Result codes are defined in this enum,
+/// arbitrary `u8` values may be expected.
+#[repr(u8)]
+#[non_exhaustive]
+pub enum TransferResult {
+    Success = 0,
+}
+
+/// Verify Result codes for VerifyComplete
+///
+/// Not all defined Verify Result codes are defined in this enum,
+/// arbitrary `u8` values may be expected in `Other` variant.
+///
+/// Ref "VerifyComplete command format" Table 31 of DSP0267 1.1.0
+#[allow(missing_docs)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum VerifyResult {
+    Success,
+    Failure,
+    VersionMismatch,
+    SecurityChecksFailed,
+    IncompleteImage,
+    // 0x5 - 0x8 reserved
+    Timeout,
+    GenericError,
+    Other(u8),
+}
+
+impl From<u8> for VerifyResult {
+    fn from(v: u8) -> Self {
+        match v {
+            0x00 => Self::Success,
+            0x01 => Self::Failure,
+            0x02 => Self::VersionMismatch,
+            0x03 => Self::SecurityChecksFailed,
+            0x04 => Self::IncompleteImage,
+            0x09 => Self::Timeout,
+            0x0a => Self::GenericError,
+            v => Self::Other(v),
+        }
+    }
+}
+
+impl From<VerifyResult> for u8 {
+    fn from(v: VerifyResult) -> u8 {
+        match v {
+            VerifyResult::Success => 0x00,
+            VerifyResult::Failure => 0x01,
+            VerifyResult::VersionMismatch => 0x02,
+            VerifyResult::SecurityChecksFailed => 0x03,
+            VerifyResult::IncompleteImage => 0x04,
+            VerifyResult::Timeout => 0x09,
+            VerifyResult::GenericError => 0x0a,
+            VerifyResult::Other(v) => v,
+        }
+    }
+}
+
+/// Apply Result codes for ApplyComplete
+///
+/// Not all defined Verify Result codes are defined in this enum,
+/// arbitrary `u8` values may be expected in `Other` variant.
+///
+/// Ref "ApplyComplete command format" Table 32 of DSP0267 1.1.0
+#[allow(missing_docs)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ApplyResult {
+    Success,
+    SuccessModActivation,
+    FailedMemoryWrite,
+    Timeout,
+    GenericError,
+    Other(u8),
+}
+
+impl From<u8> for ApplyResult {
+    fn from(v: u8) -> Self {
+        match v {
+            0x00 => Self::Success,
+            0x01 => Self::SuccessModActivation,
+            0x02 => Self::FailedMemoryWrite,
+            0x09 => Self::Timeout,
+            0x0a => Self::GenericError,
+            v => Self::Other(v),
+        }
+    }
+}
+
+impl From<ApplyResult> for u8 {
+    fn from(v: ApplyResult) -> u8 {
+        match v {
+            ApplyResult::Success => 0x00,
+            ApplyResult::SuccessModActivation => 0x01,
+            ApplyResult::FailedMemoryWrite => 0x02,
+            ApplyResult::Timeout => 0x09,
+            ApplyResult::GenericError => 0x0a,
+            ApplyResult::Other(v) => v,
+        }
+    }
+}
+
 //type VResult<I,O> = IResult<I, O, VerboseError<I>>;
 type VResult<I, O> = IResult<I, O>;
 
@@ -240,6 +343,10 @@ impl fmt::Display for DescriptorString {
 }
 
 impl DescriptorString {
+    pub fn empty() -> Self {
+        Self::Bytes(Default::default())
+    }
+
     pub fn string_type(&self) -> u8 {
         match self {
             Self::Bytes(_) => 0,
@@ -658,7 +765,7 @@ pub fn pldm_date_write_buf(
 
 /// Component classification
 #[allow(missing_docs)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum ComponentClassification {
     Unknown,
     Other,
@@ -701,7 +808,7 @@ pub enum ActivationMethod {
     Automatic = 0,
 }
 
-type ActivationMethods = EnumSet<ActivationMethod>;
+pub type ActivationMethods = EnumSet<ActivationMethod>;
 
 #[derive(EnumSetType, Debug)]
 pub enum DeviceCapability {
@@ -806,7 +913,6 @@ pub struct Component {
 }
 
 impl Component {
-    // #[cfg(feature = "alloc")]
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (
             r,

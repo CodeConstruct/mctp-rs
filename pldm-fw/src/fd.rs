@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /*
- * PLDM firmware update utility.
+ * PLDM firmware device responder
  *
- * Copyright (c) 2023 Code Construct
+ * Copyright (c) 2024 Code Construct
  */
 
 //! PLDM Firmware Device
@@ -23,37 +23,56 @@ use nom::{
 
 use num_traits::FromPrimitive;
 
-use mctp::{Eid, Endpoint, Tag};
-use pldm::{pldm_tx_req, pldm_tx_resp, CCode, PldmError, PldmRequest};
+use pldm::{pldm_tx_req, pldm_tx_resp, CCode, PldmError, PldmRequest, PldmResponse, PldmMessage,
+proto_error};
+use mctp::Eid;
 
 use crate::*;
 
-// TODO, borrow from somewhere.
-const MSGBUF: usize = 1024;
+// Buffer for transmit. Must be sufficiently sized for sending
+// components and device identifiers. TODO borrow this from somewhere?
+const MSGBUF: usize = 1028;
 
 type Result<T> = core::result::Result<T, PldmError>;
 
 enum State {
-    Idle { reason: PldmIdleReason },
+    Idle {
+        reason: PldmIdleReason,
+    },
     LearnComponents,
     ReadyXfer,
     Download {
-        // limited to u32 on construction
-        size: usize,
         offset: usize,
-        // whether we are waiting for a response from the UA.
-        // when this is true, it is valid to send a new request
-        // for the current offset.
-        // `offset` is incremented on the `requested` true->false transition.
-        requested: bool,
-        req_time: u64,
-        classification: ComponentClassification,
-        identifier: u16,
-        index: u8,
+        // Set once when ready to exit from Download mode, will return
+        // this value for TransferComplete request.
+        transfer_result: Option<u8>,
+        // Details of the last request.
+        // `offset` is incremented on the `request` Sent->Ready transition.
+        request: FDReq,
+
         update_flags: u32,
+
+        // Details of the component currently being updated
+        details: ComponentDetails,
     },
-    Verify,
-    Apply,
+    Verify {
+        // Set after retrieving the verify status from the [`Device`] callback.
+        verify_result: Option<VerifyResult>,
+        // details of the last request, and whether to retry
+        request: FDReq,
+
+        // Details of the component currently being updated, for the callback.
+        details: ComponentDetails,
+    },
+    Apply {
+        // Set after `apply()` from the [`Device`] callback.
+        apply_result: Option<(ApplyResult, ActivationMethods)>,
+        // details of the last request
+        request: FDReq,
+
+        // Details of the component currently being updated, for the callback.
+        details: ComponentDetails,
+    },
     Activate,
 }
 
@@ -64,8 +83,8 @@ impl From<&State> for PldmFDState {
             State::LearnComponents => PldmFDState::LearnComponents,
             State::ReadyXfer => PldmFDState::ReadyXfer,
             State::Download { .. } => PldmFDState::Download,
-            State::Verify => PldmFDState::Verify,
-            State::Apply => PldmFDState::Apply,
+            State::Verify { .. } => PldmFDState::Verify,
+            State::Apply { .. } => PldmFDState::Apply,
             State::Activate => PldmFDState::Activate,
         }
     }
@@ -90,7 +109,6 @@ impl Responder {
     pub const FD_T1_TIMEOUT: u64 = 120_000;
 
     /// Retry req firmware time, 2 seconds
-    pub const REQ_FW_RETRY_TIME: u64 = 1_000;
 
     /// Specification baseline request size
     pub const BASELINE_MTU: usize = 32;
@@ -98,7 +116,9 @@ impl Responder {
     pub fn new() -> Self {
         Self {
             ua_eid: None,
-            state: State::Idle { reason: PldmIdleReason::Init },
+            state: State::Idle {
+                reason: PldmIdleReason::Init,
+            },
             prev_state: PldmFDState::Idle,
             msg_buf: [0; MSGBUF],
             max_transfer: PLDM_FW_BASELINE_TRANSFER,
@@ -108,16 +128,31 @@ impl Responder {
 
     /// Handle an incoming PLDM FW message
     ///
-    /// Returns `Ok` if a reply is sent to the UA, including for error responses.
-    pub fn request_in(
+    /// Errors returned from this function are not expected to be handled
+    /// apart from logging.
+    pub fn message_in(
         &mut self,
         eid: Eid,
-        tag: Tag,
-        payload: &[u8],
-        ep: &mut impl Endpoint,
+        msg: &PldmMessage,
+        ep: &mut impl mctp::Endpoint,
         d: &mut impl Device,
     ) -> Result<()> {
-        let req = PldmRequest::from_buf_borrowed(Some(tag), payload)?;
+        match msg {
+            PldmMessage::Request(req) => self.request_in(eid, req, ep, d),
+            PldmMessage::Response(rsp) => self.response_in(eid, rsp, ep, d),
+        }
+    }
+
+    /// Handle an incoming PLDM FW request
+    ///
+    /// Returns `Ok` if a reply is sent to the UA, including for error responses.
+    fn request_in(
+        &mut self,
+        eid: Eid,
+        req: &PldmRequest,
+        ep: &mut impl mctp::Endpoint,
+        d: &mut impl Device,
+    ) -> Result<()> {
 
         let Some(cmd) = Cmd::from_u8(req.cmd) else {
             self.reply_error(&req, ep, CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8);
@@ -132,6 +167,8 @@ impl Responder {
             // Cache most recent. TODO might need other handling?
             self.ua_eid = Some(eid);
         }
+
+        trace!("pldm-fw cmd {cmd:?}");
 
         // Handlers will return Ok if they have replied
         let r = match cmd {
@@ -159,7 +196,30 @@ impl Responder {
         Ok(())
     }
 
-    fn reply_error(&self, req: &PldmRequest, ep: &mut impl Endpoint, cc: u8) {
+    /// Handle an incoming PLDM FW response
+    ///
+    /// These are responses to
+    /// RequestFirmwareData, TransferComplete, VerifyComplete, ApplyComplete
+    fn response_in(
+        &mut self,
+        eid: Eid,
+        rsp: &PldmResponse,
+        ep: &mut impl mctp::Endpoint,
+        d: &mut impl Device,) -> Result<()> {
+        match Cmd::from_u8(rsp.cmd) {
+            Some(Cmd::RequestFirmwareData) => self.download_response(eid, rsp, ep, d),
+            | Some(Cmd::TransferComplete)
+            | Some(Cmd::VerifyComplete)
+            | Some(Cmd::ApplyComplete)
+            // Ignore replies to these requests.
+            // We may have already moved on to a later state
+            // and don't have any useful retry for them.
+            => Ok(()),
+            _ => Err(proto_error!("Unsupported PLDM response"))
+        }
+    }
+
+    fn reply_error(&self, req: &PldmRequest, ep: &mut impl mctp::Endpoint, cc: u8) {
         let mut resp = req.response_borrowed(&[]).unwrap();
         resp.cc = cc;
         let _ = pldm_tx_resp(ep, &resp)
@@ -170,7 +230,7 @@ impl Responder {
     fn cmd_qdi(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl Endpoint,
+        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
@@ -189,7 +249,7 @@ impl Responder {
     fn cmd_fwparams(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl Endpoint,
+        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
@@ -215,7 +275,7 @@ impl Responder {
     fn cmd_update(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl Endpoint,
+        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::Idle { .. }) {
@@ -223,7 +283,8 @@ impl Responder {
             return Ok(());
         }
 
-        let Ok((_, ru)) = all_consuming(RequestUpdateRequest::parse)(&req.data) else {
+        let Ok((_, ru)) = all_consuming(RequestUpdateRequest::parse)(&req.data)
+        else {
             trace!("error parsing RequestUpdate");
             self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
@@ -238,7 +299,9 @@ impl Responder {
         let l = RequestUpdateResponse {
             fd_metadata_len: 0,
             fd_will_sent_gpd: 0,
-        }.write_buf(&mut self.msg_buf).space()?;
+        }
+        .write_buf(&mut self.msg_buf)
+        .space()?;
 
         let resp = req.response_borrowed(&self.msg_buf[..l])?;
         pldm_tx_resp(ep, &resp)?;
@@ -249,7 +312,7 @@ impl Responder {
     fn cmd_pass_components(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl Endpoint,
+        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::LearnComponents) {
@@ -257,9 +320,10 @@ impl Responder {
             return Ok(());
         }
 
-        let Ok((_, (transferflag, up))) =
-            all_consuming(tuple((le_u8, UpdateComponent::parse_pass_component)))(&req.data)
-        else {
+        let Ok((_, (transferflag, up))) = all_consuming(tuple((
+            le_u8,
+            UpdateComponent::parse_pass_component,
+        )))(&req.data) else {
             trace!("error parsing PassComponent");
             self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
@@ -284,7 +348,7 @@ impl Responder {
     fn cmd_update_component(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl Endpoint,
+        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::ReadyXfer) {
@@ -303,7 +367,7 @@ impl Responder {
         self.update_timestamp_fd_t1 = dev.now();
 
         // mask to only "Force Update"
-        let res = dev.update_component(false, &up);
+        let res = dev.update_component(true, &up);
 
         let update_flags = up.flags.unwrap() & 0x1;
 
@@ -321,16 +385,20 @@ impl Responder {
         let resp = req.response_borrowed(&comp_resp)?;
         pldm_tx_resp(ep, &resp)?;
 
-        self.set_state(State::Download {
+        let details = ComponentDetails {
             // OK unwrap, size is always set by parse_update()
             size: up.size.unwrap() as usize,
-            offset: 0,
-            requested: false,
-            req_time: 0,
             classification: up.classification,
             identifier: up.identifier,
             index: up.classificationindex,
+        };
+
+        self.set_state(State::Download {
+            offset: 0,
+            transfer_result: None,
+            request: FDReq::Ready,
             update_flags,
+            details,
         });
         Ok(())
     }
@@ -338,7 +406,7 @@ impl Responder {
     fn cmd_get_status(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl Endpoint,
+        ep: &mut impl mctp::Endpoint,
         _dev: &mut impl Device,
     ) -> Result<()> {
         if !req.data.is_empty() {
@@ -368,21 +436,26 @@ impl Responder {
                 st.reason_code = *reason as u8;
                 st.aux_state = 3;
             }
-            | State::LearnComponents
-            | State::ReadyXfer
-            => {
+            State::LearnComponents | State::ReadyXfer => {
                 st.aux_state = 3;
             }
-            State::Download { size, offset, update_flags, .. } => {
-                st.progress_percent = ((*offset as u64) * 100 / (*size as u64)) as u8;
+            State::Download {
+                details,
+                offset,
+                update_flags,
+                request,
+                ..
+            } => {
+                st.progress_percent =
+                    ((*offset as u64) * 100 / (details.size as u64)) as u8;
                 st.update_option_flags_enabled = *update_flags;
-                // TODO auxstate
+                (st.aux_state, st.aux_state_status) = request.aux_state();
             }
-            State::Verify => {
-                // TODO auxstate
+            State::Verify { request, .. } => {
+                (st.aux_state, st.aux_state_status) = request.aux_state();
             }
-            State::Apply => {
-                // TODO auxstate
+            State::Apply { request, .. } => {
+                (st.aux_state, st.aux_state_status) = request.aux_state();
             }
             State::Activate => {
                 // TODO auxstate
@@ -390,10 +463,9 @@ impl Responder {
         }
 
         st
-
     }
 
-    pub fn progress(&mut self, ep: &mut impl Endpoint, dev: &mut impl Device) {
+    pub fn progress(&mut self, ep: &mut impl mctp::Endpoint, dev: &mut impl Device) {
         if !matches!(self.state, State::Idle { .. })
             && dev.now() - self.update_timestamp_fd_t1 > Self::FD_T1_TIMEOUT
         {
@@ -404,70 +476,262 @@ impl Responder {
         if let State::Download { .. } = self.state {
             self.progress_download(ep, dev)
         }
+
+        if let State::Verify { .. } = self.state {
+            self.progress_verify(ep, dev)
+        }
+
+        if let State::Apply { .. } = self.state {
+            self.progress_apply(ep, dev)
+        }
     }
 
-    /// The size of a request at a given offset
-    fn req_size(&self, size: usize, offset: usize) -> usize {
-        size.saturating_sub(offset)
+    /// The size of a request at a given offset.
+    ///
+    /// Must only be called in Download state
+    fn req_size(&self) -> usize {
+        let State::Download { ref details, offset, .. } = self.state else {
+            debug_assert!(false);
+            return 0;
+        };
+
+        details.size.saturating_sub(offset)
             .min(self.max_transfer)
             .min(self.max_request())
     }
 
+    // Download state progress
     fn progress_download(
         &mut self,
-        ep: &mut impl Endpoint,
+        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) {
         let State::Download {
-            size,
             offset,
-            requested,
-            req_time,
-            ref classification,
-            identifier,
-            index,
-            update_flags,
+            ref request,
+            transfer_result,
+            ..
         } = self.state
         else {
             return;
         };
 
-        if requested && dev.now() - req_time < Self::REQ_FW_RETRY_TIME {
-            // waiting for a response, no action
+        if !request.should_send(dev) {
             return;
         }
 
-        // send a new request
-        let mut buf = [0u8; 8];
-        let mut b = SliceWriter::new(&mut buf);
-        let _ = b.push_le32(offset as u32);
-        let _ = b.push_le32(self.req_size(size, offset) as u32);
-        debug_assert_eq!(b.written(), 8);
+        let mut b = [0u8; 8];
+        let mut b = SliceWriter::new(&mut b);
 
-        let req = PldmRequest::new_borrowed(
-            PLDM_TYPE_FW,
-            Cmd::RequestFirmwareData as u8,
-            &buf,
-        );
+        let mut req = if let Some(transfer_result) = transfer_result {
+            let _ = b.push_le8(transfer_result);
+            // Send a new TransferComplete
+            PldmRequest::new_borrowed(
+                PLDM_TYPE_FW,
+                Cmd::TransferComplete as u8,
+                b.done(),
+            )
+        } else {
+            // send a new RequestFirmwareData
+            let _ = b.push_le32(offset as u32);
+            let _ = b.push_le32(self.req_size() as u32);
+            debug_assert_eq!(b.written(), 8);
+
+            PldmRequest::new_borrowed(
+                PLDM_TYPE_FW,
+                Cmd::RequestFirmwareData as u8,
+                b.done(),
+            )
+        };
+
+        if let Err(e) = pldm_tx_req(ep, &mut req) {
+            trace!("Error tx request: {e:?}");
+            // let the retry timer handle it.
+            return;
+        }
 
         // reborrow mut
-        let State::Download {
-            requested,
-            req_time,
-            ..
+        if let State::Download { request, transfer_result, details, .. } = &mut self.state {
+            if let Some(tr) = transfer_result {
+                // transfer complete sent
+                if *tr == TransferResult::Success as u8 {
+                    let details = details.clone();
+                    self.set_state(State::Verify { verify_result: None,
+                        request: FDReq::Ready,
+                        details });
+                } else {
+                    // idle in Download state until the UA cancels
+                    *request = FDReq::Failed(*tr)
+                }
+            } else {
+                // update retry timer for for the firmware data request
+                *request = FDReq::Sent { time: dev.now(), iid: req.iid, cmd: req.cmd }
+            }
+        }
+    }
+
+    // Verify state progress
+    fn progress_verify(
+        &mut self,
+        ep: &mut impl mctp::Endpoint,
+        dev: &mut impl Device,
+    ) {
+        let State::Verify {
+            verify_result,
+            request,
+            details,
         } = &mut self.state
         else {
             return;
         };
 
-        *req_time = dev.now();
-
-        if let Err(e) = pldm_tx_req(ep, &req) {
-            trace!("Error tx request: {e:?}");
+        if !request.should_send(dev) {
             return;
         }
 
-        *requested = true;
+        let vr = verify_result.get_or_insert_with(|| {
+            // Perform the device-specific verify
+            dev.verify(details).unwrap_or_else(|_e| {
+                trace!("Error from Device::verify().");
+                VerifyResult::Failure
+            })
+        });
+
+        // Send a new VerifyComplete
+        let buf = [u8::from(*vr)];
+        let mut req = PldmRequest::new_borrowed(
+            PLDM_TYPE_FW,
+            Cmd::VerifyComplete as u8,
+            &buf,
+        );
+
+        if let Err(e) = pldm_tx_req(ep, &mut req) {
+            trace!("Error tx request: {e:?}");
+            // let the retry timer handle it
+            return;
+        }
+
+        if *vr == VerifyResult::Success {
+            let details = details.clone();
+            self.set_state(State::Apply { apply_result: None, request: FDReq::Ready,
+                details });
+        } else {
+            // on verify failure remain in State::Verify, wait for cancel
+            *request = FDReq::Failed(u8::from(*vr))
+        }
+    }
+
+    // Apply state progress
+    fn progress_apply(
+        &mut self,
+        ep: &mut impl mctp::Endpoint,
+        dev: &mut impl Device,
+    ) {
+        let State::Apply {
+            apply_result,
+            request,
+            details,
+        } = &mut self.state
+        else {
+            return;
+        };
+
+        if !request.should_send(dev) {
+            return;
+        }
+
+        let (ar, methods) = apply_result.get_or_insert_with(|| {
+            // Perform the device-specific apply
+            dev.apply(details).unwrap_or_else(|_e| {
+                trace!("Error from Device::apply().");
+                (ApplyResult::GenericError, Default::default())
+            })
+        });
+
+        // Create the response
+        let mut r = [0u8; 3];
+        let mut b = SliceWriter::new(&mut r);
+        let _ = b.push_le8(u8::from(*ar));
+        let _ = b.push_le16(methods.as_u16());
+
+        // Send a new ApplyComplete
+        let mut req = PldmRequest::new_borrowed(
+            PLDM_TYPE_FW,
+            Cmd::ApplyComplete as u8,
+            &r,
+        );
+
+        if let Err(e) = pldm_tx_req(ep, &mut req) {
+            trace!("Error tx request: {e:?}");
+            // let retry timer handle it
+            return;
+        }
+
+        if *ar == ApplyResult::Success {
+            self.set_state(State::ReadyXfer);
+        } else {
+            // on failure remain in State::Apply, wait for cancel
+            *request = FDReq::Failed(u8::from(*ar));
+        }
+    }
+
+    fn download_response(
+        &mut self,
+        eid: Eid,
+        rsp: &PldmResponse,
+        ep: &mut impl mctp::Endpoint,
+        dev: &mut impl Device,) -> Result<()> {
+
+        let State::Download {
+            offset,
+            ref request,
+            transfer_result,
+            ref details,
+            ..
+        } = self.state
+        else {
+            debug!("RequestFirmwareData response but not in Download state");
+            return Ok(())
+        };
+
+        request.validate_response(rsp)?;
+        debug_assert!(transfer_result.is_some(), "transfer_result and FDReq mismatch");
+
+        let expect_size = self.req_size();
+        if rsp.data.len() != expect_size {
+            trace!(
+                "Offset {offset} requested {expect_size} got {}",
+                rsp.data.len()
+            );
+            // Let the timeout handle a retry
+            return Ok(())
+        }
+
+        if let Err(e) = dev.firmware_data(offset, &rsp.data, details) {
+            trace!("Error from firmware_data callback. {e:?}");
+            // TODO let the Device cancel the transfer with a
+            // TransferResult failure.
+            // Let the timeout handle a retry.
+            return Ok(())
+        }
+
+        // Success, move to next offset.
+        // Next offset, progress() will send the next request.
+        if let State::Download {
+            offset, request, details, transfer_result, ..
+        } = &mut self.state {
+            *request = FDReq::Ready;
+            *offset += rsp.data.len();
+
+            if *offset == details.size {
+                debug_assert!(transfer_result.is_none());
+                // Transfer is complete.
+                // TODO: At present we only exit Download state on success.
+                *transfer_result = Some(TransferResult::Success as u8);
+            }
+        }
+
+        Ok(())
     }
 
     fn set_state(&mut self, new_state: State) {
@@ -486,8 +750,8 @@ impl Responder {
             State::LearnComponents => PldmIdleReason::TimeoutLearn,
             State::ReadyXfer => PldmIdleReason::TimeoutReadyXfer,
             State::Download { .. } => PldmIdleReason::TimeoutDownload,
-            State::Verify => PldmIdleReason::TimeoutVerify,
-            State::Apply => PldmIdleReason::TimeoutApply,
+            State::Verify { .. } => PldmIdleReason::TimeoutVerify,
+            State::Apply { .. } => PldmIdleReason::TimeoutApply,
             // not a timeout
             State::Activate => PldmIdleReason::Activate,
         };
@@ -495,10 +759,99 @@ impl Responder {
     }
 
     fn max_request(&self) -> usize {
-        self.msg_buf.len()
+        // allow space for pldm header
+        self.msg_buf.len() - 3
     }
 }
 
+/// Handles request/response for Download/Verify/Apply states.
+#[derive(Debug)]
+enum FDReq {
+    /// Ready to send a request
+    Ready,
+    /// Waiting for a response
+    Sent {
+        // iid of the request
+        iid: u8,
+        cmd: u8,
+        // time the request was sent
+        time: u64,
+        // TODO: maybe add a current retry count?
+    },
+    /// Completed and failed, will not send more requests.
+    /// Waiting for the UA to send a Cancel to move out of the current State
+    /// The u8 value is the failure code, reported via GetStatus AuxState
+    Failed(u8),
+}
+
+impl FDReq {
+    pub const RETRY_TIME: u64 = 1_000;
+
+    /// Checks whether a response matches a sent request.
+    ///
+    /// This checks matching cmd, iid.
+    /// Consumes `request` by value since it will be cleared by callers
+    /// after receiving it.
+    fn validate_response(&self, rsp: &PldmResponse) -> Result<()> {
+        let Self::Sent { iid, cmd, .. } = self else {
+            trace!("unexpected pldm-fw response {rsp:?}");
+            return Err(proto_error!("Unexpected pldm-fw response"));
+        };
+
+        if rsp.iid != *iid {
+            trace!("pldm-fw iid mismatch req {self:?} response {rsp:?}");
+            return Err(proto_error!("Unexpected pldm-fw response"));
+        }
+
+        if rsp.cmd != *cmd {
+            trace!("pldm-fw cmd mismatch req {self:?} response {rsp:?}");
+            return Err(proto_error!("Unexpected pldm-fw response"));
+        }
+
+        Ok(())
+    }
+
+    fn should_send(&self, dev: &mut impl Device) -> bool {
+        match self {
+            Self::Ready => true,
+            Self::Sent { time, .. } => {
+                // send if retry time has elapsed
+                dev.now() - time > Self::RETRY_TIME
+            },
+            // no retries, waiting for a cancel from the UA
+            Self::Failed(_) => false,
+        }
+    }
+
+    // Returns (AuxState, AuxStateStatus)
+    fn aux_state(&self) -> (u8, u8) {
+        match self {
+            | Self::Ready
+            | Self::Sent { .. }
+             => (0, 0),
+            Self::Failed(e) => (2, *e)
+        }
+    }
+}
+
+/// Details of a particular component image
+#[derive(Debug, Clone)]
+pub struct ComponentDetails {
+    /// Size in bytes of the component image
+    size: usize,
+    /// Component classification
+    classification: ComponentClassification,
+    /// Component identifier
+    identifier: u16,
+    /// Component classification index
+    index: u8,
+}
+
+
+/// Implementation details for a particular Firmware Device
+///
+/// Applications define the PLDM Firmware Update behaviour
+/// by implementing this trait.
 pub trait Device {
     fn dev_identifiers(&mut self) -> &DeviceIdentifiers;
 
@@ -506,7 +859,12 @@ pub trait Device {
 
     fn active_image_set_version(&self) -> DescriptorString;
 
-    fn pending_image_set_version(&self) -> DescriptorString;
+    /// Provide the PendingComponentImageSet for GetFirmwareParameters
+    ///
+    /// The default implementation returns an empty entry.
+    fn pending_image_set_version(&self) -> DescriptorString {
+        DescriptorString::empty()
+    }
 
     /// Pass a component at the start of update mode
     ///
@@ -520,9 +878,25 @@ pub trait Device {
     /// such as requiring update flags to be set.
     fn update_component(&mut self, update: bool, comp: &UpdateComponent) -> u8;
 
-    fn write(comp: ComponentId) -> Result<()>;
+    /// Provides a portion of a component image
+    fn firmware_data(&mut self, offset: usize, data: &[u8],
+        comp: &ComponentDetails,
+        ) -> Result<()>;
+
+    /// Verifies a component after transfer completion.
+    ///
+    /// This function should return a [`VerifyResult`] value (as a `u8`).
+    // TODO: In future this may need a non-blocking variant
+    // in order to report progress status of the verify.
+    fn verify(&mut self, comp: &ComponentDetails) -> Result<VerifyResult>;
+
+    /// Applies a component after verify success.
+    fn apply(&mut self, comp: &ComponentDetails) -> Result<(ApplyResult, ActivationMethods)>;
 
     /// Returns a monotonic timestamp in milliseconds.
+    ///
+    /// This may have an arbitrary initial offset.
+    /// Implementations must guarantee time doesn't go backwards.
     fn now(&mut self) -> u64;
 }
 
