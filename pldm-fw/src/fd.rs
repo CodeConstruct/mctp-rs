@@ -177,6 +177,8 @@ impl Responder {
             Cmd::RequestUpdate => self.cmd_update(&req, ep, d),
             Cmd::PassComponentTable => self.cmd_pass_components(&req, ep, d),
             Cmd::UpdateComponent => self.cmd_update_component(&req, ep, d),
+            Cmd::CancelUpdate => self.cmd_cancel_update(&req, ep, d),
+            Cmd::CancelUpdateComponent => self.cmd_cancel_update_component(&req, ep, d),
             Cmd::GetStatus => self.cmd_get_status(&req, ep, d),
             _ => {
                 trace!("unhandled command {cmd:?}");
@@ -400,6 +402,81 @@ impl Responder {
             update_flags,
             details,
         });
+        Ok(())
+    }
+
+    fn cmd_cancel_update(
+        &mut self,
+        req: &PldmRequest,
+        ep: &mut impl mctp::Endpoint,
+        dev: &mut impl Device,
+    ) -> Result<()> {
+        let details = match &self.state {
+            | State::Download { details, .. }
+            | State::Verify { details, .. }
+            | State::Apply { details, .. }
+            => Some(details),
+            State::Idle { .. }=> {
+                self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
+                return Ok(());
+            }
+            State::Activate => {
+                self.reply_error(req, ep, FwCode::INVALID_STATE_FOR_COMMAND as u8);
+                return Ok(());
+            }
+            _ => None,
+        };
+
+        if !req.data.is_empty() {
+            trace!("error parsing CancelUpdate");
+            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            return Ok(())
+        }
+
+        let mut resp = req.response_borrowed(&[])?;
+        resp.cc = CCode::SUCCESS as u8;
+        pldm_tx_resp(ep, &resp)?;
+
+        details.map(|d| dev.cancel_component(d));
+        self.set_idle(PldmIdleReason::Cancel);
+
+        Ok(())
+    }
+
+    fn cmd_cancel_update_component(
+        &mut self,
+        req: &PldmRequest,
+        ep: &mut impl mctp::Endpoint,
+        dev: &mut impl Device,
+    ) -> Result<()> {
+        let details = match &self.state {
+            | State::Download { details, .. }
+            | State::Verify { details, .. }
+            | State::Apply { details, .. }
+            => details,
+            State::Idle { .. } => {
+                self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
+                return Ok(());
+            }
+            _ => {
+                self.reply_error(req, ep, FwCode::INVALID_STATE_FOR_COMMAND as u8);
+                return Ok(());
+            }
+        };
+
+        if !req.data.is_empty() {
+            trace!("error parsing CancelUpdateComponent");
+            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            return Ok(())
+        }
+
+        let mut resp = req.response_borrowed(&[])?;
+        resp.cc = CCode::SUCCESS as u8;
+        pldm_tx_resp(ep, &resp)?;
+
+        dev.cancel_component(&details);
+        self.set_state(State::ReadyXfer);
+
         Ok(())
     }
 
@@ -896,6 +973,15 @@ pub trait Device {
 
     /// Applies a component after verify success.
     fn apply(&mut self, comp: &ComponentDetails) -> Result<(ApplyResult, ActivationMethods)>;
+
+    /// Cancel Update Component
+    ///
+    /// Called when a component update is cancelled prior to being applied.
+    /// This function is called for both Cancel Update Component
+    /// and Cancel Update (when a component is currently in progress).
+    /// The default implementation does nothing.
+    #[allow(unused)]
+    fn cancel_component(&mut self, comp: &ComponentDetails) { }
 
     /// Returns a monotonic timestamp in milliseconds.
     ///
