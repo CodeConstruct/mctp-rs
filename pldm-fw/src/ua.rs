@@ -335,6 +335,12 @@ where
         // we should be in update mode, handle incoming data requests
         let fw_req = pldm::pldm_rx_req(ep)?;
 
+        if fw_req.typ != PLDM_TYPE_FW {
+            return Err(PldmUpdateError::new_proto(format!(
+                "unexpected type during update: {fw_req:?}"
+            )));
+        }
+
         match fw_req.cmd {
             0x15 => {
                 /* Request Firmware Data */

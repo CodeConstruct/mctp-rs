@@ -161,6 +161,11 @@ impl Responder {
         d: &mut impl Device,
     ) -> Result<()> {
 
+        if req.typ != PLDM_TYPE_FW {
+            trace!("pldm-fw non-pldm-fw request {req:?}");
+            return Err(proto_error!("Unexpected pldm-fw request"));
+        }
+
         let Some(cmd) = Cmd::from_u8(req.cmd) else {
             self.reply_error(&req, ep, CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8);
             return Ok(());
@@ -912,6 +917,11 @@ impl FDReq {
             trace!("unexpected pldm-fw response {rsp:?}");
             return Err(proto_error!("Unexpected pldm-fw response"));
         };
+
+        if rsp.typ != PLDM_TYPE_FW {
+            trace!("pldm-fw non-pldm-fw response {rsp:?}");
+            return Err(proto_error!("Unexpected pldm-fw response"));
+        }
 
         if rsp.iid != *iid {
             trace!("pldm-fw iid mismatch req {self:?} response {rsp:?}");
