@@ -14,7 +14,7 @@ use log::{debug, error, info, trace, warn};
 
 #[allow(unused)]
 use nom::{
-    combinator::{all_consuming, complete, map},
+    combinator::{all_consuming, map},
     multi::length_value,
     number::complete::{le_u16, le_u32, le_u8},
     sequence::tuple,
@@ -203,6 +203,7 @@ impl Responder {
             Cmd::RequestUpdate => self.cmd_update(&req, eid, ep, d),
             Cmd::PassComponentTable => self.cmd_pass_components(&req, ep, d),
             Cmd::UpdateComponent => self.cmd_update_component(&req, ep, d),
+            Cmd::ActivateFirmware => self.cmd_activate(&req, ep, d),
             Cmd::CancelUpdate => self.cmd_cancel_update(&req, ep, d),
             Cmd::CancelUpdateComponent => self.cmd_cancel_update_component(&req, ep, d),
             Cmd::GetStatus => self.cmd_get_status(&req, ep, d),
@@ -438,6 +439,49 @@ impl Responder {
             update_flags,
             details,
         });
+        Ok(())
+    }
+
+    fn cmd_activate(
+        &mut self,
+        req: &PldmRequest,
+        ep: &mut impl mctp::Endpoint,
+        dev: &mut impl Device,
+    ) -> Result<()> {
+        if req.data.len() != 1 {
+            trace!("error parsing Activate");
+            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+        }
+        let self_contained = req.data[0] != 0;
+
+        // check correct state
+        match self.state {
+            State::ReadyXfer => (),
+            State::Idle { .. } => {
+                self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
+                return Ok(())
+            }
+            _ => {
+                self.reply_error(req, ep, FwCode::INVALID_STATE_FOR_COMMAND as u8);
+                return Ok(())
+            }
+        }
+
+        // The Device implementation is responsible for checking that
+        // expected components have been updated.
+        let status = dev.activate(self_contained) as u8;
+
+        // No EstimatedTimeForSelfContainedActivation for now.
+        let data = [0x00, 0x00];
+        let mut resp = req.response_borrowed(&data).unwrap();
+        resp.cc = status;
+        pldm_tx_resp(ep, &resp)?;
+
+        // No progress is provided for self contained activation,
+        // so we proceed ->Activate->Idle (which sets the previous state
+        // correctly).
+        self.set_state(State::Activate);
+        self.set_idle(PldmIdleReason::Activate);
         Ok(())
     }
 
@@ -963,13 +1007,13 @@ impl FDReq {
 #[derive(Debug, Clone)]
 pub struct ComponentDetails {
     /// Size in bytes of the component image
-    size: usize,
+    pub size: usize,
     /// Component classification
-    classification: ComponentClassification,
+    pub classification: ComponentClassification,
     /// Component identifier
-    identifier: u16,
+    pub identifier: u16,
     /// Component classification index
-    index: u8,
+    pub index: u8,
 }
 
 
@@ -1018,6 +1062,18 @@ pub trait Device {
     /// Applies a component after verify success.
     fn apply(&mut self, comp: &ComponentDetails) -> Result<(ApplyResult, ActivationMethods)>;
 
+    /// Activates new firmware
+    ///
+    /// The Device implementation is responsible for checking that
+    /// expected components have been updated, returning `INCOMPLETE_UPDATE`
+    /// if not.
+    ///
+    /// The default implementation returns `ACTIVATION_NOT_REQURED`.
+    #[allow(unused)]
+    fn activate(&mut self, self_contained: bool) -> ActivateResult {
+        ActivateResult::ACTIVATION_NOT_REQUIRED
+    }
+
     /// Cancel Update Component
     ///
     /// Called when a component update is cancelled prior to being applied.
@@ -1032,6 +1088,19 @@ pub trait Device {
     /// This may have an arbitrary initial offset.
     /// Implementations must guarantee time doesn't go backwards.
     fn now(&mut self) -> u64;
+}
+
+/// Results that may be returned from an [`Device::activate`] callback.
+#[repr(u8)]
+#[allow(missing_docs)]
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+pub enum ActivateResult {
+    SUCCESS = CCode::SUCCESS as u8,
+    ERROR = CCode::ERROR as u8,
+    INCOMPLETE_UPDATE = FwCode::INCOMPLETE_UPDATE as u8,
+    ACTIVATION_NOT_REQUIRED = FwCode::ACTIVATION_NOT_REQUIRED as u8,
+    SELF_CONTAINED_ACTIVATION_NOT_PERMITTED = FwCode::SELF_CONTAINED_ACTIVATION_NOT_PERMITTED as u8,
 }
 
 #[cfg(test)]

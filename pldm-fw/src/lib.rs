@@ -29,9 +29,7 @@ use nom::{
 
 #[cfg(feature = "alloc")]
 use nom::multi::{count, length_count};
-use pldm::PldmError;
 
-#[macro_use]
 extern crate pldm;
 
 /// Firmware Device specific
@@ -170,6 +168,7 @@ impl Cmd {
 #[allow(missing_docs)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
+#[derive(Debug, PartialEq)]
 pub enum FwCode {
     NOT_IN_UPDATE_MODE = 0x80,
     ALREADY_IN_UPDATE_MODE = 0x81,
@@ -183,13 +182,13 @@ pub enum FwCode {
     RETRY_REQUEST_FW_DATA = 0x89,
     UNABLE_TO_INITIATE_UPDATE = 0x8A,
     ACTIVATION_NOT_REQUIRED = 0x8B,
-    SELF_CONTAINED_ACTIVATION_ = 0x8C,
+    SELF_CONTAINED_ACTIVATION_NOT_PERMITTED = 0x8C,
     NO_DEVICE_METADATA = 0x8D,
     RETRY_REQUEST_UPDATE = 0x8E,
     NO_PACKAGE_DATA = 0x8F,
     INVALID_TRANSFER_HANDLE = 0x90,
     INVALID_TRANSFER_OPERATION = 0x91,
-    ACTIVATE_PENDING_IMAGE_NOT = 0x92,
+    ACTIVATE_PENDING_IMAGE_NOT_PERMITTED = 0x92,
     PACKAGE_DATA_ERROR = 0x93,
 }
 
