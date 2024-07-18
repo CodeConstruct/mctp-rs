@@ -91,10 +91,15 @@ impl From<&State> for PldmFDState {
 }
 
 pub struct Responder {
-    ua_eid: Option<Eid>,
     /// state should be modified via set_state()
     state: State,
     prev_state: PldmFDState,
+
+    /// EID of the current EID. This is set on the RequestUpdate message
+    /// and cleared when returning to Idle state.
+    /// Non-informational commands from other EIDs will be rejected while ua_eid is set.
+    /// CancelUpdate is allowed from any EID.
+    ua_eid: Option<Eid>,
 
     msg_buf: [u8; MSGBUF],
     // Maximum size allowed by the UA
@@ -130,16 +135,18 @@ impl Responder {
     ///
     /// Errors returned from this function are not expected to be handled
     /// apart from logging.
+    /// `resp_ep` will be used to send responses, and must be associated with
+    /// address `eid`.
     pub fn message_in(
         &mut self,
         eid: Eid,
         msg: &PldmMessage,
-        ep: &mut impl mctp::Endpoint,
+        resp_ep: &mut impl mctp::Endpoint,
         d: &mut impl Device,
     ) -> Result<()> {
         match msg {
-            PldmMessage::Request(req) => self.request_in(eid, req, ep, d),
-            PldmMessage::Response(rsp) => self.response_in(eid, rsp, ep, d),
+            PldmMessage::Request(req) => self.request_in(eid, req, resp_ep, d),
+            PldmMessage::Response(rsp) => self.response_in(eid, rsp, d),
         }
     }
 
@@ -159,14 +166,28 @@ impl Responder {
             return Ok(());
         };
 
-        if Some(eid) != self.ua_eid {
-            if self.ua_eid.is_some() {
-                // TODO: maybe disallow if not Idle or a Cancelupdate?
-                trace!("Varying UA EID");
+        // Check for consistent EID
+        match cmd {
+            // informational commands or Cancel always allowed
+            | Cmd::QueryDeviceIdentifiers
+            | Cmd::GetFirmwareParameters
+            | Cmd::GetStatus
+            | Cmd::CancelUpdate
+            // RequestUpdate will check itself
+            | Cmd::RequestUpdate
+            => (),
+            _ => {
+                if self.ua_eid != Some(eid) {
+                    debug!("Ignoring {cmd:?} from mismatching EID {eid}, expected {:?}", self.ua_eid);
+                    self.reply_error(&req, ep,
+                        CCode::ERROR_NOT_READY as u8,
+                    );
+                }
             }
-            // Cache most recent. TODO might need other handling?
-            self.ua_eid = Some(eid);
         }
+
+        debug_assert_eq!(self.ua_eid.is_none(), matches!(self.state, State::Idle {..}),
+            "UA EID should be set in states apart from IDLE");
 
         trace!("pldm-fw cmd {cmd:?}");
 
@@ -174,7 +195,7 @@ impl Responder {
         let r = match cmd {
             Cmd::QueryDeviceIdentifiers => self.cmd_qdi(&req, ep, d),
             Cmd::GetFirmwareParameters => self.cmd_fwparams(&req, ep, d),
-            Cmd::RequestUpdate => self.cmd_update(&req, ep, d),
+            Cmd::RequestUpdate => self.cmd_update(&req, eid, ep, d),
             Cmd::PassComponentTable => self.cmd_pass_components(&req, ep, d),
             Cmd::UpdateComponent => self.cmd_update_component(&req, ep, d),
             Cmd::CancelUpdate => self.cmd_cancel_update(&req, ep, d),
@@ -206,10 +227,16 @@ impl Responder {
         &mut self,
         eid: Eid,
         rsp: &PldmResponse,
-        ep: &mut impl mctp::Endpoint,
         d: &mut impl Device,) -> Result<()> {
+
+        if self.ua_eid != Some(eid) {
+            // Either this is a response prior to a RequestUpdate,
+            // or a response from a different EID to the RequestUpdate.
+            return Err(proto_error!("Response from unexpected EID"));
+        }
+
         match Cmd::from_u8(rsp.cmd) {
-            Some(Cmd::RequestFirmwareData) => self.download_response(eid, rsp, ep, d),
+            Some(Cmd::RequestFirmwareData) => self.download_response(rsp, d),
             | Some(Cmd::TransferComplete)
             | Some(Cmd::VerifyComplete)
             | Some(Cmd::ApplyComplete)
@@ -277,6 +304,7 @@ impl Responder {
     fn cmd_update(
         &mut self,
         req: &PldmRequest,
+        eid: Eid,
         ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) -> Result<()> {
@@ -284,6 +312,9 @@ impl Responder {
             self.reply_error(req, ep, FwCode::ALREADY_IN_UPDATE_MODE as u8);
             return Ok(());
         }
+
+        debug_assert!(self.ua_eid.is_none());
+        self.ua_eid = Some(eid);
 
         let Ok((_, ru)) = all_consuming(RequestUpdateRequest::parse)(&req.data)
         else {
@@ -754,9 +785,7 @@ impl Responder {
 
     fn download_response(
         &mut self,
-        eid: Eid,
         rsp: &PldmResponse,
-        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,) -> Result<()> {
 
         let State::Download {
@@ -816,6 +845,10 @@ impl Responder {
     }
 
     fn set_state(&mut self, new_state: State) {
+        debug_assert!(!matches!(new_state, State::Idle { .. }),
+            "Idle state should use set_idle() instead");
+        debug_assert!(self.ua_eid.is_some());
+
         self.prev_state = (&self.state).into();
         self.state = new_state;
     }
@@ -823,6 +856,7 @@ impl Responder {
     fn set_idle(&mut self, reason: PldmIdleReason) {
         self.prev_state = (&self.state).into();
         self.state = State::Idle { reason };
+        self.ua_eid = None;
     }
 
     fn set_state_idle_timeout(&mut self) {
