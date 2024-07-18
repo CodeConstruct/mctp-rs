@@ -14,6 +14,8 @@
 //! This crate implements some base communication primitives for PLDM,
 //! used to construct higher-level PLDM messaging applications.
 
+use core::fmt::{self, Debug};
+
 use mctp::Tag;
 
 pub mod util;
@@ -129,7 +131,6 @@ pub enum CCode {
 }
 
 /// Base PLDM request type
-#[derive(Debug)]
 pub struct PldmRequest<'a> {
     /// MCTP tag used for the request. Set to `None` to allocate for outgoing
     /// requests, set to `Some(Tag::Owned)` for incoming requests.
@@ -142,6 +143,26 @@ pub struct PldmRequest<'a> {
     pub cmd: u8,
     /// PLDM command data payload
     pub data: VecOrSlice<'a, u8>,
+}
+
+impl<'a> Debug for PldmRequest<'a>
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let vs = match self.data {
+            #[cfg(feature = "alloc")]
+            VecOrSlice::Owned(_) => "Owned",
+            VecOrSlice::Borrowed(_) => "Borrowed",
+        };
+        f.debug_struct("PldmRequest")
+        .field("mctp_tag", &self.mctp_tag)
+        .field("iid", &self.iid)
+        .field("typ", &self.typ)
+        .field("cmd", &self.cmd)
+        .field("data.len()", &self.data.len())
+        .field("data..10", &&self.data[..self.data.len().min(10)])
+        .field("storage", &vs)
+        .finish()
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -289,7 +310,6 @@ impl<'a> PldmRequest<'a> {
 }
 
 /// Base PLDM response type
-#[derive(Debug)]
 pub struct PldmResponse<'a> {
     /// MCTP tag for this response. Will typically be a non-owned value
     /// ([`mctp::Tag::Unowned`]), as the request provided the owned tag.
@@ -305,6 +325,27 @@ pub struct PldmResponse<'a> {
     /// PLDM response data payload. Does not include the cc field.
     pub data: VecOrSlice<'a, u8>,
 }
+
+impl<'a> Debug for PldmResponse<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let vs = match self.data {
+            #[cfg(feature = "alloc")]
+            VecOrSlice::Owned(_) => "Owned",
+            VecOrSlice::Borrowed(_) => "Borrowed",
+        };
+        f.debug_struct("PldmResponse")
+        .field("mctp_tag", &self.mctp_tag)
+        .field("iid", &self.iid)
+        .field("typ", &self.typ)
+        .field("cmd", &self.cmd)
+        .field("cc", &self.cc)
+        .field("data.len()", &self.data.len())
+        .field("data..10", &&self.data[..self.data.len().min(10)])
+        .field("storage", &vs)
+        .finish()
+    }
+}
+
 
 #[cfg(feature = "alloc")]
 impl<'a> PldmResponse<'a> {
