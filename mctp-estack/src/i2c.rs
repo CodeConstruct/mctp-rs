@@ -149,7 +149,7 @@ impl MctpI2cHandler {
     /// `buf` should have the PEC byte removed, already checked by callers.
     ///
     /// *TODO:* provide separate software PEC check function?
-    pub fn receive_write<'f>(
+    pub fn receive<'f>(
         &mut self,
         packet: &[u8],
         mctp: &'f mut Stack,
