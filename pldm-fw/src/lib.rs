@@ -197,9 +197,44 @@ pub enum FwCode {
 /// Not all defined Transfer Result codes are defined in this enum,
 /// arbitrary `u8` values may be expected.
 #[repr(u8)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TransferResult {
-    Success = 0,
+    Success,
+    Corrupt,
+    VersionMismatch,
+    Aborted,
+    Timeout,
+    GenericError,
+    Other(u8),
+}
+
+impl From<u8> for TransferResult {
+    fn from(v: u8) -> Self {
+        match v {
+            0x00 => Self::Success,
+            0x01 => Self::Corrupt,
+            0x02 => Self::VersionMismatch,
+            0x03 => Self::Aborted,
+            0x09 => Self::Timeout,
+            0x0a => Self::GenericError,
+            v => Self::Other(v),
+        }
+    }
+}
+
+impl From<TransferResult> for u8 {
+    fn from(v: TransferResult) -> u8 {
+        match v {
+            TransferResult::Success => 0x00,
+            TransferResult::Corrupt => 0x01,
+            TransferResult::VersionMismatch => 0x02,
+            TransferResult::Aborted => 0x03,
+            TransferResult::Timeout => 0x09,
+            TransferResult::GenericError => 0x0a,
+            TransferResult::Other(v) => v,
+        }
+    }
 }
 
 /// Verify Result codes for VerifyComplete
@@ -764,7 +799,7 @@ pub fn pldm_date_write_buf(
 
 /// Component classification
 #[allow(missing_docs)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ComponentClassification {
     Unknown,
     Other,
@@ -1004,13 +1039,9 @@ impl UpdateComponent {
                 comparisonstamp,
                 version,
             ),
-        ) = tuple((
-            le_u16,
-            le_u16,
-            le_u8,
-            le_u32,
-            parse_string_adjacent,
-        ))(&buf)?;
+        ) = tuple((le_u16, le_u16, le_u8, le_u32, parse_string_adjacent))(
+            &buf,
+        )?;
 
         let s = Self {
             classification: classification.into(),
@@ -1053,6 +1084,46 @@ impl UpdateComponent {
             version,
             size: Some(size),
             flags: Some(flags),
+        };
+        Ok((r, s))
+    }
+}
+
+#[derive(Debug)]
+pub struct UpdateComponentResponse {
+    /// A ComponentResponseCode
+    pub response_code: u8,
+    pub update_flags: u32,
+    pub estimate_time: u16,
+}
+
+/// Response Codes for Update Component and Pass Component Table
+///
+/// This list is not complete, refer to the specification
+#[allow(missing_docs)]
+#[repr(u8)]
+#[derive(Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ComponentResponseCode {
+    Success = 0x00,
+    IdenticalVersion = 0x01,
+    DowngradeVersion = 0x02,
+    InvalidVersion = 0x03,
+    Conflict = 0x04,
+    MissingPrerequisite = 0x05,
+    NotSupported = 0x06,
+    SecurityPreventDowngrade = 0x07,
+}
+
+impl UpdateComponentResponse {
+    pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
+        let (r, (_response, response_code, update_flags, estimate_time)) =
+            tuple((le_u8, le_u8, le_u32, le_u16))(buf)?;
+
+        let s = Self {
+            response_code,
+            update_flags,
+            estimate_time,
         };
         Ok((r, s))
     }
@@ -1156,9 +1227,7 @@ pub struct RequestUpdateRequest {
 impl RequestUpdateRequest {
     pub fn parse(buf: &[u8]) -> VResult<&[u8], Self> {
         let (r, t) =
-            tuple((le_u32, le_u16, le_u8, le_u16, parse_string_adjacent))(
-                buf,
-            )?;
+            tuple((le_u32, le_u16, le_u8, le_u16, parse_string_adjacent))(buf)?;
         Ok((
             r,
             RequestUpdateRequest {

@@ -23,9 +23,11 @@ use nom::{
 
 use num_traits::FromPrimitive;
 
-use pldm::{pldm_tx_req, pldm_tx_resp, CCode, PldmError, PldmRequest, PldmResponse, PldmMessage,
-proto_error};
 use mctp::Eid;
+use pldm::{
+    pldm_tx_req, pldm_tx_resp, proto_error, CCode, PldmError, PldmMessage,
+    PldmRequest, PldmResponse,
+};
 
 use crate::*;
 
@@ -45,7 +47,7 @@ enum State {
         offset: usize,
         // Set once when ready to exit from Download mode, will return
         // this value for TransferComplete request.
-        transfer_result: Option<u8>,
+        transfer_result: Option<TransferResult>,
         // Details of the last request.
         // `offset` is incremented on the `request` Sent->Ready transition.
         request: FDReq,
@@ -160,7 +162,6 @@ impl Responder {
         ep: &mut impl mctp::Endpoint,
         d: &mut impl Device,
     ) -> Result<()> {
-
         if req.typ != PLDM_TYPE_FW {
             trace!("pldm-fw non-pldm-fw request {req:?}");
             return Err(proto_error!("Unexpected pldm-fw request"));
@@ -191,8 +192,11 @@ impl Responder {
             }
         }
 
-        debug_assert_eq!(self.ua_eid.is_none(), matches!(self.state, State::Idle {..}),
-            "UA EID should be set in states apart from IDLE");
+        debug_assert_eq!(
+            self.ua_eid.is_none(),
+            matches!(self.state, State::Idle { .. }),
+            "UA EID should be set in states apart from IDLE"
+        );
 
         trace!("pldm-fw cmd {cmd:?}");
 
@@ -205,7 +209,9 @@ impl Responder {
             Cmd::UpdateComponent => self.cmd_update_component(&req, ep, d),
             Cmd::ActivateFirmware => self.cmd_activate(&req, ep, d),
             Cmd::CancelUpdate => self.cmd_cancel_update(&req, ep, d),
-            Cmd::CancelUpdateComponent => self.cmd_cancel_update_component(&req, ep, d),
+            Cmd::CancelUpdateComponent => {
+                self.cmd_cancel_update_component(&req, ep, d)
+            }
             Cmd::GetStatus => self.cmd_get_status(&req, ep, d),
             _ => {
                 trace!("unhandled command {cmd:?}");
@@ -233,8 +239,8 @@ impl Responder {
         &mut self,
         eid: Eid,
         rsp: &PldmResponse,
-        d: &mut impl Device,) -> Result<()> {
-
+        d: &mut impl Device,
+    ) -> Result<()> {
         if self.ua_eid != Some(eid) {
             // Either this is a response prior to a RequestUpdate,
             // or a response from a different EID to the RequestUpdate.
@@ -254,8 +260,15 @@ impl Responder {
         }
     }
 
-    fn reply_error(&self, req: &PldmRequest, ep: &mut impl mctp::Endpoint, cc: u8) {
-        let mut resp = req.response_borrowed(&[]).unwrap();
+    fn reply_error(
+        &self,
+        req: &PldmRequest,
+        ep: &mut impl mctp::Endpoint,
+        cc: u8,
+    ) {
+        let Ok(mut resp) = req.response_borrowed(&[]) else {
+            unreachable!()
+        };
         resp.cc = cc;
         let _ = pldm_tx_resp(ep, &resp)
             .inspect_err(|e| trace!("Error sending failure response. {e:?}"));
@@ -368,9 +381,13 @@ impl Responder {
             return Ok(());
         };
 
+        // only set for UpdateComponent
+        debug_assert!(up.flags.is_none());
+        debug_assert!(up.size.is_none());
+
         self.update_timestamp_fd_t1 = dev.now();
 
-        let res = dev.update_component(false, &up);
+        let res = self.check_update_component(false, &up, dev);
 
         // byte 0: ComponentResponse, 0 for success, 1 otherwise?
         // byte 1: ComponentResponseCode
@@ -382,6 +399,28 @@ impl Responder {
             self.set_state(State::ReadyXfer);
         }
         Ok(())
+    }
+
+    /// Wrapper around calls to dev.update_componenet() that first checks
+    /// that the component is in the list returned from `dev`.
+    fn check_update_component(
+        &self,
+        update: bool,
+        up: &UpdateComponent,
+        dev: &mut impl Device,
+    ) -> u8 {
+        // Check that the component is known in platform's list
+        let found = dev.components().iter().any(|c| {
+            c.classification == up.classification
+                && c.identifier == up.identifier
+                && c.classificationindex == up.classificationindex
+        });
+
+        if found {
+            dev.update_component(update, up)
+        } else {
+            return ComponentResponseCode::NotSupported as u8;
+        }
     }
 
     fn cmd_update_component(
@@ -403,12 +442,15 @@ impl Responder {
             return Ok(());
         };
 
+        debug_assert!(up.flags.is_some());
+        debug_assert!(up.size.is_some());
+
         self.update_timestamp_fd_t1 = dev.now();
 
         // mask to only "Force Update"
-        let res = dev.update_component(true, &up);
+        let res = self.check_update_component(true, &up, dev);
 
-        let update_flags = up.flags.unwrap() & 0x1;
+        let update_flags = up.flags.unwrap_or(0) & 0x1;
 
         let mut comp_resp = [0u8; 8];
         let mut b = SliceWriter::new(&mut comp_resp);
@@ -425,16 +467,20 @@ impl Responder {
         pldm_tx_resp(ep, &resp)?;
 
         let details = ComponentDetails {
-            // OK unwrap, size is always set by parse_update()
-            size: up.size.unwrap() as usize,
+            size: up.size.unwrap_or(0) as usize,
             classification: up.classification,
             identifier: up.identifier,
             index: up.classificationindex,
         };
 
+        // Special case for zero size component. It will immediately send TransferComplete
+        // instead of RequestFirmwareData.
+        let transfer_result =
+            (details.size == 0).then(|| TransferResult::Success);
+
         self.set_state(State::Download {
             offset: 0,
-            transfer_result: None,
+            transfer_result,
             request: FDReq::Ready,
             update_flags,
             details,
@@ -459,11 +505,15 @@ impl Responder {
             State::ReadyXfer => (),
             State::Idle { .. } => {
                 self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
-                return Ok(())
+                return Ok(());
             }
             _ => {
-                self.reply_error(req, ep, FwCode::INVALID_STATE_FOR_COMMAND as u8);
-                return Ok(())
+                self.reply_error(
+                    req,
+                    ep,
+                    FwCode::INVALID_STATE_FOR_COMMAND as u8,
+                );
+                return Ok(());
             }
         }
 
@@ -473,7 +523,9 @@ impl Responder {
 
         // No EstimatedTimeForSelfContainedActivation for now.
         let data = [0x00, 0x00];
-        let mut resp = req.response_borrowed(&data).unwrap();
+        let Ok(mut resp) = req.response_borrowed(&data) else {
+            unreachable!()
+        };
         resp.cc = status;
         pldm_tx_resp(ep, &resp)?;
 
@@ -492,16 +544,19 @@ impl Responder {
         dev: &mut impl Device,
     ) -> Result<()> {
         let details = match &self.state {
-            | State::Download { details, .. }
+            State::Download { details, .. }
             | State::Verify { details, .. }
-            | State::Apply { details, .. }
-            => Some(details),
-            State::Idle { .. }=> {
+            | State::Apply { details, .. } => Some(details),
+            State::Idle { .. } => {
                 self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
                 return Ok(());
             }
             State::Activate => {
-                self.reply_error(req, ep, FwCode::INVALID_STATE_FOR_COMMAND as u8);
+                self.reply_error(
+                    req,
+                    ep,
+                    FwCode::INVALID_STATE_FOR_COMMAND as u8,
+                );
                 return Ok(());
             }
             _ => None,
@@ -510,7 +565,7 @@ impl Responder {
         if !req.data.is_empty() {
             trace!("error parsing CancelUpdate");
             self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
-            return Ok(())
+            return Ok(());
         }
 
         let mut resp = req.response_borrowed(&[])?;
@@ -530,16 +585,19 @@ impl Responder {
         dev: &mut impl Device,
     ) -> Result<()> {
         let details = match &self.state {
-            | State::Download { details, .. }
+            State::Download { details, .. }
             | State::Verify { details, .. }
-            | State::Apply { details, .. }
-            => details,
+            | State::Apply { details, .. } => details,
             State::Idle { .. } => {
                 self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
                 return Ok(());
             }
             _ => {
-                self.reply_error(req, ep, FwCode::INVALID_STATE_FOR_COMMAND as u8);
+                self.reply_error(
+                    req,
+                    ep,
+                    FwCode::INVALID_STATE_FOR_COMMAND as u8,
+                );
                 return Ok(());
             }
         };
@@ -547,7 +605,7 @@ impl Responder {
         if !req.data.is_empty() {
             trace!("error parsing CancelUpdateComponent");
             self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
-            return Ok(())
+            return Ok(());
         }
 
         let mut resp = req.response_borrowed(&[])?;
@@ -603,8 +661,12 @@ impl Responder {
                 request,
                 ..
             } => {
-                st.progress_percent =
-                    ((*offset as u64) * 100 / (details.size as u64)) as u8;
+                if details.size > 0 {
+                    let one_percent = details.size.div_ceil(100);
+                    // This won't usually reach 100% due to ceil, but that's OK since
+                    // we transition out of Download state immediately on sending TransferComplete.
+                    st.progress_percent = (*offset / one_percent) as u8;
+                }
                 st.update_option_flags_enabled = *update_flags;
                 (st.aux_state, st.aux_state_status) = request.aux_state();
             }
@@ -622,7 +684,11 @@ impl Responder {
         st
     }
 
-    pub fn progress(&mut self, ep: &mut impl mctp::Endpoint, dev: &mut impl Device) {
+    pub fn progress(
+        &mut self,
+        ep: &mut impl mctp::Endpoint,
+        dev: &mut impl Device,
+    ) {
         if !matches!(self.state, State::Idle { .. })
             && dev.now() - self.update_timestamp_fd_t1 > Self::FD_T1_TIMEOUT
         {
@@ -647,12 +713,19 @@ impl Responder {
     ///
     /// Must only be called in Download state
     fn req_size(&self) -> usize {
-        let State::Download { ref details, offset, .. } = self.state else {
+        let State::Download {
+            ref details,
+            offset,
+            ..
+        } = self.state
+        else {
             debug_assert!(false);
             return 0;
         };
 
-        details.size.saturating_sub(offset)
+        details
+            .size
+            .saturating_sub(offset)
             .min(self.max_transfer)
             .min(self.max_request())
     }
@@ -681,7 +754,7 @@ impl Responder {
         let mut b = SliceWriter::new(&mut b);
 
         let mut req = if let Some(transfer_result) = transfer_result {
-            let _ = b.push_le8(transfer_result);
+            let _ = b.push_le8(transfer_result.into());
             // Send a new TransferComplete
             PldmRequest::new_borrowed(
                 PLDM_TYPE_FW,
@@ -708,21 +781,33 @@ impl Responder {
         }
 
         // reborrow mut
-        if let State::Download { request, transfer_result, details, .. } = &mut self.state {
+        if let State::Download {
+            request,
+            transfer_result,
+            details,
+            ..
+        } = &mut self.state
+        {
             if let Some(tr) = transfer_result {
                 // transfer complete sent
-                if *tr == TransferResult::Success as u8 {
+                if *tr == TransferResult::Success {
                     let details = details.clone();
-                    self.set_state(State::Verify { verify_result: None,
+                    self.set_state(State::Verify {
+                        verify_result: None,
                         request: FDReq::Ready,
-                        details });
+                        details,
+                    });
                 } else {
                     // idle in Download state until the UA cancels
-                    *request = FDReq::Failed(*tr)
+                    *request = FDReq::Failed((*tr).into())
                 }
             } else {
                 // update retry timer for for the firmware data request
-                *request = FDReq::Sent { time: dev.now(), iid: req.iid, cmd: req.cmd }
+                *request = FDReq::Sent {
+                    time: dev.now(),
+                    iid: req.iid,
+                    cmd: req.cmd,
+                }
             }
         }
     }
@@ -748,10 +833,11 @@ impl Responder {
 
         let vr = verify_result.get_or_insert_with(|| {
             // Perform the device-specific verify
-            dev.verify(details).unwrap_or_else(|_e| {
+            let r = dev.verify(details);
+            if r != VerifyResult::Success {
                 trace!("Error from Device::verify().");
-                VerifyResult::Failure
-            })
+            }
+            r
         });
 
         // Send a new VerifyComplete
@@ -770,8 +856,11 @@ impl Responder {
 
         if *vr == VerifyResult::Success {
             let details = details.clone();
-            self.set_state(State::Apply { apply_result: None, request: FDReq::Ready,
-                details });
+            self.set_state(State::Apply {
+                apply_result: None,
+                request: FDReq::Ready,
+                details,
+            });
         } else {
             // on verify failure remain in State::Verify, wait for cancel
             *request = FDReq::Failed(u8::from(*vr))
@@ -799,10 +888,13 @@ impl Responder {
 
         let (ar, methods) = apply_result.get_or_insert_with(|| {
             // Perform the device-specific apply
-            dev.apply(details).unwrap_or_else(|_e| {
-                trace!("Error from Device::apply().");
-                (ApplyResult::GenericError, Default::default())
-            })
+            match dev.apply(details) {
+                Ok(a) => (ApplyResult::Success, a),
+                Err(e) => {
+                    trace!("Error from Device::apply().");
+                    (e, Default::default())
+                }
+            }
         });
 
         // Create the response
@@ -835,8 +927,8 @@ impl Responder {
     fn download_response(
         &mut self,
         rsp: &PldmResponse,
-        dev: &mut impl Device,) -> Result<()> {
-
+        dev: &mut impl Device,
+    ) -> Result<()> {
         let State::Download {
             offset,
             ref request,
@@ -846,12 +938,12 @@ impl Responder {
         } = self.state
         else {
             debug!("RequestFirmwareData response but not in Download state");
-            return Ok(())
+            return Ok(());
         };
 
         if transfer_result.is_some() {
             debug!("firmware data after result");
-            return Ok(())
+            return Ok(());
         }
 
         request.validate_response(rsp)?;
@@ -863,30 +955,32 @@ impl Responder {
                 rsp.data.len()
             );
             // Let the timeout handle a retry
-            return Ok(())
+            return Ok(());
         }
 
-        if let Err(e) = dev.firmware_data(offset, &rsp.data, details) {
-            trace!("Error from firmware_data callback. {e:?}");
-            // TODO let the Device cancel the transfer with a
-            // TransferResult failure.
-            // Let the timeout handle a retry.
-            return Ok(())
-        }
+        let fwdata_result = dev.firmware_data(offset, &rsp.data, details);
 
-        // Success, move to next offset.
-        // Next offset, progress() will send the next request.
+        // Move to next offset, or set transfer result
+        // Progress() will send the next request.
         if let State::Download {
-            offset, request, details, transfer_result, ..
-        } = &mut self.state {
+            offset,
+            request,
+            details,
+            transfer_result,
+            ..
+        } = &mut self.state
+        {
             *request = FDReq::Ready;
-            *offset += rsp.data.len();
-
-            if *offset == details.size {
-                debug_assert!(transfer_result.is_none());
-                // Transfer is complete.
-                // TODO: At present we only exit Download state on success.
-                *transfer_result = Some(TransferResult::Success as u8);
+            if fwdata_result == TransferResult::Success {
+                *offset += rsp.data.len();
+                if *offset == details.size {
+                    // Transfer is complete.
+                    *transfer_result = Some(TransferResult::Success);
+                }
+            } else {
+                // Return the failure from the callback as the total transfer result.
+                trace!("Error from firmware_data callback. {fwdata_result:?}");
+                *transfer_result = Some(fwdata_result);
             }
         }
 
@@ -894,8 +988,10 @@ impl Responder {
     }
 
     fn set_state(&mut self, new_state: State) {
-        debug_assert!(!matches!(new_state, State::Idle { .. }),
-            "Idle state should use set_idle() instead");
+        debug_assert!(
+            !matches!(new_state, State::Idle { .. }),
+            "Idle state should use set_idle() instead"
+        );
         debug_assert!(self.ua_eid.is_some());
 
         self.prev_state = (&self.state).into();
@@ -986,7 +1082,7 @@ impl FDReq {
             Self::Sent { time, .. } => {
                 // send if retry time has elapsed
                 dev.now() - time > Self::RETRY_TIME
-            },
+            }
             // no retries, waiting for a cancel from the UA
             Self::Failed(_) => false,
         }
@@ -995,10 +1091,8 @@ impl FDReq {
     // Returns (AuxState, AuxStateStatus)
     fn aux_state(&self) -> (u8, u8) {
         match self {
-            | Self::Ready
-            | Self::Sent { .. }
-             => (0, 0),
-            Self::Failed(e) => (2, *e)
+            Self::Ready | Self::Sent { .. } => (0, 0),
+            Self::Failed(e) => (2, *e),
         }
     }
 }
@@ -1015,7 +1109,6 @@ pub struct ComponentDetails {
     /// Component classification index
     pub index: u8,
 }
-
 
 /// Implementation details for a particular Firmware Device
 ///
@@ -1037,6 +1130,9 @@ pub trait Device {
 
     /// Pass a component at the start of update mode
     ///
+    /// Prior to calling `update_component` the `Responder` will check
+    /// that the given `comp` matches an entry returned from `Device::components()`.
+    ///
     /// Will be called with `update = false` initially for
     /// Pass Component, and then later called with `update = true`
     /// when the actual update is starting.
@@ -1045,22 +1141,36 @@ pub trait Device {
     /// or a ComponentResponseCode otherwise (see PLDM FW specification).
     /// When `update == false` a response may indicate conditional success,
     /// such as requiring update flags to be set.
+
+    // fd shouldn't call this directly, instead use check_update_component()
+    // which checks that comp exists in the component list.
     fn update_component(&mut self, update: bool, comp: &UpdateComponent) -> u8;
 
     /// Provides a portion of a component image
-    fn firmware_data(&mut self, offset: usize, data: &[u8],
+    ///
+    /// The `Responder` will provide all firmware blocks in sequence.
+    ///
+    /// If a failure `TransferResult` is returned, the component transfer is aborted
+    /// and that result code sent to the Update Agent.
+    fn firmware_data(
+        &mut self,
+        offset: usize,
+        data: &[u8],
         comp: &ComponentDetails,
-        ) -> Result<()>;
+    ) -> TransferResult;
 
     /// Verifies a component after transfer completion.
     ///
-    /// This function should return a [`VerifyResult`] value (as a `u8`).
+    /// This function should return a [`VerifyResult`].
     // TODO: In future this may need a non-blocking variant
     // in order to report progress status of the verify.
-    fn verify(&mut self, comp: &ComponentDetails) -> Result<VerifyResult>;
+    fn verify(&mut self, comp: &ComponentDetails) -> VerifyResult;
 
     /// Applies a component after verify success.
-    fn apply(&mut self, comp: &ComponentDetails) -> Result<(ApplyResult, ActivationMethods)>;
+    fn apply(
+        &mut self,
+        comp: &ComponentDetails,
+    ) -> core::result::Result<ActivationMethods, ApplyResult>;
 
     /// Activates new firmware
     ///
@@ -1081,7 +1191,7 @@ pub trait Device {
     /// and Cancel Update (when a component is currently in progress).
     /// The default implementation does nothing.
     #[allow(unused)]
-    fn cancel_component(&mut self, comp: &ComponentDetails) { }
+    fn cancel_component(&mut self, comp: &ComponentDetails) {}
 
     /// Returns a monotonic timestamp in milliseconds.
     ///
@@ -1100,7 +1210,8 @@ pub enum ActivateResult {
     ERROR = CCode::ERROR as u8,
     INCOMPLETE_UPDATE = FwCode::INCOMPLETE_UPDATE as u8,
     ACTIVATION_NOT_REQUIRED = FwCode::ACTIVATION_NOT_REQUIRED as u8,
-    SELF_CONTAINED_ACTIVATION_NOT_PERMITTED = FwCode::SELF_CONTAINED_ACTIVATION_NOT_PERMITTED as u8,
+    SELF_CONTAINED_ACTIVATION_NOT_PERMITTED =
+        FwCode::SELF_CONTAINED_ACTIVATION_NOT_PERMITTED as u8,
 }
 
 #[cfg(test)]
