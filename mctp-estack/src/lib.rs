@@ -339,7 +339,7 @@ impl Stack {
     fn alloc_tag(&self, peer: Eid) -> Option<TagValue> {
         // Find used tags as a bitmask
         let mut used = 0u8;
-        for (fpeer, tag) in self.flows.keys().filter(|(fpeer, _tag)| *fpeer == peer) {
+        for (_fpeer, tag) in self.flows.keys().filter(|(fpeer, _tag)| *fpeer == peer) {
             debug_assert!(tag.0 <= mctp::MCTP_TAG_MAX);
             let bit = 1u8 << tag.0;
             debug_assert!(used & bit == 0);
