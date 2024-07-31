@@ -105,13 +105,10 @@ impl MctpI2cEncap {
     }
 }
 
-/// A hardware abstracted handler for I2C MCTP
+/// A handler for I2C MCTP
 ///
-/// For a single MCTP stack on a single i2c bus.
+/// One instance should exist for each I2C bus with a MCTP transport.
 pub struct MctpI2cHandler {
-    /// I2C bus identifier. TODO: This may be better extended to usize (or a newtype)
-    port: u8,
-
     encap: MctpI2cEncap,
 
     // TODO: replace with a &[u8] or similar so that we can avoid
@@ -123,7 +120,6 @@ pub struct MctpI2cHandler {
 impl core::fmt::Debug for MctpI2cHandler {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MctpI2cHandler")
-            .field("port", &self.port)
             .field("send_state", &self.send_state)
             .finish_non_exhaustive()
     }
@@ -136,20 +132,14 @@ impl MctpI2cHandler {
     /// specified by `mctp-estack` crate. The re-export
     /// [`mctp_estack::Vec`](crate::Vec) can be used for API compatibility.
     pub fn new(
-        port: u8,
         own_addr: u8,
         send_message: &'static mut Vec<u8, SENDBUF>,
     ) -> Self {
         Self {
-            port,
             encap: MctpI2cEncap::new(own_addr),
             send_message,
             send_state: HandlerSendState::Idle,
         }
-    }
-
-    pub fn port(&self) -> u8 {
-        self.port
     }
 
     /// Handles receiving an I2C target write
