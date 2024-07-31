@@ -2,7 +2,7 @@
 use log::{debug, error, info, trace, warn};
 
 use crate::{
-    AppCookie, Fragmenter, MctpMessage, ReceiveHandle, Stack,
+    AppCookie, Fragmenter, MctpMessage, ReceiveHandle, SendOutput, Stack,
 };
 use mctp::{Eid, Error, MsgType, Result, Tag};
 
@@ -78,16 +78,16 @@ impl MctpI2cEncap {
         payload: &[u8],
         out: &'f mut [u8],
         fragmenter: &mut Fragmenter,
-    ) -> Result<Option<&'f mut [u8]>> {
+    ) -> SendOutput<'f> {
         if out.len() < MCTP_I2C_HEADER {
-            return Err(Error::InvalidInput);
+            return SendOutput::failure(Error::InvalidInput, fragmenter);
         }
 
         let (i2chead, packet) = out.split_at_mut(MCTP_I2C_HEADER);
 
-        let packet = fragmenter.fragment(payload, packet)?;
-        let Some(packet) = packet else {
-            return Ok(None);
+        let r = fragmenter.fragment(payload, packet);
+        let SendOutput::Packet(packet) = r else {
+            return r.unborrowed().unwrap();
         };
 
         let mut header = MctpI2cHeader::new();
@@ -101,7 +101,7 @@ impl MctpI2cEncap {
 
         let out_len = MCTP_I2C_HEADER + packet.len();
         let out = &mut out[..out_len];
-        Ok(Some(out))
+        SendOutput::Packet(out)
     }
 }
 
@@ -167,42 +167,39 @@ impl MctpI2cHandler {
     /// The `send_complete` closure is called when an entire message completes sending.
     /// It is called with `Some(Tag)` on success (with the tag that was sent)
     /// or `None` on failure. The cookie is the one provided to [`send_enqueue`](Self::send_enqueue).
-    pub fn send_fill<F>(
-        &mut self,
-        buf: &mut [u8],
-        send_complete: F,
-    ) -> Result<usize>
-    where
-        F: FnOnce(Option<Tag>, Option<AppCookie>),
-    {
+    pub fn send_fill<'f>(&mut self, buf: &'f mut [u8]) -> SendOutput<'f> {
         let HandlerSendState::Sending {
             fragmenter,
             i2c_dest,
         } = &mut self.send_state
         else {
-            return Err(Error::Other);
+            // called when not !send_ready()
+            return SendOutput::bare_failure(Error::Other);
         };
 
         let r = self
             .encap
             .send(*i2c_dest, self.send_message, buf, fragmenter);
         match r {
-            Ok(Some(b)) => Ok(b.len()),
-            Ok(None) => {
-                // Finished
-                send_complete(Some(fragmenter.tag()), fragmenter.cookie());
+            SendOutput::Complete { .. } | SendOutput::Error { .. } => {
                 self.send_message.clear();
                 self.send_state = HandlerSendState::Idle;
-                Ok(0)
             }
-            Err(e) => {
-                debug!("Error fragmenting {e:?}");
-                send_complete(None, fragmenter.cookie());
-                self.send_state = HandlerSendState::Idle;
-                self.send_message.clear();
-                Err(e)
-            }
+            SendOutput::Packet(_) => (),
+        };
+        r
+    }
+
+    pub fn cancel_send(&mut self) -> Option<AppCookie> {
+        let mut cookie = None;
+        if let HandlerSendState::Sending { fragmenter, .. } =
+            &mut self.send_state
+        {
+            cookie = fragmenter.cookie();
         }
+        self.send_message.clear();
+        self.send_state = HandlerSendState::Idle;
+        cookie
     }
 
     /// Indicates whether the send queue is idle, ready for an application to enqueue a new message

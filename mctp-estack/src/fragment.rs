@@ -1,4 +1,4 @@
-use mctp::{Eid, MsgType, Tag, MCTP_HEADER_VERSION_1, Error, Result};
+use mctp::{Eid, Error, MsgType, Result, Tag, MCTP_HEADER_VERSION_1};
 
 use crate::{AppCookie, Header, HEADER_LEN};
 
@@ -72,24 +72,23 @@ impl Fragmenter {
         header
     }
 
-    /// Returns fragments for the MCTP payload, like an iterator.
+    /// Returns fragments for the MCTP payload
     ///
-    /// `None` is returned after all fragments have been returned.
-    /// `out` buffer is borrowed as the returned fragment, filled with packet contents
+    /// In `SendOutput::Packet(buf)`, `buffer` is borrowed as the returned fragment, filled with packet contents.
     pub fn fragment<'f>(
         &mut self,
         payload: &[u8],
         out: &'f mut [u8],
-    ) -> Result<Option<&'f mut [u8]>> {
+    ) -> SendOutput<'f> {
         if self.done {
-            return Ok(None);
+            return SendOutput::success(self);
         }
 
         // first fragment needs type byte
         let min = HEADER_LEN + self.first as usize;
 
         if out.len() < min {
-            return Err(Error::NoSpace);
+            return SendOutput::failure(Error::NoSpace, self);
         }
 
         // Reserve header space, the remaining buffer keeps being
@@ -108,7 +107,7 @@ impl Fragmenter {
 
         if payload.len() < self.payload_used {
             // Caller is passing varying payload buffers
-            return Err(Error::InvalidInput)
+            return SendOutput::failure(Error::InvalidInput, self);
         }
 
         // Copy as much as is available in input or output
@@ -132,6 +131,48 @@ impl Fragmenter {
         let spare = rest.len();
         let used = out.len() - spare;
 
-        Ok(Some(&mut out[..used]))
+        SendOutput::Packet(&mut out[..used])
+    }
+}
+
+pub enum SendOutput<'p> {
+    Packet(&'p mut [u8]),
+    Complete {
+        tag: Tag,
+        cookie: Option<AppCookie>,
+    },
+    Error {
+        err: Error,
+        cookie: Option<AppCookie>,
+    },
+}
+
+impl<'f> SendOutput<'f> {
+    // For avoiding borrow problems. Can be removed once Rust polonius merges.
+    pub(crate) fn unborrowed<'x>(self) -> Option<SendOutput<'x>> {
+        match self {
+            Self::Packet(_) => None,
+            Self::Complete { tag, cookie } => Some(SendOutput::Complete { tag, cookie }),
+            Self::Error { err, cookie } => Some(SendOutput::Error { err, cookie }),
+        }
+    }
+
+    pub(crate) fn success(f: &Fragmenter) -> Self {
+        Self::Complete {
+            tag: f.tag,
+            cookie: f.cookie,
+        }
+    }
+
+    pub(crate) fn failure(err: Error, f: &Fragmenter) -> Self {
+        Self::Error {
+            err,
+            cookie: f.cookie,
+        }
+    }
+
+    /// Just an error, no fragmenter required
+    pub(crate) fn bare_failure(err: Error) -> Self {
+        Self::Error { err, cookie: None }
     }
 }

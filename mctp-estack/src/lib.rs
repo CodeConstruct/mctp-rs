@@ -20,7 +20,7 @@ mod i2c;
 mod reassemble;
 
 pub use crate::i2c::{MctpI2cEncap, MCTP_I2C_COMMAND_CODE, MctpI2cHandler};
-pub use fragment::Fragmenter;
+pub use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
 
 const FLOWS: usize = 8;
