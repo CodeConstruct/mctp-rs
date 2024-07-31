@@ -1191,7 +1191,7 @@ pub trait Device {
     /// and Cancel Update (when a component is currently in progress).
     /// The default implementation does nothing.
     #[allow(unused)]
-    fn cancel_component(&mut self, comp: &ComponentDetails) {}
+    fn cancel_component(&mut self, comp: &ComponentDetails);
 
     /// Returns a monotonic timestamp in milliseconds.
     ///
