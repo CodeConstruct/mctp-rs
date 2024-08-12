@@ -14,8 +14,8 @@
 //! Management Component Transport Protocol (MCTP)
 //!
 //! This crate provides common types and traits for MCTP.
-//! Implementations can implement [`Endpoint`] to represent
-//! a remote endpoint.
+//! Transport implementations can implement [`ReqChannel`] and [`Listener`] to
+//! communicate with a remote endpoint.
 
 /// MCTP endpoint ID
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -93,7 +93,7 @@ pub const MCTP_TAG_MAX: u8 = 7;
 
 /// Identifies a tag and allocation method
 ///
-/// `Owned` and `OwnedAuto` indicate that the tag is allocated locally.
+/// `Owned` and indicates that the tag is allocated locally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Tag {
     /// Existing tag is passed to `send()`. Owner bit is unset, used for responses.
@@ -103,16 +103,6 @@ pub enum Tag {
 }
 
 impl Tag {
-    /// Creates a `Tag` from a received MCTP packet TO byte
-    pub fn from_to_field(to: u8) -> Self {
-        let t = TagValue(to & !MCTP_TAG_OWNER);
-        if to & MCTP_TAG_OWNER == 0 {
-            Self::Unowned(t)
-        } else {
-            Self::Owned(t)
-        }
-    }
-
     /// Returns the tag
     pub fn tag(&self) -> TagValue {
         match self {
@@ -137,7 +127,7 @@ impl core::fmt::Display for Tag {
     }
 }
 
-/// An error type for a `Endpoint`
+/// An error type for MCTP
 ///
 /// The options here intend to capture typical transport failures, but also
 /// allow platform-specific errors to be reported through the `Other`
@@ -154,6 +144,8 @@ pub enum Error {
     TxFailure,
     /// Timed out waiting for the remote peer
     TimedOut,
+    /// Bad argument
+    BadArgument,
     /// Invalid input
     InvalidInput,
     /// A tag cannot be allocated, or the tag specified cannot be used
@@ -198,53 +190,151 @@ impl From<Error> for std::io::Error {
 /// MCTP result type
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// A trait for an MCTP peer
+/// A trait for communicating with an MCTP peer.
 ///
 /// This can be used by higher layer protocols to send/receive messages
-/// to a remote endpoint.
+/// with a remote endpoint. A `mctp::ReqChannel` instance represents an endpoint/tag pair,
+/// so may be used for request-response messaging.
 ///
-/// It should be implemented by specific MCTP implementations.
-pub trait Endpoint {
-    /// Send a message to this endpoint, blocking.
+/// A `send` on a `ReqChannel` instance will associate the instance with the given
+/// tag, and `recv` is expected to be limited to responses matching that
+/// sent tag. When multiple tags are being used simultaneously, separate `ReqChannel`
+/// instances should be used.
+///
+/// A `ReqChannel` may be re-used to send a new allocated tag if no further
+/// messages for a previous tag are expected to be received.
+pub trait ReqChannel {
+    /// Send a slice of buffers to this endpoint, blocking.
     ///
-    /// A `tag` argument will request the MCTP stack to allocate a
-    /// new `Owned` tag.
+    /// The Tag Owner bit will be set in the sent message, either
+    /// with a newly allocated tag, or with a pre-allocated tag
+    /// if set.
     ///
     /// The slice of buffers will be sent as a single message
     /// (as if concatenated). Accepting multiple buffers allows
     /// higher level protocols to more easily append their own
     /// protocol headers to a payload without needing extra
     /// buffer allocations.
+    ///
+    /// The `integrity_check` argument is the MCTP header IC bit.
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        tag: Option<Tag>,
+        integrity_check: bool,
         bufs: &[&[u8]],
     ) -> Result<()>;
 
     /// Send a message to this endpoint, blocking.
+    ///
+    /// Transport implementations will typically use the trait provided method
+    /// that calls [`send_vectored`](Self::send_vectored).
+    ///
+    /// IC bit is unset.
     fn send(
         &mut self,
         typ: MsgType,
-        tag: Option<Tag>,
         buf: &[u8],
     ) -> Result<()> {
-        self.send_vectored(typ, tag, &[buf])
+        self.send_vectored(typ, false, &[buf])
     }
 
-    /// Blocking receive from this endpoint.
+    /// Blocking receive
     ///
-    /// Returns a filled slice of `buf`, EID, and tag.
-    ///
-    /// The returned [`Tag`] must be `Tag::Unowned` or
-    /// `Tag::Owned`. `Owned` can only occur if `bind()` has
-    /// been called.
+    /// Returns a filled slice of `buf`, MCTP message type, tag, and IC bit.
+    /// Will fail if used without a prior call to `send` or `send_vectored`.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Eid, Tag)>;
+    ) -> Result<(&'f mut [u8], MsgType, Tag, bool)>;
 
-    /// Bind the endpoint to a type value, so we can receive
-    /// incoming requests with this endpoint.
-    fn bind(&mut self, typ: MsgType) -> Result<()>;
+    /// Return the remote Endpoint ID
+    fn remote_eid(&self) -> Eid;
 }
+
+/// A MCTP response channel
+///
+/// This is returned from a [`Listener`] for incoming messages, is used to send responses.
+pub trait RespChannel {
+    /// `ReqChannel` type returned by [`req_channel`](Self::req_channel)
+    type ReqChannel: ReqChannel;
+
+    /// Send a slice of buffers to this endpoint, blocking.
+    ///
+    /// The slice of buffers will be sent as a single message
+    /// (as if concatenated). Accepting multiple buffers allows
+    /// higher level protocols to more easily append their own
+    /// protocol headers to a payload without needing extra
+    /// buffer allocations.
+    ///
+    /// The `integrity_check` argument is the MCTP header IC bit.
+    fn send_vectored(
+        &mut self,
+        typ: MsgType,
+        integrity_check: bool,
+        bufs: &[&[u8]],
+    ) -> Result<()>;
+
+    /// Send a message to this endpoint, blocking.
+    ///
+    /// Transport implementations will typically use the trait provided method
+    /// that calls [`send_vectored`](Self::send_vectored).
+    ///
+    /// IC bit is unset.
+    fn send(
+        &mut self,
+        typ: MsgType,
+        buf: &[u8],
+    ) -> Result<()> {
+        self.send_vectored(typ, false, &[buf])
+    }
+
+    /// Return the remote Endpoint ID
+    fn remote_eid(&self) -> Eid;
+
+    /// Constructs a new ReqChannel to the same MCTP endpoint as this RespChannel.
+    fn req_channel(&self) -> Result<Self::ReqChannel>;
+}
+
+/// A MCTP listener instance
+///
+/// This will receive messages with TO=1. Platform-specific constructors
+/// will specify the MCTP message type to listen for.
+pub trait Listener {
+    /// `RespChannel` type returned by this `Listener`
+    type RespChannel<'a>: RespChannel where Self: 'a;
+
+    /// Blocking receive
+    ///
+    /// This receives a single MCTP message matched by the `Listener`.
+    /// Returns a filled slice of `buf`, `RespChannel`, tag, and IC bit `bool`.
+    ///
+    /// The returned `RespChannel` should be used to send responses to the request.
+    /// All messages returned will match the `Listener`'s [`mctp_type`](Self::mctp_type).
+    fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, bool)>;
+
+    /// Return the MCTP type of the listener.
+    ///
+    /// Only messages of this type will be received.
+    fn mctp_type(&self) -> MsgType;
+}
+
+const MCTP_IC_MASK: u8 = 0x80;
+
+/// Encode message type and IC bit
+///
+/// For transport implementations.
+pub fn encode_type_ic(typ: MsgType, ic: bool) -> u8 {
+    let ic_val = if ic { MCTP_IC_MASK } else { 0 };
+    typ.0 & !MCTP_IC_MASK | ic_val
+}
+
+/// Decode message type and IC bit
+///
+/// For transport implementations.
+pub fn decode_type_ic(ic_typ: u8) -> (MsgType, bool) {
+    (MsgType(ic_typ & !MCTP_IC_MASK), (ic_typ & MCTP_IC_MASK) != 0)
+}
+
