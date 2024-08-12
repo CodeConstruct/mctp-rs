@@ -204,7 +204,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// to a remote endpoint.
 ///
 /// It should be implemented by specific MCTP implementations.
-pub trait Endpoint {
+pub trait Endpoint : Receiver {
     /// Send a message to this endpoint, blocking.
     ///
     /// A `tag` argument will request the MCTP stack to allocate a
@@ -232,19 +232,21 @@ pub trait Endpoint {
         self.send_vectored(typ, tag, &[buf])
     }
 
-    /// Blocking receive from this endpoint.
-    ///
-    /// Returns a filled slice of `buf`, EID, and tag.
-    ///
-    /// The returned [`Tag`] must be `Tag::Unowned` or
-    /// `Tag::Owned`. `Owned` can only occur if `bind()` has
-    /// been called.
-    fn recv<'f>(
-        &mut self,
-        buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Eid, Tag)>;
-
+    #[deprecated = "Use mctp::Listener"]
     /// Bind the endpoint to a type value, so we can receive
     /// incoming requests with this endpoint.
     fn bind(&mut self, typ: MsgType) -> Result<()>;
+}
+
+pub trait Listener : Receiver {}
+
+pub trait Receiver {
+    /// Blocking receive
+    ///
+    /// Returns a filled slice of `buf`, source EID, type, and tag.
+    fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> Result<(&'f mut [u8], Eid, MsgType, Tag)>;
+
 }
