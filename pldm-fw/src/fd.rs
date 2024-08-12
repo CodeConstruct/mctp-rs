@@ -115,11 +115,6 @@ impl Responder {
     /// Update mode idle timeout, 120 seconds
     pub const FD_T1_TIMEOUT: u64 = 120_000;
 
-    /// Retry req firmware time, 2 seconds
-
-    /// Specification baseline request size
-    pub const BASELINE_MTU: usize = 32;
-
     pub fn new() -> Self {
         Self {
             ua_eid: None,
@@ -1045,6 +1040,7 @@ enum FDReq {
 }
 
 impl FDReq {
+    /// Retry req firmware time, 1 second
     pub const RETRY_TIME: u64 = 1_000;
 
     /// Checks whether a response matches a sent request.
