@@ -35,7 +35,7 @@ There's a small example MCTP requester in
     let mut ep = MctpLinuxEp::new(EID, MCTP_NET_ANY)?;
 
     // for subsequent use of `ep`, we're just interacting with the
-    // mctp::Endpoint trait, which are independent of the socket support
+    // mctp::Comm trait, which is independent of the socket support
 
     // Get Endpoint ID message: command 0x02, no data. Allow the MCTP stack
     // to allocate an owned tag.
