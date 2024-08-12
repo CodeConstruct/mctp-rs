@@ -287,14 +287,14 @@ impl std::os::fd::AsRawFd for MctpSocket {
 
 /// Encapsulation of a remote endpoint: a socket and an Endpoint ID.
 pub struct MctpLinuxEp {
-    eid: u8,
+    eid: Eid,
     net: u32,
     sock: MctpSocket,
 }
 
 impl MctpLinuxEp {
     /// Create a new MCTPEndpoint with EID `eid`
-    pub fn new(eid: u8, net: u32) -> Result<Self> {
+    pub fn new(eid: Eid, net: u32) -> Result<Self> {
         Ok(Self {
             eid,
             net,
@@ -339,7 +339,7 @@ impl mctp::Endpoint for MctpLinuxEp {
             Some(Tag::Unowned(tv)) => tv.0,
         };
 
-        let addr = MctpSockAddr::new(self.eid, self.net, typ.0, t);
+        let addr = MctpSockAddr::new(self.eid.0, self.net, typ.0, t);
         // TODO: implement sendmsg() with iovecs
         let concat = bufs
             .iter()
@@ -351,11 +351,11 @@ impl mctp::Endpoint for MctpLinuxEp {
 
     fn recv<'f>(&mut self, buf: &'f mut [u8]) -> Result<(&'f mut [u8], Eid, Tag)> {
         let (sz, addr) = self.sock.recvfrom(buf)?;
-        if addr.0.smctp_addr != self.eid {
+        if addr.0.smctp_addr != self.eid.0 {
             // Kernel gave us a message from a different sender?
             return Err(mctp::Error::Other)
         }
-        Ok((&mut buf[..sz], Eid(self.eid), Tag::from_to_field(addr.0.smctp_tag)))
+        Ok((&mut buf[..sz], self.eid, Tag::from_to_field(addr.0.smctp_tag)))
     }
 
     /// Bind the endpoint's socket to a type value, so we can receive
@@ -383,7 +383,7 @@ impl mctp::Endpoint for MctpLinuxEp {
 /// If no network is specified, the default of MCTP_NET_ANY is used.
 #[derive(Debug)]
 pub struct MctpAddr {
-    eid: u8,
+    eid: Eid,
     net: Option<u32>,
 }
 
@@ -411,6 +411,7 @@ impl std::str::FromStr for MctpAddr {
             eid_str.parse()
         }
         .map_err(|e| e.to_string())?;
+        let eid = Eid(eid);
 
         let net: Option<u32> = match net_str {
             Some(n) => Some(
@@ -426,7 +427,7 @@ impl std::str::FromStr for MctpAddr {
 
 impl MctpAddr {
     /// Return the MCTP Endpoint ID for this address.
-    pub fn eid(&self) -> u8 {
+    pub fn eid(&self) -> Eid {
         self.eid
     }
 
