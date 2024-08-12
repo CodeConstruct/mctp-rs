@@ -349,15 +349,6 @@ impl mctp::Endpoint for MctpLinuxEp {
         Ok(())
     }
 
-    fn recv<'f>(&mut self, buf: &'f mut [u8]) -> Result<(&'f mut [u8], Eid, Tag)> {
-        let (sz, addr) = self.sock.recvfrom(buf)?;
-        if addr.0.smctp_addr != self.eid.0 {
-            // Kernel gave us a message from a different sender?
-            return Err(mctp::Error::Other)
-        }
-        Ok((&mut buf[..sz], self.eid, Tag::from_to_field(addr.0.smctp_tag)))
-    }
-
     /// Bind the endpoint's socket to a type value, so we can receive
     /// incoming requests from this endpoint.
     ///
@@ -367,6 +358,72 @@ impl mctp::Endpoint for MctpLinuxEp {
         let addr =
             MctpSockAddr::new(MCTP_ADDR_ANY.0, self.net, typ.0, mctp::MCTP_TAG_OWNER);
         self.sock.bind(&addr)
+    }
+}
+
+impl mctp::Receiver for MctpLinuxEp {
+    fn recv<'f>(&mut self, buf: &'f mut [u8]) -> Result<(&'f mut [u8], Eid, MsgType, Tag)> {
+        loop {
+            let (sz, addr) = self.sock.recvfrom(buf)?;
+            let src = Eid(addr.0.smctp_addr);
+            let typ = MsgType(addr.0.smctp_type);
+            let tag = Tag::from_to_field(addr.0.smctp_tag);
+            if src != self.eid {
+                // Kernel gave us a message from a different sender?
+                return Err(mctp::Error::Other)
+            }
+            break Ok((&mut buf[..sz], src, typ, tag));
+        }
+    }
+}
+
+
+/// Encapsulation of a remote endpoint: a socket and an Endpoint ID.
+pub struct MctpLinuxListener {
+    sock: MctpSocket,
+}
+
+impl MctpLinuxListener {
+    /// Create a new `MctpLinuxListener`.
+    ///
+    /// This will listen for MCTP message type `typ`, on an optional
+    /// Linux network `net`. `None` network defaults to `MCTP_NET_ANY`.
+
+    pub fn new(typ: MsgType, net: Option<u32>) -> Result<Self> {
+        let sock = MctpSocket::new()?;
+        // Linux requires MCTP_ADDR_ANY for binds.
+        let net = net.unwrap_or(MCTP_NET_ANY);
+        let addr =
+            MctpSockAddr::new(MCTP_ADDR_ANY.0, net, typ.0, mctp::MCTP_TAG_OWNER);
+        sock.bind(&addr)?;
+        Ok(Self {
+            sock,
+        })
+    }
+
+    /// Borrow the internal MCTP socket
+    pub fn as_socket(&mut self) -> &mut MctpSocket {
+        &mut self.sock
+    }
+}
+
+impl mctp::Listener for MctpLinuxListener {}
+
+impl mctp::Receiver for MctpLinuxListener {
+
+    fn recv<'f>(&mut self, buf: &'f mut [u8]) -> Result<(&'f mut [u8], Eid, MsgType, Tag)> {
+        loop {
+            let (sz, addr) = self.sock.recvfrom(buf)?;
+            let src = Eid(addr.0.smctp_addr);
+            let typ = MsgType(addr.0.smctp_type);
+            let tag = Tag::from_to_field(addr.0.smctp_tag);
+            if let Tag::Unowned(_) = tag {
+                // bind() shouldn't give non-owned packets.
+                // Drop them and keep waiting.
+                continue;
+            }
+            break Ok((&mut buf[..sz], src, typ, tag));
+        }
     }
 }
 
@@ -440,5 +497,13 @@ impl MctpAddr {
     /// Create an MCTPEndpoint using the net & eid values in this address.
     pub fn create_endpoint(&self) -> Result<MctpLinuxEp> {
         MctpLinuxEp::new(self.eid, self.net())
+    }
+
+    /// Create an MCTPListener.
+    ///
+    /// The net of the listener comes from this address, with the MCTP
+    /// message type as an argument.
+    pub fn create_listener(&self, typ: MsgType) -> Result<MctpLinuxListener> {
+        MctpLinuxListener::new(typ, self.net)
     }
 }
