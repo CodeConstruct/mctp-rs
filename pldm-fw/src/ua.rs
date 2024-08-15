@@ -209,11 +209,12 @@ pub fn cancel_update(ep: &mut impl mctp::Endpoint) -> Result<()> {
 
 pub fn update_component(
     ep: &mut impl mctp::Endpoint,
+    listener: &mut impl mctp::Listener,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
     index: u8,
 ) -> Result<()> {
-    update_component_progress(ep, package, component, index, |_| ())
+    update_component_progress(ep, listener, package, component, index, |_| ())
 }
 
 pub fn pass_component_table(
@@ -293,6 +294,7 @@ fn xfer_flags(idx: usize, len: usize) -> u8 {
 
 pub fn update_component_progress<F>(
     ep: &mut impl mctp::Endpoint,
+    listener: &mut impl mctp::Listener,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
     index: u8,
@@ -344,7 +346,7 @@ where
 
     loop {
         // we should be in update mode, handle incoming data requests
-        let fw_req = pldm::pldm_rx_req(ep)?;
+        let (mut req_ep, fw_req) = pldm::pldm_rx_req(listener)?;
 
         if fw_req.typ != PLDM_TYPE_FW {
             return Err(PldmUpdateError::new_proto(format!(
@@ -372,7 +374,7 @@ where
                 fw_resp.cc = 0;
                 fw_resp.set_data(buf);
 
-                pldm::pldm_tx_resp(ep, &fw_resp)?;
+                pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
 
                 sz_done += len;
                 let elapsed = chrono::Utc::now() - start;
@@ -422,7 +424,7 @@ where
                 }
                 let mut fw_resp = fw_req.response()?;
                 fw_resp.cc = 0;
-                pldm::pldm_tx_resp(ep, &fw_resp)?;
+                pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
                 break;
             }
             _ => {
@@ -434,7 +436,7 @@ where
     }
 
     /* Verify results.. */
-    let fw_req = pldm::pldm_rx_req(ep)?;
+    let (mut req_ep, fw_req) = pldm::pldm_rx_req(listener)?;
     match fw_req.cmd {
         0x17 => {
             let res = fw_req.data[0];
@@ -452,10 +454,10 @@ where
     }
     let mut fw_resp = fw_req.response()?;
     fw_resp.cc = 0;
-    pldm::pldm_tx_resp(ep, &fw_resp)?;
+    pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
 
     /* Apply */
-    let fw_req = pldm::pldm_rx_req(ep)?;
+    let (mut req_ep, fw_req) = pldm::pldm_rx_req(listener)?;
     match fw_req.cmd {
         0x18 => {
             let res = fw_req.data[0];
@@ -474,7 +476,7 @@ where
 
     let mut fw_resp = fw_req.response()?;
     fw_resp.cc = 0;
-    pldm::pldm_tx_resp(ep, &fw_resp)?;
+    pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
 
     check_fd_state(ep, PldmFDState::ReadyXfer)?;
 
@@ -483,28 +485,28 @@ where
 
 pub fn update_components(
     ep: &mut impl mctp::Endpoint,
+    listener: &mut impl mctp::Listener,
     update: &mut Update,
 ) -> Result<()> {
-    update_components_progress(ep, update, |_| ())
+    update_components_progress(ep, listener, update, |_| ())
 }
 
 pub fn update_components_progress<F>(
     ep: &mut impl mctp::Endpoint,
+    listener: &mut impl mctp::Listener,
     update: &mut Update,
     mut progress: F,
 ) -> Result<()>
 where
     F: FnMut(&UpdateTransferProgress),
 {
-    // We'll need to receive incoming data requests, so bind() now.
-    ep.bind(mctp::MCTP_TYPE_PLDM).map_err(PldmError::from)?;
-
     let components = update.components.clone();
 
     for idx in components {
         let component = update.package.components.get(idx).unwrap();
         update_component_progress(
             ep,
+            listener,
             &update.package,
             component,
             update.index,
