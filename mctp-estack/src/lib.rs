@@ -317,19 +317,17 @@ impl Stack {
     /// Returns an index in to the `reassemblers` array
     fn get_reassembler(&mut self, packet: &[u8]) -> Result<usize> {
         // Look for an existing match
-        for (i, r) in self.reassemblers.iter().enumerate() {
-            if let Some((re, _buf)) = r {
-                if re.matches_packet(packet) {
-                    return Ok(i)
-                }
-            }
+        let pos = self.reassemblers.iter().position(|r|
+            r.as_ref().is_some_and(|(re, _buf)| re.matches_packet(packet))
+        );
+        if let Some(pos) = pos {
+            return Ok(pos);
         }
 
         // Find a spare slot
-        for (i, re) in self.reassemblers.iter().enumerate() {
-            if re.is_none() {
-                return Ok(i);
-            }
+        let pos = self.reassemblers.iter().position(|r| r.is_none());
+        if let Some(pos) = pos {
+            return Ok(pos)
         }
 
         trace!("out of reassemblers");
