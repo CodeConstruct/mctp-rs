@@ -414,7 +414,7 @@ pub enum PldmMessage<'a> {
 /// used by PLDM Requesters, which issue commands to Responders.
 #[cfg(feature = "alloc")]
 pub fn pldm_xfer<'f>(
-    ep: &mut impl mctp::Endpoint,
+    ep: &mut impl mctp::Comm,
     req: PldmRequest,
 ) -> Result<PldmResponse<'static>> {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
@@ -428,18 +428,14 @@ pub fn pldm_xfer<'f>(
 ///
 /// This function requires an external `rx_buf`.
 pub fn pldm_xfer_buf<'f>(
-    ep: &mut impl mctp::Endpoint,
+    ep: &mut impl mctp::Comm,
     mut req: PldmRequest,
     rx_buf: &'f mut [u8],
 ) -> Result<PldmResponse<'f>> {
 
     pldm_tx_req(ep, &mut req)?;
 
-    let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
-
-    let rsp = PldmResponse::from_buf_borrowed(tag, rx_buf)?;
-
-    // TODO: should check eid, but against what? Or should mctp::Endpoint impl check it?
+    let rsp = pldm_rx_resp_borrowed(ep, rx_buf)?;
 
     if rsp.iid != req.iid {
         return Err(proto_error!("Incorrect instance ID in reply",
@@ -461,71 +457,69 @@ pub fn pldm_xfer_buf<'f>(
 
 /// Receive an incoming PLDM request.
 ///
-/// This uses [`mctp::Endpoint::recv`], which performs a blocking wait for
-/// incoming messages. The ep should already be bound (via
-/// [`mctp::Endpoint::bind`]), listening on the PLDM message type.
+/// This uses [`mctp::Listener::recv`], which performs a blocking wait for
+/// incoming messages.
+/// The listener should be listening on the PLDM message type.
 ///
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
 #[cfg(feature = "alloc")]
-pub fn pldm_rx_req(
-    ep: &mut impl mctp::Endpoint,
-) -> Result<PldmRequest<'static>> {
+pub fn pldm_rx_req<L>(listener: &mut L) -> Result<(L::Comm, PldmRequest<'static>)>
+    where L: mctp::Listener {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
-    let req = pldm_rx_req_borrowed(ep, &mut rx_buf)?;
-    Ok(req.make_owned())
+    let (ep, req) = pldm_rx_req_borrowed(listener, &mut rx_buf)?;
+    Ok((ep, req.make_owned()))
 }
 
 /// Receive an incoming PLDM request in a borrowed buffer.
 ///
-/// This uses [`mctp::Endpoint::recv`], which performs a blocking wait for
-/// incoming messages. The ep should already be bound (via
-/// [`mctp::Endpoint::bind`]), listening on the PLDM message type.
+/// This uses [`mctp::Listener::recv`], which performs a blocking wait for
+/// incoming messages.
+/// The listener should be listening on the PLDM message type.
 ///
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
-pub fn pldm_rx_req_borrowed<'f>(
-    ep: &mut impl mctp::Endpoint, rx_buf: &'f mut [u8],
-) -> Result<PldmRequest<'f>> {
-    let (rx_buf, _eid, tag) = ep.recv(rx_buf)?;
+pub fn pldm_rx_req_borrowed<'f, L>(
+    listener: &mut L, rx_buf: &'f mut [u8],
+) -> Result<(L::Comm, PldmRequest<'f>)>
+    where L: mctp::Listener {
+    let (rx_buf, ep, tag, ic) = listener.recv(rx_buf)?;
+    if ic {
+        return Err(proto_error!("IC bit set"))
+    }
     let req = PldmRequest::from_buf_borrowed(Some(tag), rx_buf)?;
 
-    Ok(req)
+    Ok((ep, req))
 }
 
-/// Receive either a PLDM request or response message
+/// Receive an incoming PLDM request in a borrowed buffer.
 ///
-/// This uses [`mctp::Endpoint::recv`], which performs a blocking wait for
-/// incoming messages. The ep should already be bound (via
-/// [`mctp::Endpoint::bind`]), listening on the PLDM message type.
+/// This uses [`mctp::Listener::recv`], which performs a blocking wait for
+/// incoming messages.
+/// The listener should be listening on the PLDM message type.
 ///
-/// The returned message borrows the provided `rx_buf`
-pub fn pldm_rx_any_borrowed<'f>(
-    ep: &mut impl mctp::Endpoint, rx_buf: &'f mut [u8],
-    ) -> Result<(mctp::Eid, PldmMessage<'f>)> {
-    let (rx_buf, eid, tag) = ep.recv(rx_buf)?;
-    if rx_buf.len() < 1 {
-        return Err(proto_error!("Short message", format!("{} bytes", rx_buf.len())));
+/// Responder implementations will typically want to respond via
+/// [`pldm_tx_resp`].
+pub fn pldm_rx_resp_borrowed<'f>(
+    ep: &mut impl mctp::Comm, rx_buf: &'f mut [u8],
+) -> Result<PldmResponse<'f>> {
+    let (rx_buf, _eid, tag, ic) = ep.recv(rx_buf)?;
+    if ic {
+        return Err(proto_error!("IC bit set"))
     }
-
-    let rq_bit = (rx_buf[0] & 0x80) != 0;
-    if rq_bit {
-        Ok((eid, PldmMessage::Request(PldmRequest::from_buf_borrowed(Some(tag), rx_buf)?)))
-    } else {
-        Ok((eid, PldmMessage::Response(PldmResponse::from_buf_borrowed(tag, rx_buf)?)))
-    }
+    PldmResponse::from_buf_borrowed(tag, rx_buf)
 }
 
 /// Transmit an outgoing PLDM response
 ///
 /// Performs a blocking send on the specified ep.
 pub fn pldm_tx_resp(
-    ep: &mut impl mctp::Endpoint,
+    ep: &mut impl mctp::Comm,
     resp: &PldmResponse,
 ) -> Result<()> {
     let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
     let txs = &[&tx_buf, resp.data.as_ref()];
-    ep.send_vectored(mctp::MCTP_TYPE_PLDM, Some(resp.mctp_tag), txs)?;
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, Some(resp.mctp_tag), false, txs)?;
     Ok(())
 }
 
@@ -534,7 +528,7 @@ pub fn pldm_tx_resp(
 /// Performs a blocking send on the specified ep. The iid will be
 /// updated in `req`.
 pub fn pldm_tx_req(
-    ep: &mut impl mctp::Endpoint,
+    ep: &mut impl mctp::Comm,
     req: &mut PldmRequest,
 ) -> Result<()> {
     // TODO IID allocation
@@ -548,6 +542,6 @@ pub fn pldm_tx_req(
     ];
 
     let txs = &[&tx_buf, req.data.as_ref()];
-    ep.send_vectored(mctp::MCTP_TYPE_PLDM, req.mctp_tag, txs)?;
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, req.mctp_tag, false, txs)?;
     Ok(())
 }
