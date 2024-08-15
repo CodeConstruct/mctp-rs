@@ -5,20 +5,28 @@
  * Copyright (c) 2023 Code Construct
  */
 
-//! PLDM Firmware Update Agent
+//! PLDM Firmware Device
 //!
-//! Update Agent requires `std` feature.
-// use log::{debug, error};
+//! This is suitable for microcontroller targets, and supports `no_std`.
+use log::{debug, error};
 
-// use nom::{
-//     combinator::{all_consuming, complete, map},
-//     multi::length_value,
-//     number::complete::le_u32,
-//     sequence::tuple,
-//     IResult,
-// };
+use nom::{
+    combinator::{all_consuming, complete, map},
+    multi::length_value,
+    number::complete::le_u32,
+    sequence::tuple,
+    IResult,
+};
 
-// use pldm::PldmError;
+use pldm::PldmError;
+
+struct FirmwareDevice {
 
 
+}
+
+impl FirmwareDevice {
+    // fn handle_mctp(eid: Eid, tag: Tag, payload: &[u8]
+
+}
 
