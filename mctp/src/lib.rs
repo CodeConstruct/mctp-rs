@@ -240,7 +240,7 @@ pub trait ReqChannel {
     /// Send a message to this endpoint, blocking.
     ///
     /// Transport implementations will typically use the trait provided method
-    /// that calls [`send_vectored`].
+    /// that calls [`send_vectored`](Self::send_vectored).
     ///
     /// IC bit is unset.
     fn send(
