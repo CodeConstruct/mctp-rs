@@ -6,7 +6,7 @@
  */
 
 use mctp_linux::{MctpLinuxEp, MCTP_NET_ANY};
-use mctp::{Endpoint, MCTP_TYPE_CONTROL, Tag};
+use mctp::{Comm, MCTP_TYPE_CONTROL, Tag};
 
 fn main() -> std::io::Result<()> {
     const EID : u8 = 8;
@@ -15,7 +15,7 @@ fn main() -> std::io::Result<()> {
     let mut ep = MctpLinuxEp::new(EID, MCTP_NET_ANY)?;
 
     // for subsequent use of `ep`, we're just interacting with the
-    // mctp::Endpoint trait, which are independent of the socket support
+    // mctp::Comm trait, which is independent of the socket support
 
     // Get Endpoint ID message: command 0x02, no data. Allow the MCTP stack
     // to allocate an owned tag.
