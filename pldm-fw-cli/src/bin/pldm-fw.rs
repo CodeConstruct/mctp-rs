@@ -11,7 +11,7 @@ use argh::FromArgs;
 use enumset::{EnumSet, EnumSetType};
 use std::io::Write;
 use std::fmt::Write as _;
-use mctp_linux::MctpAddr;
+use mctp_linux::{MctpAddr, MctpLinuxListener};
 
 fn comma_separated<T: EnumSetType + std::fmt::Debug>(e: EnumSet<T>) -> String {
     let mut s = String::new();
@@ -307,6 +307,7 @@ fn main() -> anyhow::Result<()> {
             let pkg = open_package(u.file)?;
             let mut ep = u.addr.create_endpoint()?;
             let ep = &mut ep;
+            let mut listener = MctpLinuxListener::new(mctp::MCTP_TYPE_PLDM, Some(u.addr.net()))?;
             let dev = pldm_fw::ua::query_device_identifiers(ep)?;
             let fwp = pldm_fw::ua::query_firmware_parameters(ep)?;
             let mut update = pldm_fw::ua::Update::new(
@@ -329,7 +330,7 @@ fn main() -> anyhow::Result<()> {
 
             let _ = pldm_fw::ua::request_update(ep, &update)?;
             pldm_fw::ua::pass_component_table(ep, &update)?;
-            pldm_fw::ua::update_components_progress(ep, &mut update, progress)?;
+            pldm_fw::ua::update_components_progress(ep, &mut listener, &mut update, progress)?;
             pldm_fw::ua::activate_firmware(ep, u.self_contained_activation)?;
         }
         Command::Cancel(c) => {

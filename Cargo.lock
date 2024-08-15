@@ -448,6 +448,7 @@ dependencies = [
  "enumset",
  "env_logger",
  "log",
+ "mctp",
  "mctp-linux",
  "pldm-fw",
 ]

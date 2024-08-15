@@ -10,6 +10,7 @@ categories = ["network-programming", "embedded", "hardware-support", "command-li
 [dependencies]
 pldm-fw = { workspace = true, features = ["std"] }
 mctp-linux = { workspace = true }
+mctp = { workspace = true }
 
 argh = "0.1.12"
 anyhow = "1.0.80"
