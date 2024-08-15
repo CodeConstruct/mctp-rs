@@ -132,11 +132,11 @@ impl Update {
 }
 
 pub fn query_device_identifiers(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
 ) -> Result<DeviceIdentifiers> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x01);
 
-    let rsp = pldm::pldm_xfer(ep, req)?;
+    let rsp = pldm::pldm_xfer(comm, req)?;
 
     if rsp.cc != 0 {
         return Err(PldmUpdateError::new_command(0x01, rsp.cc));
@@ -152,11 +152,11 @@ pub fn query_device_identifiers(
 }
 
 pub fn query_firmware_parameters(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
 ) -> Result<FirmwareParameters> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x02);
 
-    let rsp = pldm::pldm_xfer(ep, req)?;
+    let rsp = pldm::pldm_xfer(comm, req)?;
 
     if rsp.cc != 0 {
         return Err(PldmUpdateError::new_command(0x02, rsp.cc));
@@ -174,10 +174,10 @@ pub fn query_firmware_parameters(
 const XFER_SIZE: usize = 16 * 1024;
 
 pub fn request_update(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     update: &Update,
 ) -> Result<RequestUpdateResponse> {
-    check_fd_state(ep, PldmFDState::Idle)?;
+    check_fd_state(comm, PldmFDState::Idle)?;
 
     let mut data = vec![];
     data.extend_from_slice(&XFER_SIZE.to_le_bytes());
@@ -187,7 +187,7 @@ pub fn request_update(
     update.package.version.write_utf8_bytes(&mut data);
 
     let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x10, data);
-    let rsp = pldm::pldm_xfer(ep, req)?;
+    let rsp = pldm::pldm_xfer(comm, req)?;
 
     if rsp.cc != 0 {
         return Err(PldmUpdateError::new_command(0x10, rsp.cc));
@@ -200,31 +200,31 @@ pub fn request_update(
     })
 }
 
-pub fn cancel_update(ep: &mut impl mctp::Endpoint) -> Result<()> {
+pub fn cancel_update(comm: &mut impl mctp::Comm) -> Result<()> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1d);
-    let rsp = pldm::pldm_xfer(ep, req)?;
+    let rsp = pldm::pldm_xfer(comm, req)?;
     debug!("cancel rsp: cc {:x}, data {:?}", rsp.cc, rsp.data);
     Ok(())
 }
 
 pub fn update_component(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     listener: &mut impl mctp::Listener,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
     index: u8,
 ) -> Result<()> {
-    update_component_progress(ep, listener, package, component, index, |_| ())
+    update_component_progress(comm, listener, package, component, index, |_| ())
 }
 
 pub fn pass_component_table(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     update: &Update,
 ) -> Result<()> {
     let components = &update.components;
     let len = components.len();
 
-    check_fd_state(ep, PldmFDState::LearnComponents)?;
+    check_fd_state(comm, PldmFDState::LearnComponents)?;
 
     for (n, idx) in components.iter().enumerate() {
         let component = update.package.components.get(*idx).unwrap();
@@ -244,7 +244,7 @@ pub fn pass_component_table(
         component.version.write_utf8_bytes(&mut data);
 
         let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x13, data);
-        let rsp = pldm::pldm_xfer(ep, req)?;
+        let rsp = pldm::pldm_xfer(comm, req)?;
 
         if rsp.cc != 0 {
             return Err(PldmUpdateError::new_command(0x13, rsp.cc));
@@ -293,7 +293,7 @@ fn xfer_flags(idx: usize, len: usize) -> u8 {
 }
 
 pub fn update_component_progress<F>(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     listener: &mut impl mctp::Listener,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
@@ -303,7 +303,7 @@ pub fn update_component_progress<F>(
 where
     F: FnMut(&UpdateTransferProgress),
 {
-    check_fd_state(ep, PldmFDState::ReadyXfer)?;
+    check_fd_state(comm, PldmFDState::ReadyXfer)?;
 
     let mut data = vec![];
     let c = u16::from(&component.classification);
@@ -326,7 +326,7 @@ where
     component.version.write_utf8_bytes(&mut data);
 
     let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x14, data);
-    let rsp = pldm::pldm_xfer(ep, req)?;
+    let rsp = pldm::pldm_xfer(comm, req)?;
 
     if rsp.cc != 0 {
         return Err(PldmUpdateError::new_command(0x14, rsp.cc));
@@ -478,21 +478,21 @@ where
     fw_resp.cc = 0;
     pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
 
-    check_fd_state(ep, PldmFDState::ReadyXfer)?;
+    check_fd_state(comm, PldmFDState::ReadyXfer)?;
 
     Ok(())
 }
 
 pub fn update_components(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     listener: &mut impl mctp::Listener,
     update: &mut Update,
 ) -> Result<()> {
-    update_components_progress(ep, listener, update, |_| ())
+    update_components_progress(comm, listener, update, |_| ())
 }
 
 pub fn update_components_progress<F>(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     listener: &mut impl mctp::Listener,
     update: &mut Update,
     mut progress: F,
@@ -505,7 +505,7 @@ where
     for idx in components {
         let component = update.package.components.get(idx).unwrap();
         update_component_progress(
-            ep,
+            comm,
             listener,
             &update.package,
             component,
@@ -518,10 +518,10 @@ where
 }
 
 pub fn activate_firmware(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     self_activate: bool,
 ) -> Result<()> {
-    check_fd_state(ep, PldmFDState::ReadyXfer)?;
+    check_fd_state(comm, PldmFDState::ReadyXfer)?;
 
     let self_activation_req: u8 = if self_activate { 1 } else { 0 };
 
@@ -529,7 +529,7 @@ pub fn activate_firmware(
     data.extend_from_slice(&self_activation_req.to_le_bytes());
 
     let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x1a, data);
-    let rsp = pldm::pldm_xfer(ep, req)?;
+    let rsp = pldm::pldm_xfer(comm, req)?;
 
     if rsp.cc == 0 || rsp.cc == FwCode::ACTIVATION_NOT_REQUIRED as u8 {
         Ok(())
@@ -539,11 +539,11 @@ pub fn activate_firmware(
 }
 
 fn check_fd_state(
-    ep: &mut impl mctp::Endpoint,
+    comm: &mut impl mctp::Comm,
     expected_state: PldmFDState,
 ) -> Result<()> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1b);
-    let rsp = pldm::pldm_xfer(ep, req)?;
+    let rsp = pldm::pldm_xfer(comm, req)?;
 
     if rsp.cc != 0 {
         return Err(PldmUpdateError::new_command(0x1b, rsp.cc));

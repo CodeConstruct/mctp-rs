@@ -23,9 +23,9 @@ use nom::{
 
 use num_traits::FromPrimitive;
 
-use mctp::Eid;
+use mctp::{Eid, Comm};
 use pldm::{
-    pldm_tx_req, pldm_tx_resp, proto_error, CCode, PldmError, PldmMessage,
+    pldm_tx_req, pldm_tx_resp, proto_error, CCode, PldmError,
     PldmRequest, PldmResponse,
 };
 
@@ -37,7 +37,7 @@ const MSGBUF: usize = 1024 + 3;
 
 type Result<T> = core::result::Result<T, PldmError>;
 
-enum State {
+enum State<C: Comm> {
     Idle {
         reason: PldmIdleReason,
     },
@@ -56,6 +56,9 @@ enum State {
 
         // Details of the component currently being updated
         details: ComponentDetails,
+
+        // comm to send RequestFirmwareData to, and to await response from
+        req_comm: C,
     },
     Verify {
         // Set after retrieving the verify status from the [`Device`] callback.
@@ -65,6 +68,8 @@ enum State {
 
         // Details of the component currently being updated, for the callback.
         details: ComponentDetails,
+
+        req_comm: C,
     },
     Apply {
         // Set after `apply()` from the [`Device`] callback.
@@ -74,12 +79,14 @@ enum State {
 
         // Details of the component currently being updated, for the callback.
         details: ComponentDetails,
+
+        req_comm: C,
     },
     Activate,
 }
 
-impl From<&State> for PldmFDState {
-    fn from(s: &State) -> PldmFDState {
+impl <C: Comm> From<&State<C>> for PldmFDState {
+    fn from(s: &State<C>) -> PldmFDState {
         match s {
             State::Idle { .. } => PldmFDState::Idle,
             State::LearnComponents => PldmFDState::LearnComponents,
@@ -92,9 +99,9 @@ impl From<&State> for PldmFDState {
     }
 }
 
-pub struct Responder {
+pub struct Responder<C: Comm> {
     /// state should be modified via set_state()
-    state: State,
+    state: State<C>,
     prev_state: PldmFDState,
 
     /// EID of the current EID. This is set on the RequestUpdate message
@@ -111,7 +118,7 @@ pub struct Responder {
     update_timestamp_fd_t1: u64,
 }
 
-impl Responder {
+impl<C: Comm> Responder<C> {
     /// Update mode idle timeout, 120 seconds
     pub const FD_T1_TIMEOUT: u64 = 120_000;
 
@@ -128,33 +135,13 @@ impl Responder {
         }
     }
 
-    /// Handle an incoming PLDM FW message
-    ///
-    /// Errors returned from this function are not expected to be handled
-    /// apart from logging.
-    /// `resp_ep` will be used to send responses, and must be associated with
-    /// address `eid`.
-    pub fn message_in(
-        &mut self,
-        eid: Eid,
-        msg: &PldmMessage,
-        resp_ep: &mut impl mctp::Endpoint,
-        d: &mut impl Device,
-    ) -> Result<()> {
-        match msg {
-            PldmMessage::Request(req) => self.request_in(eid, req, resp_ep, d),
-            PldmMessage::Response(rsp) => self.response_in(eid, rsp, d),
-        }
-    }
-
     /// Handle an incoming PLDM FW request
     ///
     /// Returns `Ok` if a reply is sent to the UA, including for error responses.
-    fn request_in(
+    pub fn request_in(
         &mut self,
-        eid: Eid,
+        mut comm: C,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
         d: &mut impl Device,
     ) -> Result<()> {
         if req.typ != PLDM_TYPE_FW {
@@ -163,10 +150,11 @@ impl Responder {
         }
 
         let Some(cmd) = Cmd::from_u8(req.cmd) else {
-            self.reply_error(&req, ep, CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8);
+            self.reply_error(&req, &mut comm, CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8);
             return Ok(());
         };
 
+        let eid = comm.remote_eid();
         // Check for consistent EID
         match cmd {
             // informational commands or Cancel always allowed
@@ -180,7 +168,7 @@ impl Responder {
             _ => {
                 if self.ua_eid != Some(eid) {
                     debug!("Ignoring {cmd:?} from mismatching EID {eid}, expected {:?}", self.ua_eid);
-                    self.reply_error(&req, ep,
+                    self.reply_error(&req, &mut comm,
                         CCode::ERROR_NOT_READY as u8,
                     );
                 }
@@ -197,22 +185,22 @@ impl Responder {
 
         // Handlers will return Ok if they have replied
         let r = match cmd {
-            Cmd::QueryDeviceIdentifiers => self.cmd_qdi(&req, ep, d),
-            Cmd::GetFirmwareParameters => self.cmd_fwparams(&req, ep, d),
-            Cmd::RequestUpdate => self.cmd_update(&req, eid, ep, d),
-            Cmd::PassComponentTable => self.cmd_pass_components(&req, ep, d),
-            Cmd::UpdateComponent => self.cmd_update_component(&req, ep, d),
-            Cmd::ActivateFirmware => self.cmd_activate(&req, ep, d),
-            Cmd::CancelUpdate => self.cmd_cancel_update(&req, ep, d),
+            Cmd::QueryDeviceIdentifiers => self.cmd_qdi(&req, &mut comm, d),
+            Cmd::GetFirmwareParameters => self.cmd_fwparams(&req, &mut comm, d),
+            Cmd::RequestUpdate => self.cmd_update(&req, eid, &mut comm, d),
+            Cmd::PassComponentTable => self.cmd_pass_components(&req, &mut comm, d),
+            Cmd::UpdateComponent => return self.cmd_update_component(&req, comm, d),
+            Cmd::ActivateFirmware => self.cmd_activate(&req, &mut comm, d),
+            Cmd::CancelUpdate => self.cmd_cancel_update(&req, &mut comm, d),
             Cmd::CancelUpdateComponent => {
-                self.cmd_cancel_update_component(&req, ep, d)
+                self.cmd_cancel_update_component(&req, &mut comm, d)
             }
-            Cmd::GetStatus => self.cmd_get_status(&req, ep, d),
+            Cmd::GetStatus => self.cmd_get_status(&req, &mut comm, d),
             _ => {
                 trace!("unhandled command {cmd:?}");
                 self.reply_error(
                     &req,
-                    ep,
+                    &mut comm,
                     CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8,
                 );
                 Ok(())
@@ -221,16 +209,28 @@ impl Responder {
 
         if let Err(e) = &r {
             debug!("Error handling {cmd:?}: {e:?}");
-            self.reply_error(&req, ep, CCode::ERROR as u8);
+            self.reply_error(&req, &mut comm, CCode::ERROR as u8);
         }
         Ok(())
     }
 
+    pub fn pending_reply_ep(&mut self) -> Option<&mut C> {
+        let r = match &mut self.state {
+            | State::Download { req_comm, ..}
+            | State::Verify { req_comm, ..}
+            | State::Apply { req_comm, ..}
+            => Some(req_comm),
+            _ => None,
+        };
+        trace!("pending reply {}", r.is_some());
+        r
+    }
+
     /// Handle an incoming PLDM FW response
     ///
-    /// These are responses to
+    /// These are replies to
     /// RequestFirmwareData, TransferComplete, VerifyComplete, ApplyComplete
-    fn response_in(
+    pub fn reply_in(
         &mut self,
         eid: Eid,
         rsp: &PldmResponse,
@@ -258,14 +258,14 @@ impl Responder {
     fn reply_error(
         &self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         cc: u8,
     ) {
         let Ok(mut resp) = req.response_borrowed(&[]) else {
             unreachable!()
         };
         resp.cc = cc;
-        let _ = pldm_tx_resp(ep, &resp)
+        let _ = pldm_tx_resp(comm, &resp)
             .inspect_err(|e| trace!("Error sending failure response. {e:?}"));
     }
 
@@ -273,31 +273,31 @@ impl Responder {
     fn cmd_qdi(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
         if !req.data.is_empty() {
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         }
 
         let l = dev.dev_identifiers().write_buf(&mut self.msg_buf).space()?;
         let resp = req.response_borrowed(&self.msg_buf[..l])?;
 
-        pldm_tx_resp(ep, &resp)
+        pldm_tx_resp(comm, &resp)
     }
 
     /// Get Firmware Parameters
     fn cmd_fwparams(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
         if !req.data.is_empty() {
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         }
 
@@ -311,7 +311,7 @@ impl Responder {
         let l = fwp.write_buf(&mut self.msg_buf).space()?;
         let resp = req.response_borrowed(&self.msg_buf[..l])?;
 
-        pldm_tx_resp(ep, &resp)
+        pldm_tx_resp(comm, &resp)
     }
 
     // Request Update
@@ -319,11 +319,11 @@ impl Responder {
         &mut self,
         req: &PldmRequest,
         eid: Eid,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::Idle { .. }) {
-            self.reply_error(req, ep, FwCode::ALREADY_IN_UPDATE_MODE as u8);
+            self.reply_error(req, comm, FwCode::ALREADY_IN_UPDATE_MODE as u8);
             return Ok(());
         }
 
@@ -333,7 +333,7 @@ impl Responder {
         let Ok((_, ru)) = all_consuming(RequestUpdateRequest::parse)(&req.data)
         else {
             trace!("error parsing RequestUpdate");
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         };
 
@@ -351,7 +351,7 @@ impl Responder {
         .space()?;
 
         let resp = req.response_borrowed(&self.msg_buf[..l])?;
-        pldm_tx_resp(ep, &resp)?;
+        pldm_tx_resp(comm, &resp)?;
         self.set_state(State::LearnComponents);
         Ok(())
     }
@@ -359,11 +359,11 @@ impl Responder {
     fn cmd_pass_components(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::LearnComponents) {
-            self.reply_error(req, ep, FwCode::INVALID_STATE_FOR_COMMAND as u8);
+            self.reply_error(req, comm, FwCode::INVALID_STATE_FOR_COMMAND as u8);
             return Ok(());
         }
 
@@ -372,7 +372,7 @@ impl Responder {
             UpdateComponent::parse_pass_component,
         )))(&req.data) else {
             trace!("error parsing PassComponent");
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         };
 
@@ -388,7 +388,7 @@ impl Responder {
         // byte 1: ComponentResponseCode
         let comp_resp = [(res != 0) as u8, res];
         let resp = req.response_borrowed(&comp_resp)?;
-        pldm_tx_resp(ep, &resp)?;
+        pldm_tx_resp(comm, &resp)?;
 
         if transferflag & TransferFlag::End as u8 > 0 {
             self.set_state(State::ReadyXfer);
@@ -421,11 +421,11 @@ impl Responder {
     fn cmd_update_component(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        mut comm: C,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::ReadyXfer) {
-            self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
+            self.reply_error(req, &mut comm, FwCode::NOT_IN_UPDATE_MODE as u8);
             return Ok(());
         }
 
@@ -433,7 +433,7 @@ impl Responder {
             all_consuming(UpdateComponent::parse_update)(&req.data)
         else {
             trace!("error parsing UpdateComponent");
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, &mut comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         };
 
@@ -459,7 +459,7 @@ impl Responder {
         b.push_le16(0).space()?;
 
         let resp = req.response_borrowed(&comp_resp)?;
-        pldm_tx_resp(ep, &resp)?;
+        pldm_tx_resp(&mut comm, &resp)?;
 
         let details = ComponentDetails {
             size: up.size.unwrap_or(0) as usize,
@@ -479,6 +479,7 @@ impl Responder {
             request: FDReq::Ready,
             update_flags,
             details,
+            req_comm: comm,
         });
         Ok(())
     }
@@ -486,12 +487,12 @@ impl Responder {
     fn cmd_activate(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         dev: &mut impl Device,
     ) -> Result<()> {
         if req.data.len() != 1 {
             trace!("error parsing Activate");
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
         }
         let self_contained = req.data[0] != 0;
 
@@ -499,13 +500,13 @@ impl Responder {
         match self.state {
             State::ReadyXfer => (),
             State::Idle { .. } => {
-                self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
+                self.reply_error(req, comm, FwCode::NOT_IN_UPDATE_MODE as u8);
                 return Ok(());
             }
             _ => {
                 self.reply_error(
                     req,
-                    ep,
+                    comm,
                     FwCode::INVALID_STATE_FOR_COMMAND as u8,
                 );
                 return Ok(());
@@ -522,7 +523,7 @@ impl Responder {
             unreachable!()
         };
         resp.cc = status;
-        pldm_tx_resp(ep, &resp)?;
+        pldm_tx_resp(comm, &resp)?;
 
         // No progress is provided for self contained activation,
         // so we proceed ->Activate->Idle (which sets the previous state
@@ -535,7 +536,7 @@ impl Responder {
     fn cmd_cancel_update(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         dev: &mut impl Device,
     ) -> Result<()> {
         let details = match &self.state {
@@ -543,13 +544,13 @@ impl Responder {
             | State::Verify { details, .. }
             | State::Apply { details, .. } => Some(details),
             State::Idle { .. } => {
-                self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
+                self.reply_error(req, comm, FwCode::NOT_IN_UPDATE_MODE as u8);
                 return Ok(());
             }
             State::Activate => {
                 self.reply_error(
                     req,
-                    ep,
+                    comm,
                     FwCode::INVALID_STATE_FOR_COMMAND as u8,
                 );
                 return Ok(());
@@ -559,13 +560,13 @@ impl Responder {
 
         if !req.data.is_empty() {
             trace!("error parsing CancelUpdate");
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         }
 
         let mut resp = req.response_borrowed(&[])?;
         resp.cc = CCode::SUCCESS as u8;
-        pldm_tx_resp(ep, &resp)?;
+        pldm_tx_resp(comm, &resp)?;
 
         details.map(|d| dev.cancel_component(d));
         self.set_idle(PldmIdleReason::Cancel);
@@ -576,7 +577,7 @@ impl Responder {
     fn cmd_cancel_update_component(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         dev: &mut impl Device,
     ) -> Result<()> {
         let details = match &self.state {
@@ -584,13 +585,13 @@ impl Responder {
             | State::Verify { details, .. }
             | State::Apply { details, .. } => details,
             State::Idle { .. } => {
-                self.reply_error(req, ep, FwCode::NOT_IN_UPDATE_MODE as u8);
+                self.reply_error(req, comm, FwCode::NOT_IN_UPDATE_MODE as u8);
                 return Ok(());
             }
             _ => {
                 self.reply_error(
                     req,
-                    ep,
+                    comm,
                     FwCode::INVALID_STATE_FOR_COMMAND as u8,
                 );
                 return Ok(());
@@ -599,13 +600,13 @@ impl Responder {
 
         if !req.data.is_empty() {
             trace!("error parsing CancelUpdateComponent");
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         }
 
         let mut resp = req.response_borrowed(&[])?;
         resp.cc = CCode::SUCCESS as u8;
-        pldm_tx_resp(ep, &resp)?;
+        pldm_tx_resp(comm, &resp)?;
 
         dev.cancel_component(&details);
         self.set_state(State::ReadyXfer);
@@ -616,17 +617,17 @@ impl Responder {
     fn cmd_get_status(
         &mut self,
         req: &PldmRequest,
-        ep: &mut impl mctp::Endpoint,
+        comm: &mut C,
         _dev: &mut impl Device,
     ) -> Result<()> {
         if !req.data.is_empty() {
-            self.reply_error(req, ep, CCode::ERROR_INVALID_DATA as u8);
+            self.reply_error(req, comm, CCode::ERROR_INVALID_DATA as u8);
             return Ok(());
         }
 
         let l = self.get_status().write_buf(&mut self.msg_buf).space()?;
         let resp = req.response_borrowed(&self.msg_buf[..l])?;
-        pldm_tx_resp(ep, &resp)
+        pldm_tx_resp(comm, &resp)
     }
 
     fn get_status(&self) -> GetStatusResponse {
@@ -679,28 +680,19 @@ impl Responder {
         st
     }
 
-    pub fn progress(
-        &mut self,
-        ep: &mut impl mctp::Endpoint,
-        dev: &mut impl Device,
-    ) {
-        if !matches!(self.state, State::Idle { .. })
-            && dev.now() - self.update_timestamp_fd_t1 > Self::FD_T1_TIMEOUT
-        {
-            // TODO cancel any updates in Device?
-            self.set_state_idle_timeout();
-        }
-
-        if let State::Download { .. } = self.state {
-            self.progress_download(ep, dev)
-        }
-
-        if let State::Verify { .. } = self.state {
-            self.progress_verify(ep, dev)
-        }
-
-        if let State::Apply { .. } = self.state {
-            self.progress_apply(ep, dev)
+    pub fn progress(&mut self, dev: &mut impl Device) {
+        trace!("pldm progress state {:?}", PldmFDState::from(&self.state));
+        match self.state {
+            State::Download { .. } => self.progress_download(dev),
+            State::Verify { .. } => self.progress_verify(dev),
+            State::Apply { .. } => self.progress_apply(dev),
+            State::Idle { .. } => {
+                if dev.now() - self.update_timestamp_fd_t1 > Self::FD_T1_TIMEOUT {
+                    // TODO cancel any updates in Device?
+                    self.set_state_idle_timeout();
+                }
+            }
+            _ => ()
         }
     }
 
@@ -709,8 +701,8 @@ impl Responder {
     /// Must only be called in Download state
     fn req_size(&self) -> usize {
         let State::Download {
-            ref details,
             offset,
+            ref details,
             ..
         } = self.state
         else {
@@ -728,7 +720,6 @@ impl Responder {
     // Download state progress
     fn progress_download(
         &mut self,
-        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) {
         let State::Download {
@@ -769,40 +760,46 @@ impl Responder {
             )
         };
 
-        if let Err(e) = pldm_tx_req(ep, &mut req) {
+        // reborrow mut
+        let State::Download {
+            request,
+            transfer_result,
+            req_comm,
+            ..
+        } = &mut self.state else {
+            unreachable!();
+        };
+
+        if let Err(e) = pldm_tx_req(req_comm, &mut req) {
             trace!("Error tx request: {e:?}");
             // let the retry timer handle it.
             return;
         }
 
-        // reborrow mut
-        if let State::Download {
-            request,
-            transfer_result,
-            details,
-            ..
-        } = &mut self.state
-        {
-            if let Some(tr) = transfer_result {
-                // transfer complete sent
-                if *tr == TransferResult::Success {
-                    let details = details.clone();
-                    self.set_state(State::Verify {
+        if let Some(tr) = transfer_result {
+            // transfer complete sent
+            if *tr == TransferResult::Success {
+                self.set_state_with(|prev| {
+                    let State::Download { details, req_comm, .. } = prev else {
+                        unreachable!()
+                    };
+                    State::Verify {
                         verify_result: None,
                         request: FDReq::Ready,
                         details,
-                    });
-                } else {
-                    // idle in Download state until the UA cancels
-                    *request = FDReq::Failed((*tr).into())
-                }
+                        req_comm,
+                    }
+                });
             } else {
-                // update retry timer for for the firmware data request
-                *request = FDReq::Sent {
-                    time: dev.now(),
-                    iid: req.iid,
-                    cmd: req.cmd,
-                }
+                // idle in Download state until the UA cancels
+                *request = FDReq::Failed((*tr).into())
+            }
+        } else {
+            // update retry timer for for the firmware data request
+            *request = FDReq::Sent {
+                time: dev.now(),
+                iid: req.iid,
+                cmd: req.cmd,
             }
         }
     }
@@ -810,13 +807,14 @@ impl Responder {
     // Verify state progress
     fn progress_verify(
         &mut self,
-        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) {
         let State::Verify {
             verify_result,
             request,
             details,
+            req_comm,
+            ..
         } = &mut self.state
         else {
             return;
@@ -843,18 +841,23 @@ impl Responder {
             &buf,
         );
 
-        if let Err(e) = pldm_tx_req(ep, &mut req) {
+        if let Err(e) = pldm_tx_req(req_comm, &mut req) {
             trace!("Error tx request: {e:?}");
             // let the retry timer handle it
             return;
         }
 
         if *vr == VerifyResult::Success {
-            let details = details.clone();
-            self.set_state(State::Apply {
-                apply_result: None,
-                request: FDReq::Ready,
-                details,
+            self.set_state_with(|prev| {
+                let State::Verify { details, req_comm, .. } = prev else {
+                    unreachable!()
+                };
+                State::Apply {
+                    apply_result: None,
+                    request: FDReq::Ready,
+                    details,
+                    req_comm,
+                }
             });
         } else {
             // on verify failure remain in State::Verify, wait for cancel
@@ -865,13 +868,14 @@ impl Responder {
     // Apply state progress
     fn progress_apply(
         &mut self,
-        ep: &mut impl mctp::Endpoint,
         dev: &mut impl Device,
     ) {
         let State::Apply {
             apply_result,
             request,
             details,
+            req_comm,
+            ..
         } = &mut self.state
         else {
             return;
@@ -905,7 +909,7 @@ impl Responder {
             &r,
         );
 
-        if let Err(e) = pldm_tx_req(ep, &mut req) {
+        if let Err(e) = pldm_tx_req(req_comm, &mut req) {
             trace!("Error tx request: {e:?}");
             // let retry timer handle it
             return;
@@ -982,7 +986,30 @@ impl Responder {
         Ok(())
     }
 
-    fn set_state(&mut self, new_state: State) {
+    /// Updates the state with a closure
+    ///
+    /// The closure is provided with the previous state as an argument.
+    /// This can be used to move members between State enum variants.
+    fn set_state_with<F>(&mut self, update: F) where F: FnOnce(State<C>) -> State<C> {
+
+        self.prev_state = (&self.state).into();
+
+        // Using ReadyXfer here as a placeholder without any contents,
+        // any other simple variant could be used instead.
+        let prev = core::mem::replace(&mut self.state, State::ReadyXfer);
+        let new_state = update(prev);
+
+        debug_assert!(
+            !matches!(new_state, State::Idle { .. }),
+            "Idle state should use set_idle() instead"
+        );
+        debug_assert!(self.ua_eid.is_some());
+
+        self.state = new_state;
+    }
+
+    /// Set a new state
+    fn set_state(&mut self, new_state: State<C>) {
         debug_assert!(
             !matches!(new_state, State::Idle { .. }),
             "Idle state should use set_idle() instead"
