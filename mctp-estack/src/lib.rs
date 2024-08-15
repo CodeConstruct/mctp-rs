@@ -43,7 +43,7 @@ type Header = libmctp::base_packet::MCTPTransportHeader<[u8; HEADER_LEN]>;
 /// or [`fetch_message_with`](Stack::fetch_message_with)
 /// otherwise the reassembly slot will not be released for further messages.
 #[must_use]
-/// This is an opaque index into `Stack.reassemblers`. Is deliberately not `Copy`,
+// This is an opaque index into `Stack.reassemblers`. Is deliberately not `Copy`,
 // so that it can't be held longer than the reassembler is valid.
 #[derive(Debug)]
 pub struct ReceiveHandle(usize);
