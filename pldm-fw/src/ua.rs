@@ -10,6 +10,8 @@
 //! Update Agent requires `std` feature.
 use log::{debug, error};
 
+use core::ops::Deref;
+
 use thiserror::Error;
 
 use nom::{
@@ -143,7 +145,7 @@ pub fn query_device_identifiers(
 
     let f = length_value(map(le_u32, |l| l + 1), DeviceIdentifiers::parse);
 
-    let res = complete(f)(rsp.data.as_slice());
+    let res = complete(f)(&rsp.data);
 
     res.map(|(_, d)| d).map_err(|_e| {
         PldmUpdateError::new_proto("can't parse QDI response".into())
@@ -163,7 +165,7 @@ pub fn query_firmware_parameters(
 
     let f = FirmwareParameters::parse;
 
-    let res = complete(f)(rsp.data.as_slice());
+    let res = complete(f)(&rsp.data);
 
     res.map(|(_, d)| d).map_err(|_e| {
         PldmUpdateError::new_proto("can't parse QFP response".into())
@@ -178,22 +180,22 @@ pub fn request_update(
 ) -> Result<RequestUpdateResponse> {
     check_fd_state(ep, PldmFDState::Idle)?;
 
-    let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x10);
-
     let sz = XFER_SIZE as u32;
-    req.data.extend_from_slice(&sz.to_le_bytes());
-    req.data.extend_from_slice(&1u16.to_le_bytes()); // NumberOfComponents
-    req.data.extend_from_slice(&1u8.to_le_bytes()); // MaximumOutstandingTransferRequests
-    req.data.extend_from_slice(&0u16.to_le_bytes()); // PackageDataLength
-    update.package.version.write_utf8_bytes(&mut req.data);
+    let mut data = vec![];
+    data.extend_from_slice(&sz.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes()); // NumberOfComponents
+    data.extend_from_slice(&1u8.to_le_bytes()); // MaximumOutstandingTransferRequests
+    data.extend_from_slice(&0u16.to_le_bytes()); // PackageDataLength
+    update.package.version.write_utf8_bytes(&mut data);
 
+    let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x10, data);
     let rsp = pldm::pldm_xfer(ep, req)?;
 
     if rsp.cc != 0 {
         return Err(PldmUpdateError::new_command(0x10, rsp.cc));
     }
 
-    let res = complete(RequestUpdateResponse::parse)(rsp.data.as_slice());
+    let res = complete(RequestUpdateResponse::parse)(&rsp.data);
 
     res.map(|(_, d)| d).map_err(|_e| {
         PldmUpdateError::new_proto("can't parse RU response".into())
@@ -227,21 +229,22 @@ pub fn pass_component_table(
 
     for (n, idx) in components.iter().enumerate() {
         let component = update.package.components.get(*idx).unwrap();
-        let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x13);
 
-        req.data.push(xfer_flags(n, len));
+        let mut data = vec![];
+        data.push(xfer_flags(n, len));
         let c = u16::from(&component.classification);
-        req.data.extend_from_slice(&c.to_le_bytes());
-        req.data
+        data.extend_from_slice(&c.to_le_bytes());
+        data
             .extend_from_slice(&component.identifier.to_le_bytes());
 
-        req.data.extend_from_slice(&update.index.to_le_bytes());
+        data.extend_from_slice(&update.index.to_le_bytes());
 
-        req.data
+        data
             .extend_from_slice(&component.comparison_stamp.to_le_bytes());
 
-        component.version.write_utf8_bytes(&mut req.data);
+        component.version.write_utf8_bytes(&mut data);
 
+        let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x13, data);
         let rsp = pldm::pldm_xfer(ep, req)?;
 
         if rsp.cc != 0 {
@@ -302,27 +305,27 @@ where
 {
     check_fd_state(ep, PldmFDState::ReadyXfer)?;
 
-    let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x14);
-
+    let mut data = vec![];
     let c = u16::from(&component.classification);
-    req.data.extend_from_slice(&c.to_le_bytes());
-    req.data
+    data.extend_from_slice(&c.to_le_bytes());
+    data
         .extend_from_slice(&component.identifier.to_le_bytes());
 
-    req.data.extend_from_slice(&index.to_le_bytes());
+    data.extend_from_slice(&index.to_le_bytes());
 
-    req.data
+    data
         .extend_from_slice(&component.comparison_stamp.to_le_bytes());
 
     let sz: u32 = component.file_size as u32;
     let mut sz_done: u32 = 0;
-    req.data.extend_from_slice(&sz.to_le_bytes());
+    data.extend_from_slice(&sz.to_le_bytes());
 
     // todo: flags: request forced update?
-    req.data.extend_from_slice(&0u32.to_le_bytes());
+    data.extend_from_slice(&0u32.to_le_bytes());
 
-    component.version.write_utf8_bytes(&mut req.data);
+    component.version.write_utf8_bytes(&mut data);
 
+    let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x14, data);
     let rsp = pldm::pldm_xfer(ep, req)?;
 
     if rsp.cc != 0 {
@@ -339,7 +342,7 @@ where
             0x15 => {
                 /* Request Firmware Data */
                 let res: IResult<_, _> = all_consuming(tuple((le_u32, le_u32)))(
-                    fw_req.data.as_slice(),
+                    fw_req.data.deref(),
                 );
 
                 let (_, (offset, len)) = res.map_err(|_e| {
@@ -353,7 +356,7 @@ where
                 let mut fw_resp = fw_req.response()?;
 
                 fw_resp.cc = 0;
-                fw_resp.data = buf;
+                fw_resp.set_data(buf);
 
                 pldm::pldm_tx_resp(ep, &fw_resp)?;
 
@@ -504,12 +507,12 @@ pub fn activate_firmware(
 ) -> Result<()> {
     check_fd_state(ep, PldmFDState::ReadyXfer)?;
 
-    let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1a);
     let self_activation_req: u8 = if self_activate { 1 } else { 0 };
 
-    req.data
-        .extend_from_slice(&self_activation_req.to_le_bytes());
+    let mut data = vec![];
+    data.extend_from_slice(&self_activation_req.to_le_bytes());
 
+    let req = pldm::PldmRequest::new_data(PLDM_TYPE_FW, 0x1a, data);
     let rsp = pldm::pldm_xfer(ep, req)?;
 
     if rsp.cc != 0 {
@@ -530,7 +533,7 @@ fn check_fd_state(
         return Err(PldmUpdateError::new_command(0x1b, rsp.cc));
     }
 
-    let (_, res) = complete(GetStatusResponse::parse)(rsp.data.as_slice())
+    let (_, res) = complete(GetStatusResponse::parse)(&rsp.data)
         .map_err(|_e| {
             PldmUpdateError::new_proto("can't parse Get Status response".into())
         })?;

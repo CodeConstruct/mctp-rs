@@ -11,3 +11,9 @@ categories = ["network-programming", "embedded", "hardware-support"]
 mctp = { workspace = true }
 mctp-linux = { workspace = true }
 thiserror = "1.0"
+managed = { version = "0.8", default-features = false }
+
+[features]
+default = ["std"]
+alloc = ["managed/alloc"]
+std = ["alloc"]

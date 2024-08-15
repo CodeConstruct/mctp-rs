@@ -205,6 +205,7 @@ pub fn parse_string<'a>(
 ) -> impl FnMut(&'a [u8]) -> VResult<&'a [u8], DescriptorString> {
     map_opt(take(len), move |d: &[u8]| match typ {
         0 => DescriptorString::new_bytes(d),
+        // ascii or utf-8
         1 | 2 => DescriptorString::new_utf8(d),
         _ => {
             debug!("unimplemented string type {typ}");
