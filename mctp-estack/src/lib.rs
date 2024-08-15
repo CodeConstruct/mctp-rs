@@ -114,6 +114,7 @@ impl Stack {
         dest: Eid,
         typ: MsgType,
         tag: Option<Tag>,
+        ic: bool,
         mtu: Option<usize>,
         // TODO: should cookie be not-Option?
         cookie: Option<AppCookie>,
@@ -151,6 +152,7 @@ impl Stack {
             tag,
             frag_mtu,
             cookie,
+            ic,
         )
     }
 
@@ -267,7 +269,7 @@ impl Stack {
         re.return_handle(handle);
     }
 
-    /// Retrieves a message deferred from a previous [`receive`] callback.
+    /// Retrieves a message deferred from a previous [`receive`](Self::receive) callback.
     ///
     /// If multiple match the earliest is returned
     pub fn get_deferred(&mut self, source: Eid, tag: Tag) -> Option<ReceiveHandle> {
@@ -279,7 +281,7 @@ impl Stack {
         .map(|(i, re)| re.take_handle(i)) 
     }
 
-    /// Retrieves a message deferred from a previous [`receive`] callback.
+    /// Retrieves a message deferred from a previous [`receive`](Self::receive) callback.
     ///
     /// If multiple match the earliest is returned.
     /// Multiple cookies to match may be provided.
@@ -417,9 +419,10 @@ pub struct MctpMessage<'a> {
     pub tag: Tag,
 
     pub typ: MsgType,
+    pub ic: bool,
     pub payload: &'a [u8],
 
-    /// Set for response messages when the request had `cookie` set in the [`Stack::send`] call.
+    /// Set for response messages when the request had `cookie` set in the [`Stack::start_send`] call.
     /// "Response" message refers having `TO` bit unset.
     pub cookie: Option<AppCookie>,
 }
@@ -431,6 +434,7 @@ impl<'a> core::fmt::Debug for MctpMessage<'a> {
             .field("dest", &self.dest)
             .field("tag", &self.tag)
             .field("typ", &self.typ)
+            .field("ic", &self.ic)
             .field("cookie", &self.cookie)
             .field("payload length", &self.payload.len())
             .finish_non_exhaustive()

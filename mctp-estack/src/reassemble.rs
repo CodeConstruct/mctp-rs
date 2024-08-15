@@ -10,8 +10,8 @@ use crate::{Header, MctpMessage, HEADER_LEN, AppCookie, ReceiveHandle};
 #[derive(Debug)]
 enum State {
     New,
-    Active { typ: MsgType, next_seq: u8 },
-    Done { typ: MsgType },
+    Active { typ: MsgType, ic: bool, next_seq: u8 },
+    Done { typ: MsgType, ic: bool },
     Bad,
 }
 
@@ -84,10 +84,10 @@ impl Reassembler {
         let payload = &packet[min..];
 
         if som {
-            let typ = MsgType(packet[HEADER_LEN]);
+            let (typ, ic) = mctp::decode_type_ic(packet[HEADER_LEN]);
             let next_seq = header.pkt_seq();
 
-            self.state = State::Active { next_seq, typ };
+            self.state = State::Active { next_seq, typ, ic };
 
             // New SOM packet restarts reassembly
             if !message.is_empty() {
@@ -99,6 +99,7 @@ impl Reassembler {
 
         let State::Active {
             typ,
+            ic,
             ref mut next_seq,
         } = self.state
         else {
@@ -125,7 +126,7 @@ impl Reassembler {
         })?;
 
         if eom {
-            self.state = State::Done { typ };
+            self.state = State::Done { typ, ic };
             trace!("message reassembly complete, len {}", message.len());
             return Ok(Some(self.message(message)?));
         }
@@ -138,7 +139,7 @@ impl Reassembler {
         &self,
         message: &'f mut Vec<u8, N>,
     ) -> Result<MctpMessage<'f>> {
-        let State::Done { typ } = self.state else {
+        let State::Done { typ, ic } = self.state else {
             return Err(Error::InvalidInput);
         };
 
@@ -148,6 +149,7 @@ impl Reassembler {
             tag: self.tag,
 
             typ,
+            ic,
             payload: message.as_slice(),
             cookie: self.cookie,
         })

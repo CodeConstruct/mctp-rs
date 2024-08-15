@@ -8,6 +8,7 @@ pub struct Fragmenter {
     dest: Eid,
     typ: MsgType,
     tag: Tag,
+    ic: bool,
     seq: u8,
     mtu: usize,
 
@@ -27,10 +28,12 @@ impl Fragmenter {
         tag: Tag,
         mtu: usize,
         cookie: Option<AppCookie>,
+        ic: bool,
     ) -> Result<Self> {
         if tag.tag().0 > mctp::MCTP_TAG_MAX {
             return Err(Error::InvalidInput);
         }
+        debug_assert!(typ.0 & 0x80 == 0, "IC bit's set in typ");
         // TODO other validity checks
 
         Ok(Self {
@@ -44,6 +47,7 @@ impl Fragmenter {
             seq: 0,
             tag,
             cookie,
+            ic,
         })
     }
 
@@ -101,7 +105,7 @@ impl Fragmenter {
 
         // Append type byte
         if self.first {
-            rest[0] = self.typ.0;
+            rest[0] = mctp::encode_type_ic(self.typ, self.ic);
             rest = &mut rest[1..];
         }
 
