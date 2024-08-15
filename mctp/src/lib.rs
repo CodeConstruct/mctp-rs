@@ -235,7 +235,7 @@ pub trait Comm {
     /// Send a message to this endpoint, blocking.
     ///
     /// Transport implementations will typically use the trait provided method
-    /// that calls [`send_vectored`].
+    /// that calls [`send_vectored`](Self::send_vectored).
     ///
     /// IC bit is unset.
     fn send(
@@ -251,9 +251,6 @@ pub trait Comm {
     ///
     /// Returns a filled slice of `buf`, MCTP message type, tag, and IC bit.
     /// This will receive messages with a tag matching that set with `send`.
-    ///
-    /// Transport implementations will typically use the trait provided method that
-    /// calls [`recv_extra`].
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
@@ -277,7 +274,7 @@ pub trait Listener {
     /// Returns a filled slice of `buf`, `Comm`, tag, and IC bit `bool`.
     ///
     /// The returned `Comm` should be used to send responses to the request.
-    /// All messages returned will match the `Listener`'s [`mctp_type`].
+    /// All messages returned will match the `Listener`'s [`mctp_type`](Self::mctp_type).
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
