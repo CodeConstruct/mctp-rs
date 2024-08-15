@@ -424,6 +424,19 @@ pub struct MctpMessage<'a> {
     pub cookie: Option<AppCookie>,
 }
 
+impl<'a> core::fmt::Debug for MctpMessage<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Mctpmessage")
+            .field("source", &self.source)
+            .field("dest", &self.dest)
+            .field("tag", &self.tag)
+            .field("typ", &self.typ)
+            .field("cookie", &self.cookie)
+            .field("payload length", &self.payload.len())
+            .finish_non_exhaustive()
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
