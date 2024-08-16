@@ -132,7 +132,7 @@ impl Update {
 }
 
 pub fn query_device_identifiers(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
 ) -> Result<DeviceIdentifiers> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x01);
 
@@ -152,7 +152,7 @@ pub fn query_device_identifiers(
 }
 
 pub fn query_firmware_parameters(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
 ) -> Result<FirmwareParameters> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x02);
 
@@ -174,7 +174,7 @@ pub fn query_firmware_parameters(
 const XFER_SIZE: usize = 16 * 1024;
 
 pub fn request_update(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     update: &Update,
 ) -> Result<RequestUpdateResponse> {
     check_fd_state(comm, PldmFDState::Idle)?;
@@ -200,7 +200,7 @@ pub fn request_update(
     })
 }
 
-pub fn cancel_update(comm: &mut impl mctp::Comm) -> Result<()> {
+pub fn cancel_update(comm: &mut impl mctp::ReqChannel) -> Result<()> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1d);
     let rsp = pldm::pldm_xfer(comm, req)?;
     debug!("cancel rsp: cc {:x}, data {:?}", rsp.cc, rsp.data);
@@ -208,7 +208,7 @@ pub fn cancel_update(comm: &mut impl mctp::Comm) -> Result<()> {
 }
 
 pub fn update_component(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     listener: &mut impl mctp::Listener,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
@@ -218,7 +218,7 @@ pub fn update_component(
 }
 
 pub fn pass_component_table(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     update: &Update,
 ) -> Result<()> {
     let components = &update.components;
@@ -293,7 +293,7 @@ fn xfer_flags(idx: usize, len: usize) -> u8 {
 }
 
 pub fn update_component_progress<F>(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     listener: &mut impl mctp::Listener,
     package: &pkg::Package,
     component: &pkg::PackageComponent,
@@ -369,7 +369,7 @@ where
 
                 package.read_component(component, offset, &mut buf)?;
 
-                let mut fw_resp = fw_req.response()?;
+                let mut fw_resp = fw_req.response();
 
                 fw_resp.cc = 0;
                 fw_resp.set_data(buf);
@@ -422,7 +422,7 @@ where
                 } else {
                     error!("firmware transfer error: 0x{:02x}", res);
                 }
-                let mut fw_resp = fw_req.response()?;
+                let mut fw_resp = fw_req.response();
                 fw_resp.cc = 0;
                 pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
                 break;
@@ -452,9 +452,10 @@ where
             ))
         }
     }
-    let mut fw_resp = fw_req.response()?;
+    let mut fw_resp = fw_req.response();
     fw_resp.cc = 0;
     pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
+    drop(req_ep);
 
     /* Apply */
     let (mut req_ep, fw_req) = pldm::pldm_rx_req(listener)?;
@@ -474,7 +475,7 @@ where
         }
     }
 
-    let mut fw_resp = fw_req.response()?;
+    let mut fw_resp = fw_req.response();
     fw_resp.cc = 0;
     pldm::pldm_tx_resp(&mut req_ep, &fw_resp)?;
 
@@ -484,7 +485,7 @@ where
 }
 
 pub fn update_components(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     listener: &mut impl mctp::Listener,
     update: &mut Update,
 ) -> Result<()> {
@@ -492,7 +493,7 @@ pub fn update_components(
 }
 
 pub fn update_components_progress<F>(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     listener: &mut impl mctp::Listener,
     update: &mut Update,
     mut progress: F,
@@ -518,7 +519,7 @@ where
 }
 
 pub fn activate_firmware(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     self_activate: bool,
 ) -> Result<()> {
     check_fd_state(comm, PldmFDState::ReadyXfer)?;
@@ -539,7 +540,7 @@ pub fn activate_firmware(
 }
 
 fn check_fd_state(
-    comm: &mut impl mctp::Comm,
+    comm: &mut impl mctp::ReqChannel,
     expected_state: PldmFDState,
 ) -> Result<()> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x1b);

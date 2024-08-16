@@ -12,6 +12,8 @@
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
+use core::marker::PhantomData;
+
 #[allow(unused)]
 use nom::{
     combinator::{all_consuming, map},
@@ -23,7 +25,7 @@ use nom::{
 
 use num_traits::FromPrimitive;
 
-use mctp::{Eid, Comm};
+use mctp::{Eid, ReqChannel, RespChannel};
 use pldm::{
     pldm_tx_req, pldm_tx_resp, proto_error, CCode, PldmError,
     PldmRequest, PldmResponse,
@@ -37,7 +39,7 @@ const MSGBUF: usize = 1024 + 3;
 
 type Result<T> = core::result::Result<T, PldmError>;
 
-enum State<C: Comm> {
+enum State<C: ReqChannel> {
     Idle {
         reason: PldmIdleReason,
     },
@@ -59,6 +61,8 @@ enum State<C: Comm> {
 
         // comm to send RequestFirmwareData to, and to await response from
         req_comm: C,
+        // Whether a response is currently expected on req_comm.
+        req_pending: bool,
     },
     Verify {
         // Set after retrieving the verify status from the [`Device`] callback.
@@ -70,6 +74,7 @@ enum State<C: Comm> {
         details: ComponentDetails,
 
         req_comm: C,
+        req_pending: bool,
     },
     Apply {
         // Set after `apply()` from the [`Device`] callback.
@@ -81,11 +86,12 @@ enum State<C: Comm> {
         details: ComponentDetails,
 
         req_comm: C,
+        req_pending: bool,
     },
     Activate,
 }
 
-impl <C: Comm> From<&State<C>> for PldmFDState {
+impl <C: ReqChannel> From<&State<C>> for PldmFDState {
     fn from(s: &State<C>) -> PldmFDState {
         match s {
             State::Idle { .. } => PldmFDState::Idle,
@@ -99,9 +105,9 @@ impl <C: Comm> From<&State<C>> for PldmFDState {
     }
 }
 
-pub struct Responder<C: Comm> {
+pub struct Responder<R: RespChannel> {
     /// state should be modified via set_state()
-    state: State<C>,
+    state: State<R::ReqChannel>,
     prev_state: PldmFDState,
 
     /// EID of the current EID. This is set on the RequestUpdate message
@@ -118,7 +124,7 @@ pub struct Responder<C: Comm> {
     update_timestamp_fd_t1: u64,
 }
 
-impl<C: Comm> Responder<C> {
+impl<R: RespChannel> Responder<R> {
     /// Update mode idle timeout, 120 seconds
     pub const FD_T1_TIMEOUT: u64 = 120_000;
 
@@ -140,7 +146,7 @@ impl<C: Comm> Responder<C> {
     /// Returns `Ok` if a reply is sent to the UA, including for error responses.
     pub fn request_in(
         &mut self,
-        mut comm: C,
+        mut comm: R,
         req: &PldmRequest,
         d: &mut impl Device,
     ) -> Result<()> {
@@ -214,12 +220,12 @@ impl<C: Comm> Responder<C> {
         Ok(())
     }
 
-    pub fn pending_reply_ep(&mut self) -> Option<&mut C> {
+    pub fn pending_reply_ep(&mut self) -> Option<&mut R::ReqChannel> {
         let r = match &mut self.state {
-            | State::Download { req_comm, ..}
-            | State::Verify { req_comm, ..}
-            | State::Apply { req_comm, ..}
-            => Some(req_comm),
+            | State::Download { req_comm, req_pending, ..}
+            | State::Verify { req_comm, req_pending, ..}
+            | State::Apply { req_comm, req_pending, ..}
+            => req_pending.then(|| req_comm),
             _ => None,
         };
         trace!("pending reply {}", r.is_some());
@@ -258,12 +264,10 @@ impl<C: Comm> Responder<C> {
     fn reply_error(
         &self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         cc: u8,
     ) {
-        let Ok(mut resp) = req.response_borrowed(&[]) else {
-            unreachable!()
-        };
+        let mut resp = req.response_borrowed(&[]);
         resp.cc = cc;
         let _ = pldm_tx_resp(comm, &resp)
             .inspect_err(|e| trace!("Error sending failure response. {e:?}"));
@@ -273,7 +277,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_qdi(
         &mut self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
@@ -283,7 +287,7 @@ impl<C: Comm> Responder<C> {
         }
 
         let l = dev.dev_identifiers().write_buf(&mut self.msg_buf).space()?;
-        let resp = req.response_borrowed(&self.msg_buf[..l])?;
+        let resp = req.response_borrowed(&self.msg_buf[..l]);
 
         pldm_tx_resp(comm, &resp)
     }
@@ -292,7 +296,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_fwparams(
         &mut self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         dev: &mut impl Device,
     ) -> Result<()> {
         // Valid in any state, doesn't change state
@@ -309,7 +313,7 @@ impl<C: Comm> Responder<C> {
         };
 
         let l = fwp.write_buf(&mut self.msg_buf).space()?;
-        let resp = req.response_borrowed(&self.msg_buf[..l])?;
+        let resp = req.response_borrowed(&self.msg_buf[..l]);
 
         pldm_tx_resp(comm, &resp)
     }
@@ -319,7 +323,7 @@ impl<C: Comm> Responder<C> {
         &mut self,
         req: &PldmRequest,
         eid: Eid,
-        comm: &mut C,
+        comm: &mut R,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::Idle { .. }) {
@@ -350,7 +354,7 @@ impl<C: Comm> Responder<C> {
         .write_buf(&mut self.msg_buf)
         .space()?;
 
-        let resp = req.response_borrowed(&self.msg_buf[..l])?;
+        let resp = req.response_borrowed(&self.msg_buf[..l]);
         pldm_tx_resp(comm, &resp)?;
         self.set_state(State::LearnComponents);
         Ok(())
@@ -359,7 +363,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_pass_components(
         &mut self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::LearnComponents) {
@@ -387,7 +391,7 @@ impl<C: Comm> Responder<C> {
         // byte 0: ComponentResponse, 0 for success, 1 otherwise?
         // byte 1: ComponentResponseCode
         let comp_resp = [(res != 0) as u8, res];
-        let resp = req.response_borrowed(&comp_resp)?;
+        let resp = req.response_borrowed(&comp_resp);
         pldm_tx_resp(comm, &resp)?;
 
         if transferflag & TransferFlag::End as u8 > 0 {
@@ -421,7 +425,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_update_component(
         &mut self,
         req: &PldmRequest,
-        mut comm: C,
+        mut comm: R,
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::ReadyXfer) {
@@ -458,7 +462,7 @@ impl<C: Comm> Responder<C> {
         b.push_le32(update_flags).space()?;
         b.push_le16(0).space()?;
 
-        let resp = req.response_borrowed(&comp_resp)?;
+        let resp = req.response_borrowed(&comp_resp);
         pldm_tx_resp(&mut comm, &resp)?;
 
         let details = ComponentDetails {
@@ -473,13 +477,16 @@ impl<C: Comm> Responder<C> {
         let transfer_result =
             (details.size == 0).then(|| TransferResult::Success);
 
+        let req_comm = comm.req_channel()?;
+
         self.set_state(State::Download {
             offset: 0,
             transfer_result,
             request: FDReq::Ready,
             update_flags,
             details,
-            req_comm: comm,
+            req_comm,
+            req_pending: false,
         });
         Ok(())
     }
@@ -487,7 +494,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_activate(
         &mut self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         dev: &mut impl Device,
     ) -> Result<()> {
         if req.data.len() != 1 {
@@ -519,9 +526,7 @@ impl<C: Comm> Responder<C> {
 
         // No EstimatedTimeForSelfContainedActivation for now.
         let data = [0x00, 0x00];
-        let Ok(mut resp) = req.response_borrowed(&data) else {
-            unreachable!()
-        };
+        let mut resp = req.response_borrowed(&data);
         resp.cc = status;
         pldm_tx_resp(comm, &resp)?;
 
@@ -536,7 +541,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_cancel_update(
         &mut self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         dev: &mut impl Device,
     ) -> Result<()> {
         let details = match &self.state {
@@ -564,7 +569,7 @@ impl<C: Comm> Responder<C> {
             return Ok(());
         }
 
-        let mut resp = req.response_borrowed(&[])?;
+        let mut resp = req.response_borrowed(&[]);
         resp.cc = CCode::SUCCESS as u8;
         pldm_tx_resp(comm, &resp)?;
 
@@ -577,7 +582,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_cancel_update_component(
         &mut self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         dev: &mut impl Device,
     ) -> Result<()> {
         let details = match &self.state {
@@ -604,7 +609,7 @@ impl<C: Comm> Responder<C> {
             return Ok(());
         }
 
-        let mut resp = req.response_borrowed(&[])?;
+        let mut resp = req.response_borrowed(&[]);
         resp.cc = CCode::SUCCESS as u8;
         pldm_tx_resp(comm, &resp)?;
 
@@ -617,7 +622,7 @@ impl<C: Comm> Responder<C> {
     fn cmd_get_status(
         &mut self,
         req: &PldmRequest,
-        comm: &mut C,
+        comm: &mut R,
         _dev: &mut impl Device,
     ) -> Result<()> {
         if !req.data.is_empty() {
@@ -626,7 +631,7 @@ impl<C: Comm> Responder<C> {
         }
 
         let l = self.get_status().write_buf(&mut self.msg_buf).space()?;
-        let resp = req.response_borrowed(&self.msg_buf[..l])?;
+        let resp = req.response_borrowed(&self.msg_buf[..l]);
         pldm_tx_resp(comm, &resp)
     }
 
@@ -765,6 +770,7 @@ impl<C: Comm> Responder<C> {
             request,
             transfer_result,
             req_comm,
+            req_pending,
             ..
         } = &mut self.state else {
             unreachable!();
@@ -775,6 +781,7 @@ impl<C: Comm> Responder<C> {
             // let the retry timer handle it.
             return;
         }
+        *req_pending = true;
 
         if let Some(tr) = transfer_result {
             // transfer complete sent
@@ -788,6 +795,7 @@ impl<C: Comm> Responder<C> {
                         request: FDReq::Ready,
                         details,
                         req_comm,
+                        req_pending: false,
                     }
                 });
             } else {
@@ -814,6 +822,7 @@ impl<C: Comm> Responder<C> {
             request,
             details,
             req_comm,
+            req_pending,
             ..
         } = &mut self.state
         else {
@@ -846,6 +855,7 @@ impl<C: Comm> Responder<C> {
             // let the retry timer handle it
             return;
         }
+        *req_pending = true;
 
         if *vr == VerifyResult::Success {
             self.set_state_with(|prev| {
@@ -857,6 +867,7 @@ impl<C: Comm> Responder<C> {
                     request: FDReq::Ready,
                     details,
                     req_comm,
+                    req_pending: false,
                 }
             });
         } else {
@@ -875,6 +886,7 @@ impl<C: Comm> Responder<C> {
             request,
             details,
             req_comm,
+            req_pending,
             ..
         } = &mut self.state
         else {
@@ -914,6 +926,7 @@ impl<C: Comm> Responder<C> {
             // let retry timer handle it
             return;
         }
+        *req_pending = true;
 
         if *ar == ApplyResult::Success {
             self.set_state(State::ReadyXfer);
@@ -990,7 +1003,7 @@ impl<C: Comm> Responder<C> {
     ///
     /// The closure is provided with the previous state as an argument.
     /// This can be used to move members between State enum variants.
-    fn set_state_with<F>(&mut self, update: F) where F: FnOnce(State<C>) -> State<C> {
+    fn set_state_with<F>(&mut self, update: F) where F: FnOnce(State<R::ReqChannel>) -> State<R::ReqChannel> {
 
         self.prev_state = (&self.state).into();
 
@@ -1009,7 +1022,7 @@ impl<C: Comm> Responder<C> {
     }
 
     /// Set a new state
-    fn set_state(&mut self, new_state: State<C>) {
+    fn set_state(&mut self, new_state: State<R::ReqChannel>) {
         debug_assert!(
             !matches!(new_state, State::Idle { .. }),
             "Idle state should use set_idle() instead"
