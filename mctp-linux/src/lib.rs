@@ -48,9 +48,11 @@ use std::time::Duration;
 use mctp::{
     Eid,
     MCTP_ADDR_ANY,
+    MCTP_TAG_OWNER,
     MsgType,
     Result,
     Tag,
+    TagValue,
 };
 
 /* until we have these in libc... */
@@ -120,6 +122,23 @@ impl fmt::Debug for MctpSockAddr {
         )
     }
 }
+
+/// Creates a `Tag` from a smctp_tag field.
+fn tag_from_smctp(to: u8) -> Tag {
+    let t = TagValue(to & !MCTP_TAG_OWNER);
+    if to & MCTP_TAG_OWNER == 0 {
+        Tag::Unowned(t)
+    } else {
+        Tag::Owned(t)
+    }
+}
+
+/// Creates a `Tag` to a smctp_tag field.
+fn tag_to_smctp(tag: &Tag) -> u8 {
+    let to_bit = if tag.is_owner() { MCTP_TAG_OWNER } else { 0 };
+    tag.tag().0 | to_bit
+}
+
 
 // helper for IO error construction
 fn last_os_error() -> mctp::Error {
@@ -286,28 +305,23 @@ impl std::os::fd::AsRawFd for MctpSocket {
 }
 
 /// Encapsulation of a remote endpoint: a socket and an Endpoint ID.
-pub struct MctpLinuxEp {
+pub struct MctpLinuxReq {
     eid: Eid,
     net: u32,
     sock: MctpSocket,
+    sent: bool,
 }
 
-impl MctpLinuxEp {
-    /// Create a new `MctpLinuxEp` with EID `eid`
+impl MctpLinuxReq {
+    /// Create a new `MctpLinuxReq` with EID `eid`
     pub fn new(eid: Eid, net: Option<u32>) -> Result<Self> {
         let net = net.unwrap_or(MCTP_NET_ANY);
         Ok(Self {
             eid,
             net,
             sock: MctpSocket::new()?,
+            sent: false,
         })
-    }
-
-    /// Clone this endpoint.
-    ///
-    /// Creates a separate socket descriptor for the new endpoint.
-    pub fn try_clone(&self) -> Result<Self> {
-        Self::new(self.eid, Some(self.net))
     }
 
     /// Borrow the internal MCTP socket
@@ -325,48 +339,38 @@ impl MctpLinuxEp {
     }
 }
 
-impl mctp::Comm for MctpLinuxEp {
+impl mctp::ReqChannel for MctpLinuxReq {
     /// Send a MCTP message
     ///
-    /// `tag` can be `None` to allocate an owned tag, or `Some(Tag::Unowned(tv))`
-    /// to use an unowned tag.
-    ///
     /// Linux MCTP can also send a preallocated owned tag, but that is not
-    /// yet supported in `MctpLinuxEp`.
+    /// yet supported in `MctpLinuxReq`.
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        tag: Option<Tag>,
         ic: bool,
         bufs: &[&[u8]],
     ) -> Result<()> {
-        let t = match tag {
-            // Linux expects tag 0, owner bit set to allocate.
-            None => mctp::MCTP_TAG_OWNER,
-            Some(Tag::Owned(_tv)) => {
-                // Requires setting prealloc bit, see function comment.
-                return Err(mctp::Error::Unsupported);
-            }
-            Some(Tag::Unowned(tv)) => tv.0,
-        };
-
         let typ_ic = mctp::encode_type_ic(typ, ic);
-        let addr = MctpSockAddr::new(self.eid.0, self.net, typ_ic, t);
+        let addr = MctpSockAddr::new(self.eid.0, self.net, typ_ic, mctp::MCTP_TAG_OWNER);
         // TODO: implement sendmsg() with iovecs
         let concat = bufs
             .iter()
             .flat_map(|b| b.iter().cloned())
             .collect::<Vec<u8>>();
         self.sock.sendto(&concat, &addr)?;
+        self.sent = true;
         Ok(())
     }
 
-    fn recv<'f>(&mut self, buf: &'f mut [u8]) 
+    fn recv<'f>(&mut self, buf: &'f mut [u8])
         -> Result<(&'f mut [u8], MsgType, Tag, bool)> {
+        if !self.sent {
+            return Err(mctp::Error::BadArgument);
+        }
         let (sz, addr) = self.sock.recvfrom(buf)?;
         let src = Eid(addr.0.smctp_addr);
         let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
-        let tag = Tag::from_to_field(addr.0.smctp_tag);
+        let tag = tag_from_smctp(addr.0.smctp_tag);
         if src != self.eid {
             // Kernel gave us a message from a different sender?
             return Err(mctp::Error::Other)
@@ -423,14 +427,14 @@ impl MctpLinuxListener {
 
 impl mctp::Listener for MctpLinuxListener {
 
-    type Comm = MctpLinuxEp;
+    type RespChannel<'a> = MctpLinuxResp<'a> where Self: 'a;
 
-    fn recv<'f>(&mut self, buf: &'f mut [u8]) 
-        -> Result<(&'f mut [u8], MctpLinuxEp, Tag, bool)> {
+    fn recv<'f>(&mut self, buf: &'f mut [u8])
+        -> Result<(&'f mut [u8], MctpLinuxResp<'_>, Tag, bool)> {
         let (sz, addr) = self.sock.recvfrom(buf)?;
         let src = Eid(addr.0.smctp_addr);
         let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
-        let tag = Tag::from_to_field(addr.0.smctp_tag);
+        let tag = tag_from_smctp(addr.0.smctp_tag);
         if let Tag::Unowned(_) = tag {
             // bind() shouldn't give non-owned packets.
             return Err(mctp::Error::InternalError)
@@ -439,12 +443,60 @@ impl mctp::Listener for MctpLinuxListener {
             // bind() should return the requested type
             return Err(mctp::Error::InternalError)
         }
-        let ep = MctpLinuxEp::new(src, Some(self.net))?;
+        let ep = MctpLinuxResp { eid: src, tv: tag.tag(), listener: self };
         Ok((&mut buf[..sz], ep, tag, ic))
     }
 
     fn mctp_type(&self) -> MsgType {
         self.typ
+    }
+}
+
+pub struct MctpLinuxResp<'a> {
+    eid: Eid,
+    // An unowned tag
+    tv: TagValue,
+    listener: &'a MctpLinuxListener,
+}
+
+impl MctpLinuxResp<'_> {
+    // TODO: Is this useful?
+    pub fn listener(&self) -> &MctpLinuxListener {
+        self.listener
+    }
+}
+
+impl mctp::RespChannel for MctpLinuxResp<'_> {
+    type ReqChannel = MctpLinuxReq;
+
+    /// Send a MCTP message
+    ///
+    /// Linux MCTP can also send a preallocated owned tag, but that is not
+    /// yet supported in `MctpLinuxReq`.
+    fn send_vectored(
+        &mut self,
+        typ: MsgType,
+        ic: bool,
+        bufs: &[&[u8]],
+    ) -> Result<()> {
+        let typ_ic = mctp::encode_type_ic(typ, ic);
+        let tag = tag_to_smctp(&Tag::Unowned(self.tv));
+        let addr = MctpSockAddr::new(self.eid.0, self.listener.net, typ_ic, tag);
+        // TODO: implement sendmsg() with iovecs
+        let concat = bufs
+            .iter()
+            .flat_map(|b| b.iter().cloned())
+            .collect::<Vec<u8>>();
+        self.listener.sock.sendto(&concat, &addr)?;
+        Ok(())
+    }
+
+    fn remote_eid(&self) -> Eid {
+        self.eid
+    }
+
+    fn req_channel(&self) -> Result<Self::ReqChannel> {
+        MctpLinuxReq::new(self.eid, Some(self.listener.net))
     }
 }
 
@@ -515,9 +567,9 @@ impl MctpAddr {
         self.net.unwrap_or(MCTP_NET_ANY)
     }
 
-    /// Create an `MctpLinuxEp` using the net & eid values in this address.
-    pub fn create_endpoint(&self) -> Result<MctpLinuxEp> {
-        MctpLinuxEp::new(self.eid, self.net)
+    /// Create an `MctpLinuxReq` using the net & eid values in this address.
+    pub fn create_endpoint(&self) -> Result<MctpLinuxReq> {
+        MctpLinuxReq::new(self.eid, self.net)
     }
 
     /// Create an `MCTPListener`.
