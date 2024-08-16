@@ -103,16 +103,6 @@ pub enum Tag {
 }
 
 impl Tag {
-    /// Creates a `Tag` from a received MCTP packet TO byte
-    pub fn from_to_field(to: u8) -> Self {
-        let t = TagValue(to & !MCTP_TAG_OWNER);
-        if to & MCTP_TAG_OWNER == 0 {
-            Self::Unowned(t)
-        } else {
-            Self::Owned(t)
-        }
-    }
-
     /// Returns the tag
     pub fn tag(&self) -> TagValue {
         match self {
@@ -154,6 +144,8 @@ pub enum Error {
     TxFailure,
     /// Timed out waiting for the remote peer
     TimedOut,
+    /// Bad argument
+    BadArgument,
     /// Invalid input
     InvalidInput,
     /// A tag cannot be allocated, or the tag specified cannot be used
@@ -211,11 +203,12 @@ pub type Result<T> = core::result::Result<T, Error>;
 ///
 /// A `Comm` may be re-used to send a new allocated tag if no further
 /// messages for a previous tag are expected to be received.
-pub trait Comm {
+pub trait ReqChannel {
     /// Send a slice of buffers to this endpoint, blocking.
     ///
-    /// A `tag` argument will request the MCTP stack to allocate a
-    /// new `Owned` tag.
+    /// The Tag Owner bit will be set in the sent message, either
+    /// with a newly allocated tag, or with a pre-allocated tag
+    /// if set.
     ///
     /// The slice of buffers will be sent as a single message
     /// (as if concatenated). Accepting multiple buffers allows
@@ -227,7 +220,6 @@ pub trait Comm {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        tag: Option<Tag>,
         integrity_check: bool,
         bufs: &[&[u8]],
     ) -> Result<()>;
@@ -241,16 +233,15 @@ pub trait Comm {
     fn send(
         &mut self,
         typ: MsgType,
-        tag: Option<Tag>,
         buf: &[u8],
     ) -> Result<()> {
-        self.send_vectored(typ, tag, false, &[buf])
+        self.send_vectored(typ, false, &[buf])
     }
 
     /// Blocking receive
     ///
     /// Returns a filled slice of `buf`, MCTP message type, tag, and IC bit.
-    /// This will receive messages with a tag matching that set with `send`.
+    /// Will fail if used without a prior call to `send` or `send_vectored`.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
@@ -260,25 +251,65 @@ pub trait Comm {
     fn remote_eid(&self) -> Eid;
 }
 
+pub trait RespChannel {
+    type ReqChannel: ReqChannel;
+
+    /// Send a slice of buffers to this endpoint, blocking.
+    ///
+    /// The slice of buffers will be sent as a single message
+    /// (as if concatenated). Accepting multiple buffers allows
+    /// higher level protocols to more easily append their own
+    /// protocol headers to a payload without needing extra
+    /// buffer allocations.
+    ///
+    /// The `integrity_check` argument is the MCTP header IC bit.
+    fn send_vectored(
+        &mut self,
+        typ: MsgType,
+        integrity_check: bool,
+        bufs: &[&[u8]],
+    ) -> Result<()>;
+
+    /// Send a message to this endpoint, blocking.
+    ///
+    /// Transport implementations will typically use the trait provided method
+    /// that calls [`send_vectored`](Self::send_vectored).
+    ///
+    /// IC bit is unset.
+    fn send(
+        &mut self,
+        typ: MsgType,
+        buf: &[u8],
+    ) -> Result<()> {
+        self.send_vectored(typ, false, &[buf])
+    }
+
+    /// Return the remote Endpoint ID
+    fn remote_eid(&self) -> Eid;
+
+    /// Constructs a new ReqChannel to the same MCTP endpoint as this RespChannel.
+    fn req_channel(&self) -> Result<Self::ReqChannel>;
+}
+
 /// A MCTP listener instance
 ///
 /// This will receive messages with TO=1. Platform-specific constructors
 /// will specify the MCTP message type to listen for.
 pub trait Listener {
-    /// `Comm` type associated with this `Listener`
-    type Comm: Comm;
+    /// `RespChannel` type associated with this `Listener`
+    type RespChannel<'a>: RespChannel where Self: 'a;
 
     /// Blocking receive
     ///
     /// This receives a single MCTP message matched by the `Listener`.
-    /// Returns a filled slice of `buf`, `Comm`, tag, and IC bit `bool`.
+    /// Returns a filled slice of `buf`, `RespChannel`, tag, and IC bit `bool`.
     ///
-    /// The returned `Comm` should be used to send responses to the request.
+    /// The returned `RespChannel` should be used to send responses to the request.
     /// All messages returned will match the `Listener`'s [`mctp_type`](Self::mctp_type).
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Self::Comm, Tag, bool)>;
+    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, bool)>;
 
     /// Return the MCTP type of the listener.
     ///
