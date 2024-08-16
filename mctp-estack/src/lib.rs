@@ -30,8 +30,7 @@ const RECV_PAYLOAD: usize = 1032;
 
 #[derive(Debug)]
 struct Flow {
-    // TODO
-    timestamp: u64,
+    timestamp: EventStamp,
     cookie: Option<AppCookie>,
 }
 
@@ -67,35 +66,49 @@ pub struct Stack {
     // for the ReceiveHandle. Could use a LinearMap instead?
     reassemblers: [Option<(Reassembler, Vec<u8, RECV_PAYLOAD>)>; NUM_RECEIVE],
 
-    /// monotonic time counter.
-    now_millis: u64,
+    /// monotonic time and counter.
+    now: EventStamp,
 
     mtu: usize,
-
-    // counter used for ordering events. no relation to real time.
-    ordering: u64,
 }
 
 impl Stack {
     pub fn new(own_eid: Eid, mtu: usize, now_millis: u64) -> Self {
+        let now = EventStamp { clock: now_millis, counter: 0 };
         Self {
             own_eid,
-            now_millis,
+            now,
             mtu,
             flows: LinearMap::new(),
             reassemblers: Default::default(),
-            ordering: 0,
         }
     }
 
     /// Returns [`Error::InvalidInput`] if time goes backwards.
-    pub fn update_clock(&mut self, now_millis: u64) -> Result<()> {
-        if now_millis < self.now_millis {
+    fn update_clock(&mut self, now_millis: u64) -> Result<()> {
+        if now_millis < self.now.clock {
             Err(Error::InvalidInput)
         } else {
-            self.now_millis = now_millis;
+            if now_millis > self.now.clock {
+                self.now.clock = now_millis;
+                self.now.counter = 0;
+            } else {
+                // update_clock was called with the same millisecond as previously.
+                // Don't do anything.
+            }
             Ok(())
         }
+    }
+
+    /// Updates timeouts and returns the next timeout in milliseconds
+    ///
+    /// `u32::MAX` will be returned if no timeouts are pending.
+    /// Returns [`Error::InvalidInput`] if time goes backwards.
+    pub fn update(&mut self, now_millis: u64) -> Result<u32> {
+        self.update_clock(now_millis)?;
+        // TODO
+        let timeout = 4000;
+        Ok(timeout)
     }
 
     /// Initiates a MCTP message send.
@@ -156,7 +169,7 @@ impl Stack {
         )
     }
 
-    /// Receive a message
+    /// Receive a packet.
     ///
     /// Returns `Ok(Some(_))` when a full message is reassembled.
     /// Returns `Ok(None)` on success when the message is incomplete.
@@ -194,20 +207,14 @@ impl Stack {
                 }
 
                 // Required to reborrow `re` and `buf`. Otherwise
-                // we hit lifetime problems setting `= None` in the error case.
+                // we hit lifetime problems setting `= None` in the Err case.
                 // These two lines can be removed once Rust "polonius" borrow
                 // checker is added.
                 let (re, buf) = self.reassemblers[idx].as_mut().unwrap();
 
-                // Have received a "response", flow is finished.
-                if !re.tag.is_owner() {
-                    self.remove_flow(re.peer, re.tag.tag())
-                }
-
                 let msg = re.message(buf)?;
 
-                re.set_completion_order(self.ordering);
-                self.ordering += 1;
+                re.set_completion_order(self.now.increment());
                 let handle = re.take_handle(idx);
 
                 Ok(Some((msg, handle)))
@@ -271,7 +278,8 @@ impl Stack {
 
     /// Retrieves a message deferred from a previous [`receive`](Self::receive) callback.
     ///
-    /// If multiple match the earliest is returned
+    /// Messages are selected by `(source_eid, tag)`.
+    /// If multiple match the earliest is returned.
     pub fn get_deferred(&mut self, source: Eid, tag: Tag) -> Option<ReceiveHandle> {
         // Find the earliest matching entry
         self.done_reassemblers().filter(|(_i, re)| {
@@ -285,7 +293,6 @@ impl Stack {
     ///
     /// If multiple match the earliest is returned.
     /// Multiple cookies to match may be provided.
-    // TODO: maybe also give this a `source: Option<Eid>` filter argument.
     pub fn get_deferred_bycookie(&mut self, cookies: &[AppCookie]) -> Option<ReceiveHandle> {
         // Find the earliest matching entry
         self.done_reassemblers().filter(|(_i, re)| {
@@ -374,7 +381,7 @@ impl Stack {
         };
 
         let f = Flow {
-            timestamp: self.now_millis,
+            timestamp: self.now,
             cookie,
         };
         let r = self.flows.insert((peer, tag), f)
@@ -389,7 +396,7 @@ impl Stack {
         trace!("set flow {peer:?}");
         if let Some(tv) = tag {
             if let Some(f) = self.flows.get_mut(&(peer, tv)) {
-                f.timestamp = self.now_millis;
+                f.timestamp = self.now;
                 if f.cookie != cookie {
                     trace!("varying app for flow {f:?}");
                 }
@@ -441,6 +448,33 @@ impl<'a> core::fmt::Debug for MctpMessage<'a> {
     }
 }
 
+#[derive(Default, Debug, Ord, PartialOrd, PartialEq, Eq, Copy, Clone)]
+pub(crate) struct EventStamp {
+    // Ordering of members matters here for `Ord` derive
+
+    /// Monotonic real clock in milliseconds
+    pub clock: u64,
+    /// A counter to order events having the same realclock value
+    pub counter: u32,
+}
+
+impl EventStamp {
+    // Performs a pre-increment on the `counter`. `clock` is unmodified.
+    fn increment(&mut self) -> Self {
+        self.counter += 1;
+        Self {
+            clock: self.clock,
+            counter: self.counter,
+        }
+    }
+
+    fn max() -> Self {
+        Self {
+            clock: u64::MAX,
+            counter: u32::MAX,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

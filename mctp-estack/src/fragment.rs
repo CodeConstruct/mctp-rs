@@ -152,10 +152,13 @@ pub enum SendOutput<'p> {
 }
 
 impl<'f> SendOutput<'f> {
-    // For avoiding borrow problems. Can be removed once Rust polonius merges.
+    /// Returns an unborrowed copy for Complete or Error variants.
+    ///
+    /// Panics if called with a Packet variant (borrowed).
+    /// For avoiding borrow problems. Can be removed once Rust polonius merges.
     pub(crate) fn unborrowed<'x>(self) -> Option<SendOutput<'x>> {
         match self {
-            Self::Packet(_) => None,
+            Self::Packet(_) => unreachable!(),
             Self::Complete { tag, cookie } => Some(SendOutput::Complete { tag, cookie }),
             Self::Error { err, cookie } => Some(SendOutput::Error { err, cookie }),
         }

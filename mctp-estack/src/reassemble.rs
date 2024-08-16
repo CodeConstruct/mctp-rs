@@ -1,11 +1,9 @@
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
-use heapless::Vec;
+use mctp::MCTP_HEADER_VERSION_1;
 
-use mctp::{Eid, MsgType, Tag, MCTP_HEADER_VERSION_1, Error, Result, TagValue};
-
-use crate::{Header, MctpMessage, HEADER_LEN, AppCookie, ReceiveHandle};
+use crate::*;
 
 #[derive(Debug)]
 enum State {
@@ -22,9 +20,11 @@ pub(crate) struct Reassembler {
     pub tag: Tag,
     pub cookie: Option<AppCookie>,
     state: State,
-    // set true when the ReceiveHandle to this reassembler exists.
+    // Set true when the ReceiveHandle to this reassembler exists.
     handle_taken: bool,
-    pub completion_stamp: u64,
+    /// Time of the EOM packet being received, or
+    /// .max() before completion.
+    pub completion_stamp: EventStamp,
 }
 
 impl Reassembler {
@@ -52,7 +52,7 @@ impl Reassembler {
             state: State::New,
             cookie: None,
             handle_taken: false,
-            completion_stamp: u64::MAX,
+            completion_stamp: EventStamp::max(),
         })
     }
 
@@ -218,7 +218,7 @@ impl Reassembler {
         self.handle_taken = false;
     }
 
-    pub(crate) fn set_completion_order(&mut self, stamp: u64) {
+    pub(crate) fn set_completion_order(&mut self, stamp: EventStamp) {
         self.completion_stamp = stamp
     }
 }

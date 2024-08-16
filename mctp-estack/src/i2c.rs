@@ -85,11 +85,17 @@ impl MctpI2cEncap {
 
         let (i2chead, packet) = out.split_at_mut(MCTP_I2C_HEADER);
 
+        // Get a packet from the fragmenter
         let r = fragmenter.fragment(payload, packet);
-        let SendOutput::Packet(packet) = r else {
-            return r.unborrowed().unwrap();
+        let packet = match r {
+            SendOutput::Packet(packet) => packet,
+            // Just return on Complete or Error
+            | SendOutput::Complete { .. }
+            | SendOutput::Error { .. }
+            => return r.unborrowed().unwrap(),
         };
 
+        // Write the i2c header and return the whole packet
         let mut header = MctpI2cHeader::new();
         header.set_dest_slave_addr(i2c_dest);
         header.set_source_slave_addr(self.own_addr);
@@ -173,7 +179,7 @@ impl MctpI2cHandler {
             i2c_dest,
         } = &mut self.send_state
         else {
-            // called when not !send_ready()
+            debug_assert!(false, "called when not !send_ready()");
             return SendOutput::bare_failure(Error::Other);
         };
 
