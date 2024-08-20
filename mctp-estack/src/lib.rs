@@ -19,6 +19,7 @@ mod fragment;
 mod reassemble;
 mod i2c;
 mod serial;
+pub mod control;
 
 pub use crate::i2c::{MctpI2cEncap, MCTP_I2C_COMMAND_CODE, MctpI2cHandler};
 pub use crate::serial::MctpSerialHandler;
@@ -404,6 +405,17 @@ impl Stack {
         // OK unwrap: handle can't be invalid
         let (re, _buf) = self.reassemblers[handle.0].as_mut().unwrap();
         re.set_cookie(cookie)
+    }
+
+    /// Sets the local Endpoint ID.
+    pub fn set_eid(&mut self, eid: u8) -> Result<()> {
+        self.own_eid = Eid::new_normal(eid)?;
+        Ok(())
+    }
+
+    /// Retrieves  the local Endpoint ID.
+    pub fn eid(&self) -> Eid {
+        self.own_eid
     }
 
     /// Returns an index in to the `reassemblers` array
