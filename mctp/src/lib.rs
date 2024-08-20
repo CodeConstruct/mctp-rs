@@ -21,6 +21,19 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Eid(pub u8);
 
+impl Eid {
+    /// Construct a new normal EID.
+    ///
+    /// Reserved, Null, and Broadcast EIDs are rejected.
+    pub const fn new_normal(eid: u8) -> Result<Eid> {
+        if eid <= 7 || eid == 0xff {
+            Err(Error::BadArgument)
+        } else {
+            Ok(Eid(eid))
+        }
+    }
+}
+
 impl core::fmt::Display for Eid {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         self.0.fmt(fmt)
