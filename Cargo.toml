@@ -8,6 +8,7 @@ mctp-linux = { path = "mctp-linux", version = "0.1.0" }
 mctp-estack = { path = "mctp-estack", version = "0.1.0" }
 pldm = { path = "pldm", version = "0.1.0", default-features = false }
 pldm-fw = { path = "pldm-fw", version = "0.1.0", default-features = false }
+libmctp = "0.2"
 
 embedded-io-async = "0.6"
 embedded-io-adapters = "0.6"
