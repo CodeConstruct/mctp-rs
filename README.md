@@ -29,6 +29,11 @@ Component Crates
    handler. The stack handles message fragmentation/reassembly and tag tracking.
    At present routing is left for specific platform code to handle.
 
+ * [`standalone`](standalone) is a `mctp` trait implementation that includes its
+   own `mctp-estack` instance, allowing running a standalone MCTP-over-serial
+   stack against a Linux TTY (or any other pipe device). This can be used
+   for example with QEMU.
+
 Examples
 --------
 
@@ -52,3 +57,5 @@ There's a small example MCTP requester in
     let mut rx_buf = vec![0u8; 16];
     let (rx_buf, eid, tag) = ep.recv(&mut rx_buf)?;
 ```
+
+There are also some MCTP over serial examples in [standalone/examples](standalone/examples).
