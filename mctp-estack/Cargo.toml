@@ -9,3 +9,8 @@ mctp = { path = "../mctp", default-features = false }
 libmctp = "0.1"
 heapless = "0.8"
 log = "0.4"
+crc = "3"
+embedded-io-async = { workspace = true }
+
+[features]
+std = ["mctp/std"]
