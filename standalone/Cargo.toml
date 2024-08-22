@@ -1,0 +1,24 @@
+[package]
+name = "mctp-standalone"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mctp = { workspace = true, features = ["std"] }
+mctp-estack = { workspace = true }
+
+log = "0.4"
+embedded-io-async = { workspace = true }
+smol = "2.0"
+
+[dev-dependencies]
+anyhow = "1.0"
+argh = "0.1"
+simplelog = "0.12"
+embedded-io-adapters = { workspace = true, features = ["std", "futures-03"] }
+getrandom = "0.2"
+
+proptest = "1.0.0"
+
+[features]
+std = ["mctp/std", "embedded-io-adapters/std"]
