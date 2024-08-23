@@ -9,7 +9,7 @@
 //! or devices. A [`Stack`] handles MCTP message formatting and parsing, independent
 //! of any particular MCTP transport binding.
 
-#![no_std]
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
 
 #[allow(unused)]
