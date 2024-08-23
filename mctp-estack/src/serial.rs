@@ -90,6 +90,7 @@ impl MctpSerialHandler {
 
         loop {
             let mut b = 0u8;
+            // Read from serial
             match input.read(core::slice::from_mut(&mut b)).await {
                 Ok(1) => (),
                 Ok(0) => {
@@ -104,7 +105,7 @@ impl MctpSerialHandler {
                     return Err(Error::Other);
                 }
             }
-            if let Some(_p) = self.feed_frame_async(b) {
+            if let Some(_p) = self.feed_frame(b) {
                 // bleh polonius
                 // return Ok(p)
                 return Ok(&self.rxbuf[2..][..self.rxcount]);
@@ -112,7 +113,7 @@ impl MctpSerialHandler {
         }
     }
 
-    fn feed_frame_async(&mut self, b: u8) -> Option<&[u8]> {
+    fn feed_frame(&mut self, b: u8) -> Option<&[u8]> {
         trace!("serial read {b:02x}, state {:?}", self.rxpos);
 
         match self.rxpos {
@@ -204,6 +205,7 @@ impl MctpSerialHandler {
     where F: FnOnce(&mut Vec<u8, TXMSGBUF>) -> Option<()>,
     {
         // Fetch the message from input
+        self.send_message.clear();
         if fill_msg(&mut self.send_message).is_none() {
             return SendOutput::Error {
                 err: Error::Other,
@@ -225,6 +227,7 @@ impl MctpSerialHandler {
             let r = fragmenter.fragment(&self.send_message, &mut self.send_fragment);
             match r {
                 SendOutput::Packet(p) => {
+                    trace!("packet len {} msg {}", p.len(), self.send_message.len());
                     // Write to serial
                     if let Err(e) = Self::frame_to_serial(p, output).await {
                         trace!("Serial write error {e:?}");
@@ -278,4 +281,56 @@ impl MctpSerialHandler {
         }
         Ok(())
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+
+    use crate::*;
+    use proptest::prelude::*;
+    use embedded_io_adapters::futures_03::FromFutures;
+
+    fn start_log() {
+        let _ = env_logger::Builder::new()
+        .filter(None, log::LevelFilter::Trace)
+        .is_test(true).try_init();
+    }
+
+    async fn do_roundtrip(payload: &[u8]) {
+        let mut esc = vec![];
+        let mut s = FromFutures::new(&mut esc);
+        MctpSerialHandler::frame_to_serial(&payload, &mut s).await.unwrap();
+        debug!("{:02x?}", payload);
+        debug!("{:02x?}", esc);
+
+        let mut h = MctpSerialHandler::new();
+        let mut s = FromFutures::new(esc.as_slice());
+        let packet = h.read_frame_async(&mut s).await.unwrap();
+        debug_assert_eq!(payload, packet);
+    }
+
+    #[test]
+    fn roundtrip_cases() {
+        // Fixed testcases
+        start_log();
+        smol::block_on(async {
+            for payload in [
+                &[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36],
+            ] {
+                do_roundtrip(payload).await
+            }
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn roundtrip_escape(payload in proptest::collection::vec(0..255u8, 5..20)) {
+            start_log();
+
+            smol::block_on(do_roundtrip(&payload))
+
+        }
+    }
+
 }

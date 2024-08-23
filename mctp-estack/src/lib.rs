@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
 // #![warn(missing_docs)]
 
