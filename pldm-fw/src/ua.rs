@@ -378,14 +378,22 @@ where
 
                 sz_done += len;
                 let elapsed = chrono::Utc::now() - start;
-                let rate = elapsed / sz_done as i32; // time per byte
 
-                /* blocks may be repeated */
-                let sz_left = if sz_done <= sz { sz - sz_done } else { 0 };
+                let bps;
+                let remaining;
+                if elapsed.is_zero() || sz_done == 0 {
+                    bps = 0.;
+                    remaining = chrono::TimeDelta::days(1);
+                } else {
+                    let rate = elapsed / sz_done as i32; // time per byte
 
-                let remaining = rate * sz_left as i32;
-                let bps =
-                    1_000_000.0 / rate.num_microseconds().unwrap_or(0) as f32;
+                    /* blocks may be repeated */
+                    let sz_left = if sz_done <= sz { sz - sz_done } else { 0 };
+
+                    remaining = rate * sz_left as i32;
+                    // OK unwrap, overflows after 200k years
+                    bps = 1_000_000.0 / rate.num_microseconds().unwrap() as f32;
+                }
                 let percent = ((100 * (sz_done as u64)) / sz as u64) as u8;
 
                 let u = UpdateTransferProgress {
@@ -405,9 +413,14 @@ where
                 let elapsed = chrono::Utc::now() - start;
 
                 if res == 0 {
-                    let rate = elapsed / sz_done as i32;
-                    let bps = 1_000_000.0
-                        / rate.num_microseconds().unwrap_or(0) as f32;
+                    let rate = elapsed.checked_div(sz_done as i32)
+                        .and_then(|r| r.num_microseconds())
+                        .unwrap_or(0);
+                    let bps = if rate > 0 {
+                        1_000_000.0 / rate as f32
+                    } else {
+                        0.
+                    };
 
                     let u = UpdateTransferProgress {
                         cur_xfer: None,
