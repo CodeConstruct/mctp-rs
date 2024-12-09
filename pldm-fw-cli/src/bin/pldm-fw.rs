@@ -149,6 +149,10 @@ fn open_package(fname: String) -> anyhow::Result<pldm_fw::pkg::Package> {
 #[derive(FromArgs, Debug)]
 #[argh(description = "PLDM update utility")]
 struct Args {
+    #[argh(switch, short='d')]
+    /// debug logging
+    debug: bool,
+
     #[argh(subcommand)]
     command: Command,
 }
@@ -291,8 +295,14 @@ fn progress(p: &pldm_fw::UpdateTransferProgress)
 fn main() -> anyhow::Result<()> {
     let args: Args = argh::from_env();
 
+    let level = if args.debug {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Warn
+    };
+
     env_logger::Builder::new()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(level)
         .init();
 
     match args.command {
