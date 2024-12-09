@@ -480,9 +480,19 @@ impl DescriptorString {
 /// A device descriptor
 #[derive(Debug)]
 pub enum Descriptor {
+    /// PCI Vendor ID
     PciVid(u16),
+    /// IANA Enterprise ID
     Iana(u32),
+    /// UUID
     Uuid(uuid::Uuid),
+    /// PCI Device ID
+    PciDid(u16),
+    /// PCI Subsystem Vendor ID
+    PciSubVid(u16),
+    /// PCI Subsystem Device ID
+    PciSubDid(u16),
+    /// Vendor Defined
     Vendor {
         title: Option<DescriptorString>,
         #[cfg(feature = "alloc")]
@@ -530,6 +540,18 @@ impl Descriptor {
         })(buf)
     }
 
+    pub fn parse_pcidid(buf: &[u8]) -> VResult<&[u8], Self> {
+        map(le_u16, Self::PciDid)(buf)
+    }
+
+    pub fn parse_pcisubvid(buf: &[u8]) -> VResult<&[u8], Self> {
+        map(le_u16, Self::PciSubVid)(buf)
+    }
+
+    pub fn parse_pcisubdid(buf: &[u8]) -> VResult<&[u8], Self> {
+        map(le_u16, Self::PciSubDid)(buf)
+    }
+
     #[cfg(feature = "alloc")]
     fn new_vendor(t: Option<DescriptorString>, d: &[u8]) -> Option<Self> {
         Some(Self::Vendor {
@@ -565,8 +587,14 @@ impl Descriptor {
                 0x0000 => Self::parse_pcivid,
                 0x0001 => Self::parse_iana,
                 0x0002 => Self::parse_uuid,
+                0x0100 => Self::parse_pcidid,
+                0x0101 => Self::parse_pcisubvid,
+                0x0102 => Self::parse_pcisubdid,
                 0xffff => Self::parse_vendor,
-                _ => Self::parse_fail,
+                _ => {
+                    debug!("Unknown descriptor type 0x{typ:04x}");
+                    Self::parse_fail
+                },
             };
             map_parser(take(len), all_consuming(g))
         };
@@ -578,6 +606,9 @@ impl Descriptor {
             Self::PciVid(_) => 0x0000,
             Self::Iana(_) => 0x0001,
             Self::Uuid(_) => 0x0002,
+            Self::PciDid(_) => 0x0100,
+            Self::PciSubVid(_) => 0x0101,
+            Self::PciSubDid(_) => 0x0102,
             Self::Vendor { .. } => 0xffff,
         }
     }
@@ -588,6 +619,9 @@ impl Descriptor {
             Self::PciVid(v) => b.push_le16(*v),
             Self::Iana(v) => b.push_le32(*v),
             Self::Uuid(v) => b.push(v.as_bytes()),
+            Self::PciDid(v) => b.push_le16(*v),
+            Self::PciSubVid(v) => b.push_le16(*v),
+            Self::PciSubDid(v) => b.push_le16(*v),
             Self::Vendor { .. } => {
                 // TODO encode Vendor
                 debug!("Vendor descriptor write not implemented");
@@ -600,9 +634,12 @@ impl Descriptor {
 impl fmt::Display for Descriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PciVid(id) => write!(f, "pci-vid:{:04x}", id),
+            Self::PciVid(id) => write!(f, "pci-vendor:{:04x}", id),
             Self::Iana(id) => write!(f, "iana:{:08x}", id),
             Self::Uuid(id) => write!(f, "uuid:{}", id),
+            Self::PciDid(id) => write!(f, "pci-device:{:04x}", id),
+            Self::PciSubVid(id) => write!(f, "pci-subsys-vendor:{:04x}", id),
+            Self::PciSubDid(id) => write!(f, "pci-subsys-device:{:04x}", id),
             Self::Vendor { title, data } => {
                 match title {
                     Some(t) => write!(f, "vendor:{}", t)?,
@@ -628,6 +665,9 @@ impl PartialEq for Descriptor {
             (Self::Iana(s), Self::Iana(o)) => s == o,
             (Self::Uuid(s), Self::Uuid(o)) => s == o,
             (Self::PciVid(s), Self::PciVid(o)) => s == o,
+            (Self::PciDid(s), Self::PciDid(o)) => s == o,
+            (Self::PciSubVid(s), Self::PciSubVid(o)) => s == o,
+            (Self::PciSubDid(s), Self::PciSubDid(o)) => s == o,
             _ => false,
         }
     }
