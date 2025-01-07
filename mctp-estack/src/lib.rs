@@ -17,12 +17,10 @@ use mctp::{Eid, MsgType, TagValue, Tag, Error, Result};
 
 mod fragment;
 mod reassemble;
-mod i2c;
-mod serial;
+pub mod i2c;
+pub mod serial;
 pub mod control;
 
-pub use crate::i2c::{MctpI2cEncap, MCTP_I2C_COMMAND_CODE, MctpI2cHandler};
-pub use crate::serial::MctpSerialHandler;
 pub use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
 

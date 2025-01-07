@@ -10,7 +10,13 @@ use smol::future::FutureExt;
 use smol::Timer;
 
 use mctp::{Error, Result, Eid, MsgType, Tag, TagValue};
-use mctp_estack::{Stack, MctpSerialHandler, SendOutput, ReceiveHandle, MctpMessage};
+use mctp_estack::{
+    Stack,
+    SendOutput,
+    ReceiveHandle,
+    MctpMessage,
+    serial::MctpSerialHandler,
+};
 
 struct Inner<S: Read+Write> {
     mctp: Stack,
