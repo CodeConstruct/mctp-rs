@@ -95,14 +95,13 @@ impl MctpSerialHandler {
                 Ok(1) => (),
                 Ok(0) => {
                     trace!("Serial EOF");
-                    // TODO other error?
-                    return Err(Error::Other);
+                    return Err(Error::RxFailure);
                 }
                 Ok(2..) => unreachable!(),
                 Err(e) => {
                     trace!("Serial read error {e:?}");
                     // TODO or do we want a RxFailure?
-                    return Err(Error::Other);
+                    return Err(Error::RxFailure);
                 }
             }
             if let Some(_p) = self.feed_frame(b) {
