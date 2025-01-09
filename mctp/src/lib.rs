@@ -155,6 +155,8 @@ impl core::fmt::Display for Tag {
 pub enum Error {
     /// Failure in transmit path, typically transport-specific
     TxFailure,
+    /// Failure in receive path, typically transport-specific
+    RxFailure,
     /// Timed out waiting for the remote peer
     TimedOut,
     /// Bad argument
