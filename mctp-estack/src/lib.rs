@@ -29,6 +29,7 @@ mod fragment;
 mod reassemble;
 pub mod i2c;
 pub mod serial;
+pub mod usb;
 pub mod control;
 
 pub use fragment::{Fragmenter, SendOutput};
