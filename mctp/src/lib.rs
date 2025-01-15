@@ -313,7 +313,7 @@ pub trait RespChannel {
 /// A MCTP listener instance
 ///
 /// This will receive messages with TO=1. Platform-specific constructors
-/// will specify the MCTP message type to listen for.
+/// will specify the MCTP message parameters (eg, message type) to listen for.
 pub trait Listener {
     /// `RespChannel` type returned by this `Listener`
     type RespChannel<'a>: RespChannel where Self: 'a;
@@ -323,17 +323,12 @@ pub trait Listener {
     /// This receives a single MCTP message matched by the `Listener`.
     /// Returns a filled slice of `buf`, `RespChannel`, tag, and IC bit `bool`.
     ///
-    /// The returned `RespChannel` should be used to send responses to the request.
-    /// All messages returned will match the `Listener`'s [`mctp_type`](Self::mctp_type).
+    /// The returned `RespChannel` should be used to send responses to the
+    /// request.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, bool)>;
-
-    /// Return the MCTP type of the listener.
-    ///
-    /// Only messages of this type will be received.
-    fn mctp_type(&self) -> MsgType;
+    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>;
 }
 
 const MCTP_IC_MASK: u8 = 0x80;
