@@ -430,7 +430,7 @@ impl mctp::Listener for MctpLinuxListener {
     type RespChannel<'a> = MctpLinuxResp<'a> where Self: 'a;
 
     fn recv<'f>(&mut self, buf: &'f mut [u8])
-        -> Result<(&'f mut [u8], MctpLinuxResp<'_>, Tag, bool)> {
+        -> Result<(&'f mut [u8], MctpLinuxResp<'_>, Tag, MsgType, bool)> {
         let (sz, addr) = self.sock.recvfrom(buf)?;
         let src = Eid(addr.0.smctp_addr);
         let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
@@ -444,11 +444,7 @@ impl mctp::Listener for MctpLinuxListener {
             return Err(mctp::Error::InternalError)
         }
         let ep = MctpLinuxResp { eid: src, tv: tag.tag(), listener: self };
-        Ok((&mut buf[..sz], ep, tag, ic))
-    }
-
-    fn mctp_type(&self) -> MsgType {
-        self.typ
+        Ok((&mut buf[..sz], ep, tag, typ, ic))
     }
 }
 
