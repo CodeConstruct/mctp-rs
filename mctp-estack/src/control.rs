@@ -181,7 +181,7 @@ pub fn respond_error(
 pub fn mctp_control_rx_req<'f, 'l, L>(listener: &'l mut L, buf: &'f mut [u8])
     -> mctp::Result<(L::RespChannel<'l>, MctpControlMsg<'f>)> where L: Listener {
 
-    let (buf, ch, _tag, ic) = listener.recv(buf)?;
+    let (buf, ch, _tag, _typ, ic) = listener.recv(buf)?;
     if ic {
         return Err(Error::InvalidInput);
     }

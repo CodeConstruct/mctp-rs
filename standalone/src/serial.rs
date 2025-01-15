@@ -247,7 +247,7 @@ impl<S: Read+Write> mctp::Listener for MctpSerialListener<S> {
     type RespChannel<'a> = MctpSerialResp<'a, S> where Self: 'a;
 
     fn recv<'f>(&mut self, buf: &'f mut [u8])
-     -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, bool)>
+     -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>
     {
         loop {
             // Receive a whole message
@@ -257,6 +257,7 @@ impl<S: Read+Write> mctp::Listener for MctpSerialListener<S> {
             if msg.typ == self.typ && msg.tag.is_owner() {
                 let tag = msg.tag;
                 let ic = msg.ic;
+                let typ = msg.typ;
                 let b = buf.get_mut(..msg.payload.len()).ok_or(Error::NoSpace)?;
                 b.copy_from_slice(msg.payload);
                 let eid = msg.source;
@@ -266,15 +267,11 @@ impl<S: Read+Write> mctp::Listener for MctpSerialListener<S> {
                     tv: tag.tag(),
                     inner: &mut self.inner,
                 };
-                return Ok((b, resp, tag, ic));
+                return Ok((b, resp, tag, typ, ic));
             } else {
                 trace!("Discarding unmatched message {msg:?}");
                 self.inner.mctp.finished_receive(handle);
             }
         }
-    }
-
-    fn mctp_type(&self) -> MsgType {
-        self.typ
     }
 }
