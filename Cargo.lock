@@ -721,8 +721,9 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
 name = "libmctp"
-version = "0.1.0"
-source = "git+https://github.com/westerndigitalcorporation/libmctp#77fe95fe700808de2325970c463690dcbd425df0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d077261b65cfe16a3d490243354fbaec3f22e5bcad546d21394105ab836d1d0"
 dependencies = [
  "bitfield",
  "smbus-pec",
