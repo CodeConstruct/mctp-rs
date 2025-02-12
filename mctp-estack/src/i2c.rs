@@ -164,8 +164,13 @@ impl MctpI2cHandler {
     }
 
     /// Indicates whether data is pending to send
-    pub fn send_ready(&self) -> bool {
+    pub fn is_send_ready(&self) -> bool {
         matches!(self.send_state, HandlerSendState::Sending { .. })
+    }
+
+    /// Indicates whether the send queue is idle, ready for an application to enqueue a new message
+    pub fn is_send_idle(&self) -> bool {
+        matches!(self.send_state, HandlerSendState::Idle)
     }
 
     /// Fill a buffer with a packet to send over the i2c bus.
@@ -179,7 +184,7 @@ impl MctpI2cHandler {
             i2c_dest,
         } = &mut self.send_state
         else {
-            debug_assert!(false, "called when not !send_ready()");
+            debug_assert!(false, "called when not !is_send_ready()");
             return SendOutput::bare_failure(Error::Other);
         };
 
@@ -208,18 +213,13 @@ impl MctpI2cHandler {
         cookie
     }
 
-    /// Indicates whether the send queue is idle, ready for an application to enqueue a new message
-    pub fn send_idle(&self) -> bool {
-        matches!(self.send_state, HandlerSendState::Idle)
-    }
-
     /// Provides a MCTP message to send.
     ///
     /// The provided closure will fill out the message buffer, returning
     /// `Some(())` on success. If the closure fails it returns `None`, and
     /// `send_enqueue()` will return `mctp::Error::InvalidInput`.
     ///
-    /// `send_enqueue()` must only be called when `send_idle()` is true.
+    /// `send_enqueue()` must only be called when `is_send_idle()` is true.
     /// TODO `fill_msg` will take something that isn't a Vec.
     ///
     /// Note that the `heapless::Vec` for `fill_msg` is the version
@@ -239,7 +239,7 @@ impl MctpI2cHandler {
     where
         F: FnOnce(&mut Vec<u8, SENDBUF>) -> Option<()>,
     {
-        if !self.send_idle() {
+        if !self.is_send_idle() {
             return Err(Error::Other);
         }
         // debug_assert!(self.send_message.is_empty());
