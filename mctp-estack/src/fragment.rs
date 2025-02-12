@@ -141,6 +141,10 @@ impl Fragmenter {
         let used = max_total - rest.len();
         SendOutput::Packet(&mut out[..used])
     }
+
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
 }
 
 pub enum SendOutput<'p> {
