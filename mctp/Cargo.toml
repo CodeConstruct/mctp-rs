@@ -8,7 +8,9 @@ repository = "https://github.com/CodeConstruct/mctp-rs"
 categories = ["network-programming", "embedded", "hardware-support", "no-std"]
 
 [dependencies]
+defmt = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
 std = []
+defmt = ["dep:defmt"]

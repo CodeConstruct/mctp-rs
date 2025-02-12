@@ -19,6 +19,7 @@
 
 /// MCTP endpoint ID
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Eid(pub u8);
 
 impl Eid {
@@ -47,6 +48,7 @@ pub const MCTP_ADDR_NULL: Eid = Eid(0x00);
 
 /// MCTP Message Tag
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TagValue(pub u8);
 
 /// Tag Owner (TO) field; generally set in a request, clear in a response.
@@ -151,6 +153,7 @@ impl core::fmt::Display for Tag {
 /// new error type is needed, we can extend this enum to represent that
 /// failure mode, hence the `non_exhaustive`.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub enum Error {
     /// Failure in transmit path, typically transport-specific
