@@ -17,6 +17,8 @@
 //! Transport implementations can implement [`ReqChannel`] and [`Listener`] to
 //! communicate with a remote endpoint.
 
+use core::future::Future;
+
 /// MCTP endpoint ID
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -269,6 +271,35 @@ pub trait ReqChannel {
     fn remote_eid(&self) -> Eid;
 }
 
+#[allow(missing_docs)]
+/// Async equivalent of [`ReqChannel`]
+pub trait AsyncReqChannel {
+    fn send_vectored(
+        &mut self,
+        typ: MsgType,
+        integrity_check: bool,
+        bufs: &[&[u8]],
+    ) -> impl Future<Output = Result<()>>;
+
+    fn send(
+        &mut self,
+        typ: MsgType,
+        buf: &[u8],
+    ) -> impl Future<Output = Result<()>> {
+        async move {
+            self.send_vectored(typ, false, &[buf]).await
+        }
+    }
+
+    fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> impl Future<Output = Result<(&'f mut [u8], MsgType, Tag, bool)>>;
+
+    /// Return the remote Endpoint ID
+    fn remote_eid(&self) -> Eid;
+}
+
 /// A MCTP response channel
 ///
 /// This is returned from a [`Listener`] for incoming messages, is used to send responses.
@@ -313,6 +344,52 @@ pub trait RespChannel {
     fn req_channel(&self) -> Result<Self::ReqChannel>;
 }
 
+#[allow(missing_docs)]
+/// Async equivalent of [`RespChannel`]
+pub trait AsyncRespChannel {
+    /// `ReqChannel` type returned by [`req_channel`](Self::req_channel)
+    type ReqChannel<'a>: AsyncReqChannel where Self: 'a;
+
+    /// Send a slice of buffers to this endpoint, blocking.
+    ///
+    /// The slice of buffers will be sent as a single message
+    /// (as if concatenated). Accepting multiple buffers allows
+    /// higher level protocols to more easily append their own
+    /// protocol headers to a payload without needing extra
+    /// buffer allocations.
+    ///
+    /// The `integrity_check` argument is the MCTP header IC bit.
+    fn send_vectored(
+        &mut self,
+        typ: MsgType,
+        integrity_check: bool,
+        bufs: &[&[u8]],
+    ) -> impl Future<Output = Result<()>>;
+
+    /// Send a message to this endpoint, blocking.
+    ///
+    /// Transport implementations will typically use the trait provided method
+    /// that calls [`send_vectored`](Self::send_vectored).
+    ///
+    /// IC bit is unset.
+    fn send(
+        &mut self,
+        typ: MsgType,
+        buf: &[u8],
+    ) -> impl Future<Output = Result<()>> {
+        async move {
+            self.send_vectored(typ, false, &[buf]).await
+        }
+    }
+
+    /// Return the remote Endpoint ID
+    fn remote_eid(&self) -> Eid;
+
+    /// Constructs a new ReqChannel to the same MCTP endpoint as this RespChannel.
+    // TODO: should this be async?
+    fn req_channel(&self) -> Result<Self::ReqChannel<'_>>;
+}
+
 /// A MCTP listener instance
 ///
 /// This will receive messages with TO=1. Platform-specific constructors
@@ -332,6 +409,25 @@ pub trait Listener {
         &mut self,
         buf: &'f mut [u8],
     ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>;
+}
+
+#[allow(missing_docs)]
+/// Async equivalent of [`Listener`]
+pub trait AsyncListener {
+    /// `RespChannel` type returned by this `Listener`
+    type RespChannel<'a>: AsyncRespChannel where Self: 'a;
+
+    /// Blocking receive
+    ///
+    /// This receives a single MCTP message matched by the `Listener`.
+    /// Returns a filled slice of `buf`, `RespChannel`, tag, and IC bit `bool`.
+    ///
+    /// The returned `RespChannel` should be used to send responses to the
+    /// request.
+    fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> impl Future<Output = Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>>;
 }
 
 const MCTP_IC_MASK: u8 = 0x80;
