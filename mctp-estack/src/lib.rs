@@ -8,6 +8,15 @@
 //! This crate provides a MCTP stack that can be embedded in other programs
 //! or devices. A [`Stack`] handles MCTP message formatting and parsing, independent
 //! of any particular MCTP transport binding.
+//!
+//! A [`Router`] object lets programs use a [`Stack`] with
+//! MCTP transport binding links. Each "port" handles transmitting and receiving
+//! packets independently. Messages destined for the stack's own EID will
+//! be passed to applications.
+//!
+//! Applications can create [`router::RouterAsyncListener`] and [`router::RouterAsyncReqChannel`]
+//! instances to communicate over MCTP. Those implement the standard [`mctp` crate](mctp)
+//! async traits.
 
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
@@ -28,9 +37,11 @@ pub mod i2c;
 pub mod serial;
 pub mod usb;
 pub mod control;
+pub mod router;
 
 pub use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
+pub use router::Router;
 
 use crate::fmt::*;
 
@@ -416,6 +427,10 @@ impl Stack {
     /// Retrieves  the local Endpoint ID.
     pub fn eid(&self) -> Eid {
         self.own_eid
+    }
+
+    pub fn is_local_dest(&self, packet: &[u8]) -> bool {
+        Reassembler::is_local_dest(self.own_eid, packet)
     }
 
     /// Returns an index in to the `reassemblers` array
