@@ -18,9 +18,11 @@ pub mod i2c;
 pub mod serial;
 pub mod usb;
 pub mod control;
+pub mod routing;
 
 pub use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
+pub use routing::Router;
 
 use crate::fmt::*;
 
@@ -391,6 +393,10 @@ impl Stack {
     /// Retrieves  the local Endpoint ID.
     pub fn eid(&self) -> Eid {
         self.own_eid
+    }
+
+    pub fn is_local_dest(&self, packet: &[u8]) -> bool {
+        Reassembler::is_local_dest(self.own_eid, packet)
     }
 
     /// Returns an index in to the `reassemblers` array
