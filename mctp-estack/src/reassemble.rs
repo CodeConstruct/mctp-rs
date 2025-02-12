@@ -8,8 +8,15 @@ use crate::*;
 #[derive(Debug)]
 enum State {
     New,
-    Active { typ: MsgType, ic: bool, next_seq: u8 },
-    Done { typ: MsgType, ic: bool },
+    Active {
+        typ: MsgType,
+        ic: bool,
+        next_seq: u8,
+    },
+    Done {
+        typ: MsgType,
+        ic: bool,
+    },
     /// An error must be returned whenver Bad state is set,
     /// and the caller will dispose of the Reassembler.
     Bad,
@@ -17,10 +24,8 @@ enum State {
 
 #[derive(Debug)]
 pub(crate) struct Reassembler {
-    // Expected local EID
-    pub own_eid: Eid,
     // Destination EID of currently reassembled packets.
-    // Will usually match own_eid, but can also be MCTP_ADDR_NULL.
+    // Either Stack's own_eid, or MCTP_ADDR_NULL.
     pub dest_eid: Eid,
 
     pub peer: Eid,
@@ -37,12 +42,11 @@ impl Reassembler {
     pub fn new(own_eid: Eid, packet: &[u8], stamp: EventStamp) -> Result<Self> {
         let header = Self::header(packet)?;
 
-        let dest_eid = Eid(header.dest_endpoint_id());
-        // Allow NULL EID for physical addressing
-        if !(dest_eid == own_eid || dest_eid == mctp::MCTP_ADDR_NULL) {
+        if !Self::is_local_dest(own_eid, packet) {
             return Err(Error::InvalidInput);
         }
 
+        let dest_eid = Eid(header.dest_endpoint_id());
         let peer = Eid(header.source_endpoint_id());
         if peer == mctp::MCTP_ADDR_ANY {
             return Err(Error::InvalidInput);
@@ -56,11 +60,10 @@ impl Reassembler {
 
         if header.som() != 1 {
             // A reassembler always starts with a SOM
-            return Err(Error::InvalidInput)
+            return Err(Error::InvalidInput);
         }
 
         Ok(Self {
-            own_eid,
             dest_eid,
             peer,
             tag,
@@ -70,6 +73,20 @@ impl Reassembler {
             handle_taken: false,
             stamp,
         })
+    }
+
+    pub fn is_local_dest(own_eid: Eid, packet: &[u8]) -> bool {
+        let Ok(header) = Self::header(packet) else {
+            return false;
+        };
+
+        let dest_eid = Eid(header.dest_endpoint_id());
+        // Allow NULL EID for physical addressing
+        if !(dest_eid == own_eid || dest_eid == mctp::MCTP_ADDR_NULL) {
+            return false;
+        }
+
+        return true;
     }
 
     /// Receive a packet, returning a message when complete.
@@ -164,7 +181,7 @@ impl Reassembler {
 
         Ok(MctpMessage {
             source: self.peer,
-            dest: self.own_eid,
+            dest: self.dest_eid,
             tag: self.tag,
 
             typ,
@@ -192,32 +209,34 @@ impl Reassembler {
     /// Check timeouts
     ///
     /// Returns `None` if timed out, `Some(remaining)` otherwise.
-    pub fn check_expired(&self, now: &EventStamp,
+    pub fn check_expired(
+        &self,
+        now: &EventStamp,
         reassemble_timeout: u32,
-        done_timeout: u32) -> Option<u32> {
-
+        done_timeout: u32,
+    ) -> Option<u32> {
         let timeout = match self.state {
             State::Active { .. } => reassemble_timeout,
             State::Done { .. } if self.handle_taken => {
                 // If a handle is outstanding the reassembler
                 // can't be cleaned up.
                 return Some(u32::MAX);
-            },
+            }
             State::Done { .. } => done_timeout,
             State::New | State::Bad => {
                 // Bad ones should have been cleaned up, New ones should
                 // have moved to Active prior to check_expired().
                 debug_assert!(false, "Bad or new reassembler");
-                return None
+                return None;
             }
         };
         self.stamp.check_timeout(now, timeout)
     }
 
-    fn header(packet: &[u8]) -> Result<Header> {
+    pub(crate) fn header(packet: &[u8]) -> Result<Header> {
         if packet.len() < HEADER_LEN {
             warn!("bad len {:?}", packet);
-            return Err(Error::InvalidInput)
+            return Err(Error::InvalidInput);
         }
 
         // OK unwrap, size is fixed
@@ -229,7 +248,7 @@ impl Reassembler {
 
         if header.hdr_version() != MCTP_HEADER_VERSION_1 {
             warn!("wrong version 0x{:02x}", header.hdr_version());
-            return Err(Error::InvalidInput)
+            return Err(Error::InvalidInput);
         }
 
         Ok(header)
@@ -243,7 +262,7 @@ impl Reassembler {
     }
 
     pub(crate) fn is_done(&self) -> bool {
-        matches!(self.state, State::Done { .. } )
+        matches!(self.state, State::Done { .. })
     }
 
     pub fn handle_taken(&self) -> bool {
@@ -269,6 +288,9 @@ impl Reassembler {
 
 impl Drop for Reassembler {
     fn drop(&mut self) {
-        debug_assert!(!self.handle_taken, "Outstanding handle for dropped reassembler")
+        debug_assert!(
+            !self.handle_taken,
+            "Outstanding handle for dropped reassembler"
+        )
     }
 }
