@@ -750,6 +750,7 @@ name = "mctp-estack"
 version = "0.1.0"
 dependencies = [
  "crc",
+ "defmt",
  "embedded-io-adapters",
  "embedded-io-async",
  "env_logger",

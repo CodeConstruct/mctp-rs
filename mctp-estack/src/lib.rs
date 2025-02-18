@@ -12,9 +12,6 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
 
-#[allow(unused)]
-use log::{debug, error, info, trace, warn};
-
 /// Re-exported so that callers can use the same `heapless` version.
 ///
 /// TODO: will be replaced with something else, maybe `heapless::VecView` once
@@ -34,6 +31,8 @@ pub mod control;
 
 pub use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
+
+use crate::fmt::*;
 
 const FLOWS: usize = 8;
 
@@ -162,7 +161,7 @@ impl Stack {
                     REASSEMBLY_EXPIRY_TIMEOUT,
                     DEFERRED_TIMEOUT) {
                     None => {
-                        trace!("Expired {re:?}");
+                        trace!("Expired");
                         *r = None;
                     }
                     // Not expired, update the timeout
@@ -391,7 +390,7 @@ impl Stack {
     }
 
     pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) -> Result<()> {
-        trace!("cancel flow {source:?} {tv:?}");
+        trace!("cancel flow {}", source);
         let tag = Tag::Unowned(tv);
         let mut removed = false;
         for r in self.reassemblers.iter_mut() {
@@ -497,7 +496,7 @@ impl Stack {
     fn new_flow(&mut self, peer: Eid, fixedtag: Option<TagValue>, cookie: Option<AppCookie>) -> Result<TagValue> {
 
         let tag = fixedtag.or_else(|| self.alloc_tag(peer));
-        trace!("new flow tag {tag:?}");
+        trace!("new flow tag {}", peer);
 
         let Some(tag) = tag else {
             return Err(Error::TagUnavailable);
@@ -510,18 +509,18 @@ impl Stack {
         let r = self.flows.insert((peer, tag), f)
         .map_err(|_| Error::TagUnavailable)?;
         debug_assert!(r.is_none(), "Duplicate flow insertion");
-        trace!("new flow {peer:?} {tag:?}");
+        trace!("new flow {}", peer);
         Ok(tag)
     }
 
     /// Adds a flow tag, or updates the timestamp if it already exists
     fn set_flow(&mut self, peer: Eid, tag: Option<TagValue>, cookie: Option<AppCookie>) -> Result<TagValue> {
-        trace!("set flow {peer:?}");
+        trace!("set flow {}", peer);
         if let Some(tv) = tag {
             if let Some(f) = self.flows.get_mut(&(peer, tv)) {
                 f.stamp = self.now.increment();
                 if f.cookie != cookie {
-                    trace!("varying app for flow {f:?}");
+                    trace!("varying app for flow");
                 }
                 f.cookie = cookie;
                 return Ok(tv);
@@ -533,11 +532,10 @@ impl Stack {
 
     fn lookup_flow(&self, peer: Eid, tv: TagValue) -> Option<&Flow> {
         self.flows.get(&(peer, tv))
-        .inspect(|r| trace!("lookup flow {peer:?} {tv:?} got {r:?}"))
     }
 
     fn remove_flow(&mut self, peer: Eid, tv: TagValue) {
-        trace!("remove flow {peer:?} {tv:?}");
+        trace!("remove flow");
         let r = self.flows.remove(&(peer, tv));
 
         debug_assert!(r.is_some(), "non-existent remove_flow");
@@ -609,6 +607,18 @@ impl EventStamp {
 
         timeout.checked_sub(elapsed)
     }
+}
+
+#[cfg(not(any(feature = "log", feature = "defmt")))]
+compile_error!("Either log or defmt feature must be enabled");
+
+pub(crate) mod fmt {
+    #[cfg(feature = "defmt")]
+    pub use defmt::{debug, error, info, trace, warn};
+
+    #[cfg(feature = "log")]
+    pub use log::{debug, error, info, trace, warn};
+
 }
 
 #[cfg(test)]

@@ -16,7 +16,14 @@ use crate::{
     AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack,
 };
 use mctp::{Eid, MsgType, Tag, Error, Result};
-use log::{debug, trace};
+
+#[cfg(feature = "defmt")]
+#[allow(unused)]
+use defmt::{debug, error, info, trace, warn};
+
+#[cfg(feature = "log")]
+#[allow(unused)]
+use log::{debug, error, info, trace, warn};
 
 const HDR_LEN: usize = 4;
 const MCTP_USB_MTU_MAX: usize = u8::MAX as usize - HDR_LEN;
@@ -54,20 +61,25 @@ impl MctpUsbHandler {
             .ok_or(Error::RxFailure)?;
 
         if hdr[0..2] != [0x1a, 0xb4] {
-            debug!("mismatch: {:?}", &hdr[0..2]);
+            debug!("mismatch: {:x} {:x}", hdr[0], hdr[1]);
             return Err(Error::RxFailure);
         }
 
-        let len = (hdr[3] as usize).checked_sub(HDR_LEN)
-            .ok_or(Error::RxFailure)?;
+        let Some(len) = (hdr[3] as usize).checked_sub(HDR_LEN) else {
+            trace!("Mismatch mctp usb len");
+            return Err(Error::RxFailure);
+        };
 
-        data.split_at_checked(len).ok_or(Error::RxFailure)
+        let Some(data) = data.split_at_checked(len) else {
+            trace!("Short mctp usb packet");
+            return Err(Error::RxFailure);
+        };
+        Ok(data)
     }
 
     pub fn receive<'f>(xfer: &[u8], mctp: &'f mut Stack)
     -> Result<Option<(MctpMessage<'f>, ReceiveHandle)>> {
-
-        debug!("xfer: {xfer:02x?}");
+        // debug!("xfer: {xfer:02x?}");
         // TODO remainder in case of multiple MCTP per USB packet
         let (data, _rem) = Self::decode(xfer)?;
         mctp.receive(data)
@@ -130,8 +142,8 @@ impl MctpUsbHandler {
             }
             let slice = &self.tx_xfer[0..len+4];
             let res = xfer.send_xfer(slice);
-            if let Err(e) = res {
-                trace!("USB transfer error {e:?}");
+            if let Err(_e) = res {
+                trace!("USB transfer error");
                 return SendOutput::Error {
                     err: Error::TxFailure,
                     cookie: None,

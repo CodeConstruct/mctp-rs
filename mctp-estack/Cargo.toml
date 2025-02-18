@@ -11,12 +11,16 @@ categories = ["network-programming", "embedded", "hardware-support", "no-std"]
 mctp = { path = "../mctp", default-features = false }
 libmctp = { workspace = true }
 heapless = "0.8"
-log = "0.4"
+log = { version = "0.4", optional = true }
 crc = "3"
 embedded-io-async = { workspace = true }
+defmt = { workspace = true, optional = true }
 
 [features]
+default = ["log"]
 std = ["mctp/std"]
+log = ["dep:log"]
+defmt = ["mctp/defmt", "dep:defmt" ]
 
 [dev-dependencies]
 proptest = "1.0.0"
