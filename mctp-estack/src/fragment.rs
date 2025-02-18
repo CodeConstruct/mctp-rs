@@ -1,5 +1,5 @@
 #[allow(unused)]
-use log::{debug, error, info, trace, warn};
+use crate::fmt::{debug, error, info, trace, warn};
 
 use mctp::{Eid, Error, MsgType, Result, Tag, MCTP_HEADER_VERSION_1};
 

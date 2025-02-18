@@ -1,5 +1,5 @@
 #[allow(unused)]
-use log::{debug, error, info, trace, warn};
+use crate::fmt::{debug, error, info, trace, warn};
 
 use mctp::MCTP_HEADER_VERSION_1;
 
@@ -241,8 +241,8 @@ impl Reassembler {
 
         // OK unwrap, size is fixed
         let hd = packet[..HEADER_LEN].try_into().unwrap();
-        let header = Header::new_from_buf(hd, 1).map_err(|e| {
-            warn!("bad header {e:?}");
+        let header = Header::new_from_buf(hd, 1).map_err(|_e| {
+            warn!("bad header");
             Error::InvalidInput
         })?;
 

@@ -1,7 +1,7 @@
 //! A MCTP serial transport binding, DSP0253
 
 #[allow(unused)]
-use log::{debug, error, info, trace, warn};
+use crate::fmt::{debug, error, info, trace, warn};
 
 use crate::{
     AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack,
@@ -98,8 +98,8 @@ impl MctpSerialHandler {
                     return Err(Error::RxFailure);
                 }
                 Ok(2..) => unreachable!(),
-                Err(e) => {
-                    trace!("Serial read error {e:?}");
+                Err(_e) => {
+                    trace!("Serial read error");
                     // TODO or do we want a RxFailure?
                     return Err(Error::RxFailure);
                 }
@@ -113,7 +113,7 @@ impl MctpSerialHandler {
     }
 
     fn feed_frame(&mut self, b: u8) -> Option<&[u8]> {
-        trace!("serial read {b:02x}, state {:?}", self.rxpos);
+        trace!("serial read {:02x}", b);
 
         match self.rxpos {
             Pos::FrameSearch => {
@@ -228,8 +228,8 @@ impl MctpSerialHandler {
                 SendOutput::Packet(p) => {
                     trace!("packet len {} msg {}", p.len(), self.send_message.len());
                     // Write to serial
-                    if let Err(e) = Self::frame_to_serial(p, output).await {
-                        trace!("Serial write error {e:?}");
+                    if let Err(_e) = Self::frame_to_serial(p, output).await {
+                        trace!("Serial write error");
                         return SendOutput::Error {
                             err: Error::TxFailure,
                             cookie: None,
@@ -251,8 +251,6 @@ impl MctpSerialHandler {
         cs.update(&start[1..]);
         cs.update(p);
         let cs = !cs.finalize();
-
-        trace!("frame_to_serial {p:02x?}");
 
         output.write_all(&start).await?;
         Self::write_escaped(p, output).await?;
@@ -287,6 +285,7 @@ impl MctpSerialHandler {
 mod tests {
 
     use crate::*;
+    use crate::serial::*;
     use proptest::prelude::*;
     use embedded_io_adapters::futures_03::FromFutures;
 
