@@ -107,7 +107,7 @@ impl<S: Read+Write> Inner<S> {
             if let Some((_msg, handle)) = r {
                 // Tricks here for loops+lifetimes.
                 // Could return (msg, handle) directly once Rust polonius merged.
-                let msg = self.mctp.fetch_message(&handle).unwrap();
+                let msg = self.mctp.fetch_message(&handle);
                 return Ok((msg, handle))
             }
         }
