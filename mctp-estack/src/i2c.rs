@@ -6,7 +6,7 @@
 //! MCTP over I2C transport binding
 
 #[allow(unused)]
-use log::{debug, error, info, trace, warn};
+use crate::fmt::{debug, error, info, trace, warn};
 
 use crate::{
     AppCookie, Fragmenter, MctpMessage, ReceiveHandle, SendOutput, Stack,
