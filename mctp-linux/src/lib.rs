@@ -427,7 +427,7 @@ impl MctpLinuxListener {
 
 impl mctp::Listener for MctpLinuxListener {
 
-    type RespChannel<'a> = MctpLinuxResp<'a> where Self: 'a;
+    type RespChannel<'a> = MctpLinuxResp<'a>;
 
     fn recv<'f>(&mut self, buf: &'f mut [u8])
         -> Result<(&'f mut [u8], MctpLinuxResp<'_>, Tag, MsgType, bool)> {
