@@ -62,7 +62,7 @@ fn main() -> Result<()> {
     loop {
         let r = l.recv(&mut buf);
         match r {
-            Ok((buf, mut resp, tag, _ic)) => {
+            Ok((buf, mut resp, tag, _typ, _ic)) => {
                 info!("Received OK {buf:02x?} tag {tag}");
                 let r = resp.send(typ, buf);
                 if let Err(e) = r {
