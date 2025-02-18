@@ -306,11 +306,10 @@ impl Stack {
 
     /// Retrieves a MCTP message for a receive handle.
     ///
-    /// The message is provided to a closure. If an error occurs in
-    // `fetch_message()` the error will be provided to the closure. This allows
-    /// using a closure that takes ownership of non-copyable objects.
+    /// The message is provided to a closure.
+    /// This allows using a closure that takes ownership of non-copyable objects.
     pub fn fetch_message_with<F>(&mut self, handle: ReceiveHandle, f: F)
-        where F: FnOnce(Result<MctpMessage>)
+        where F: FnOnce(MctpMessage)
     {
         let m = self.fetch_message(&handle);
         f(m);
@@ -320,14 +319,17 @@ impl Stack {
     }
 
     /// Provides a message previously returned from [`receive`](Self::receive)
-    pub fn fetch_message(&mut self, handle: &ReceiveHandle) -> Result<MctpMessage> {
-        if let Some(Some((re, buf))) = self.reassemblers.get_mut(handle.0) {
-            re.message(buf)
-        } else {
-            debug!("message() for bad handle {}", handle.0);
-            debug_assert!(false);
-            Err(Error::BadArgument)
-        }
+    pub fn fetch_message(&mut self, handle: &ReceiveHandle) -> MctpMessage {
+        let Some(Some((re, buf))) = self.reassemblers.get_mut(handle.0) else {
+            // ReceiveHandle can only be constructed when
+            // a completed message exists, so this should be impossible.
+            unreachable!("Bad ReceiveHandle");
+        };
+
+        let Ok(msg) = re.message(buf) else {
+            unreachable!("Bad ReceiveHandle");
+        };
+        msg
     }
 
     /// Returns a handle to the `Stack` and complete the message
@@ -339,8 +341,7 @@ impl Stack {
                 return;
             }
         }
-        debug!("finished_receive for bad handle");
-        debug_assert!(false);
+        unreachable!("Bad ReceiveHandle");
     }
 
     /// Returns a handle to the `Stack`, the message will be kept (until timeouts)
