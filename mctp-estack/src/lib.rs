@@ -53,7 +53,8 @@ pub const DEFERRED_TIMEOUT: u32 = 6000;
 
 #[derive(Debug)]
 struct Flow {
-    stamp: EventStamp,
+    // preallocated flows have None expiry
+    expiry_stamp: Option<EventStamp>,
     cookie: Option<AppCookie>,
 }
 
@@ -173,9 +174,11 @@ impl Stack {
         // Expire reply-packet flows
         let mut to_remove = Vec::<(Eid, TagValue), FLOWS>::new();
         for (k, flow) in &self.flows {
-            match flow.stamp.check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT) {
-                None => to_remove.push(*k).unwrap(),
-                Some(t) => timeout = timeout.min(t),
+            if let Some(stamp) = flow.expiry_stamp {
+                match stamp.check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT) {
+                    None => to_remove.push(*k).unwrap(),
+                    Some(t) => timeout = timeout.min(t),
+                }
             }
         }
         for (peer, tv) in to_remove {
@@ -202,6 +205,7 @@ impl Stack {
         dest: Eid,
         typ: MsgType,
         tag: Option<Tag>,
+        tag_expires: bool,
         ic: bool,
         mtu: Option<usize>,
         cookie: Option<AppCookie>,
@@ -211,14 +215,12 @@ impl Stack {
         let tag = match tag {
             None => {
                 // allocate a tag
-                Tag::Owned(self.set_flow(dest, None, cookie)?)
+                Tag::Owned(self.set_flow(dest, None, tag_expires, cookie)?)
             }
-            Some(Tag::Owned(_tv)) => {
-                // Preallocated tags are not yet supported. Flow cleanup handling
-                // doesn't yet handle preallocated tags, and it's untested.
-                return Err(mctp::Error::Unsupported)
-                // self.set_flow(dest, Some(tv), cookie)?;
-                // Tag::Owned(tv)
+            Some(Tag::Owned(tv)) => {
+                let check = self.set_flow(dest, Some(tv), tag_expires, cookie)?;
+                debug_assert!(check == tv);
+                Tag::Owned(tv)
             }
             Some(Tag::Unowned(tv)) => Tag::Unowned(tv),
         };
@@ -389,32 +391,6 @@ impl Stack {
         .map(|(i, re)| re.take_handle(i))
     }
 
-    pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) -> Result<()> {
-        trace!("cancel flow {}", source);
-        let tag = Tag::Unowned(tv);
-        let mut removed = false;
-        for r in self.reassemblers.iter_mut() {
-            if let Some((re, _buf)) = r.as_mut() {
-                if re.tag == tag && re.peer == source {
-                    if re.handle_taken() {
-                        trace!("Outstanding handle");
-                        return Err(Error::BadArgument);
-                    } else {
-                        *r = None;
-                        removed = true;
-                    }
-                }
-            }
-        }
-
-        trace!("removed flow");
-        let r = self.flows.remove(&(source, tv));
-        if removed {
-            debug_assert!(r.is_some());
-        }
-        Ok(())
-    }
-
     /// Returns an iterator over completed reassemblers.
     ///
     /// The Item is (enumerate_index, reassembler)
@@ -493,7 +469,9 @@ impl Stack {
     ///
     /// A tag will be allocated if fixedtag = None
     /// Returns [`Error::TagUnavailable`] if all tags or flows are used.
-    fn new_flow(&mut self, peer: Eid, fixedtag: Option<TagValue>, cookie: Option<AppCookie>) -> Result<TagValue> {
+    fn new_flow(&mut self, peer: Eid, fixedtag: Option<TagValue>,
+        flow_expires: bool,
+        cookie: Option<AppCookie>) -> Result<TagValue> {
 
         let tag = fixedtag.or_else(|| self.alloc_tag(peer));
         trace!("new flow tag {}", peer);
@@ -502,8 +480,10 @@ impl Stack {
             return Err(Error::TagUnavailable);
         };
 
+        let expiry_stamp = flow_expires.then(|| self.now.increment());
+
         let f = Flow {
-            stamp: self.now.increment(),
+            expiry_stamp,
             cookie,
         };
         let r = self.flows.insert((peer, tag), f)
@@ -513,21 +493,28 @@ impl Stack {
         Ok(tag)
     }
 
-    /// Adds a flow tag, or updates the timestamp if it already exists
-    fn set_flow(&mut self, peer: Eid, tag: Option<TagValue>, cookie: Option<AppCookie>) -> Result<TagValue> {
+    /// Creates a new tag, or ensures that an existing one matches.
+    fn set_flow(&mut self, peer: Eid, tag: Option<TagValue>,
+        flow_expires: bool, cookie: Option<AppCookie>) -> Result<TagValue> {
         trace!("set flow {}", peer);
+
         if let Some(tv) = tag {
             if let Some(f) = self.flows.get_mut(&(peer, tv)) {
-                f.stamp = self.now.increment();
+                if f.expiry_stamp.is_some() {
+                    // An Owned tag given to start_send() must have been initially created
+                    // tag_expires=false.
+                    trace!("Can't specify an owned tag that didn't have tag_expires=false");
+                    return Err(Error::BadArgument);
+                }
+
                 if f.cookie != cookie {
                     trace!("varying app for flow");
                 }
-                f.cookie = cookie;
                 return Ok(tv);
             }
         }
 
-        self.new_flow(peer, tag, cookie)
+        self.new_flow(peer, tag, flow_expires, cookie)
     }
 
     fn lookup_flow(&self, peer: Eid, tv: TagValue) -> Option<&Flow> {
@@ -540,6 +527,33 @@ impl Stack {
 
         debug_assert!(r.is_some(), "non-existent remove_flow");
     }
+
+    pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) -> Result<()> {
+        trace!("cancel flow {}", source);
+        let tag = Tag::Unowned(tv);
+        let mut removed = false;
+        for r in self.reassemblers.iter_mut() {
+            if let Some((re, _buf)) = r.as_mut() {
+                if re.tag == tag && re.peer == source {
+                    if re.handle_taken() {
+                        trace!("Outstanding handle");
+                        return Err(Error::BadArgument);
+                    } else {
+                        *r = None;
+                        removed = true;
+                    }
+                }
+            }
+        }
+
+        trace!("removed flow");
+        let r = self.flows.remove(&(source, tv));
+        if removed {
+            debug_assert!(r.is_some());
+        }
+        Ok(())
+    }
+
 }
 
 // For received reassembled messages
