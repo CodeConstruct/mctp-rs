@@ -498,6 +498,7 @@ impl<'r> Router<'r> {
         eid: Eid,
         typ: MsgType,
         tag: Option<Tag>,
+        tag_expires: bool,
         integrity_check: bool,
         buf: &[&[u8]],
         cookie: Option<AppCookie>,
@@ -515,21 +516,31 @@ impl<'r> Router<'r> {
         };
 
         let mtu = top.mtu;
-        let mut fragmenter = inner.stack.start_send(eid, typ, tag, integrity_check,
-                Some(mtu), cookie)?;
+        let mut fragmenter = inner.stack.start_send(eid, typ, tag, tag_expires,
+            integrity_check, Some(mtu), cookie)?;
         // release to allow other ports to continue work
         drop(inner);
 
         top.send_message(&mut fragmenter, buf).await
     }
 
+    /// Only needs to be called for tags allocated with tag_expires=false
+    ///
+    /// Must only be called for owned tags.
+    async fn app_release_tag(&self, eid: Eid, tag: Tag) {
+        let Tag::Owned(tv) = tag else {
+            unreachable!()
+        };
+        let mut inner = self.inner.lock().await;
+
+        if let Err(e) = inner.stack.cancel_flow(eid, tv) {
+            warn!("flow cancel failed {}", e);
+        }
+    }
+
     /// Create a `AsyncReqChannel` instance
     pub fn req(&'r self, eid: Eid) -> RouterAsyncReqChannel<'r> {
-        RouterAsyncReqChannel {
-            eid,
-            sent_tag: None,
-            router: &self,
-        }
+        RouterAsyncReqChannel::new(eid, self)
     }
 
     /// Create a `AsyncListener` instance
@@ -546,6 +557,49 @@ pub struct RouterAsyncReqChannel<'r> {
     eid: Eid,
     sent_tag: Option<Tag>,
     router: &'r Router<'r>,
+    tag_expires: bool,
+}
+
+impl<'r> RouterAsyncReqChannel<'r> {
+    fn new(eid: Eid, router: &'r Router<'r>) -> Self {
+        RouterAsyncReqChannel {
+            eid,
+            sent_tag: None,
+            tag_expires: true,
+            router: router,
+        }
+    }
+
+    /// Set the tag to not expire. That allows multiple calls to `send()`.
+    ///
+    /// `async_drop` must be called prior to drop.
+    pub fn tag_noexpire(&mut self) -> Result<()> {
+        if self.sent_tag.is_some() {
+            return Err(Error::BadArgument)
+        }
+        self.tag_expires = false;
+        Ok(())
+    }
+
+    /// This must be called prior to drop whenever `tag_noexpire()` is used.
+    ///
+    /// A workaround until async drop is implemented in Rust itself.
+    /// https://github.com/rust-lang/rust/issues/126482
+    pub async fn async_drop(self) {
+        if !self.tag_expires {
+            if let Some(tag) = self.sent_tag {
+                self.router.app_release_tag(self.eid, tag).await;
+            }
+        }
+    }
+}
+
+impl Drop for RouterAsyncReqChannel<'_> {
+    fn drop(&mut self) {
+        if !self.tag_expires && self.sent_tag.is_some() {
+            warn!("Didn't call async_drop()");
+        }
+    }
 }
 
 impl<'r> mctp::AsyncReqChannel for RouterAsyncReqChannel<'r> {
@@ -554,15 +608,18 @@ impl<'r> mctp::AsyncReqChannel for RouterAsyncReqChannel<'r> {
     /// This will async block until the message has been enqueued to the physical port.
     /// Note that it will return failure immediately if the MCTP stack has no available tags,
     /// that behaviour may need changing in future.
+    ///
+    /// Subsequent calls will fail unless tag_noexpire() was performed.
     async fn send_vectored(
         &mut self,
         typ: MsgType,
         integrity_check: bool,
         bufs: &[&[u8]],
     ) -> Result<()> {
-        // Pass a None tag, get an Owned one allocated.
-        let tag = None;
-        let tag = self.router.app_send_message(self.eid, typ, tag, integrity_check, bufs, None).await?;
+        // For the first call, we pass a None tag, get an Owned one allocated.
+        // Subsequent calls will fail unless tag_noexpire() was performed.
+        let tag = self.router.app_send_message(self.eid, typ, self.sent_tag, self.tag_expires,
+            integrity_check, bufs, None).await?;
         debug_assert!(matches!(tag, Tag::Owned(_)));
         self.sent_tag = Some(tag);
         Ok(())
@@ -609,7 +666,7 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
         bufs: &[&[u8]],
     ) -> Result<()> {
         let tag = Some(Tag::Unowned(self.tv));
-        self.router.app_send_message(self.eid, typ, tag, integrity_check, bufs, None).await?;
+        self.router.app_send_message(self.eid, typ, tag, false, integrity_check, bufs, None).await?;
         Ok(())
     }
 
@@ -618,11 +675,7 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
     }
 
     fn req_channel(&self) -> mctp::Result<Self::ReqChannel<'_>> {
-        Ok(RouterAsyncReqChannel {
-            eid: self.eid,
-            sent_tag: None,
-            router: self.router,
-        })
+        Ok(RouterAsyncReqChannel::new(self.eid, self.router))
     }
 }
 
