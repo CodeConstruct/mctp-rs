@@ -110,6 +110,7 @@ impl MctpUsbHandler {
             eid,
             typ,
             tag,
+            true,
             ic,
             Some(MCTP_USB_MTU_MAX),
             cookie
