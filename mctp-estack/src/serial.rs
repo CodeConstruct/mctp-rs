@@ -212,7 +212,7 @@ impl MctpSerialHandler {
             }
         }
 
-        let mut fragmenter = match mctp.start_send(eid, typ, tag, ic, Some(MCTP_SERIAL_MAXMTU), cookie) {
+        let mut fragmenter = match mctp.start_send(eid, typ, tag, true, ic, Some(MCTP_SERIAL_MAXMTU), cookie) {
             Ok(f) => f,
             Err(err) => {
                 return SendOutput::Error {

@@ -252,7 +252,7 @@ impl MctpI2cHandler {
         fill_msg(self.send_message).ok_or(Error::InvalidInput)?;
 
         let fragmenter =
-            mctp.start_send(eid, typ, tag, ic, Some(MCTP_I2C_MAXMTU), cookie)?;
+            mctp.start_send(eid, typ, tag, true, ic, Some(MCTP_I2C_MAXMTU), cookie)?;
         self.send_state = HandlerSendState::Sending {
             fragmenter,
             i2c_dest,
