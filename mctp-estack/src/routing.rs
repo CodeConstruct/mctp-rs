@@ -60,6 +60,7 @@ impl PktBuf {
     fn set(&mut self, data: &[u8]) -> Result<()> {
         let dst = self.data.get_mut(..data.len()).ok_or(Error::NoSpace)?;
         dst.copy_from_slice(data);
+        self.len = data.len();
         Ok(())
     }
 }
