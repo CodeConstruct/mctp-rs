@@ -102,12 +102,9 @@ impl Fragmenter {
 
         // Reserve header space, the remaining buffer keeps being
         // updated in `rest`
-        let (h, mut rest) = out.split_at_mut(HEADER_LEN);
-
-        if rest.len() > self.mtu {
-            rest = &mut rest[..self.mtu];
-        }
-        let max_total = HEADER_LEN + rest.len();
+        let max_total = out.len().min(self.mtu);
+        // let out = &mut out[..max_total];
+        let (h, mut rest) = out[..max_total].split_at_mut(HEADER_LEN);
 
         // Append type byte
         if self.first {
