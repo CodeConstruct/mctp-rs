@@ -15,11 +15,12 @@ use defmt::{debug, error, info, trace, warn};
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
-const TX_MSG_SIZE: usize = 1024;
-const MCTP_USB_MTU_MAX: usize = u8::MAX as usize;
+const HDR_LEN: usize = 4;
+const MCTP_USB_MTU_MAX: usize = u8::MAX as usize - HDR_LEN;
 const TX_XFER_SIZE: usize = 512;
 
-const HDR_LEN: usize = 4;
+// Arbitrary limit
+const TX_MSG_SIZE: usize = 1024;
 
 pub struct MctpUsbHandler {
     tx_msg: Vec<u8, TX_MSG_SIZE>,

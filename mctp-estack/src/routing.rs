@@ -9,7 +9,7 @@ use core::future::{poll_fn, Future};
 use core::pin::pin;
 
 use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
-use crate::{AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack};
+use crate::{AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, Header};
 use crate::reassemble::Reassembler;
 
 use embassy_sync::zerocopy_channel::{Channel, Sender, Receiver};
@@ -20,8 +20,8 @@ use heapless::Vec;
 const MAX_LISTENERS: usize = 6;
 const MAX_RECEIVERS: usize = 20;
 
-// TODO sizing
-const MAX_MTU: usize = 255-4;
+// TODO sizing. These are both arbitrary.
+const MAX_MTU: usize = 255;
 const MAX_MESSAGE: usize = 1024;
 
 // TODO: feature to configure mutex?
@@ -58,10 +58,18 @@ impl PktBuf {
     }
 
     fn set(&mut self, data: &[u8]) -> Result<()> {
+        debug_assert!(Reassembler::header(data).is_ok());
         let dst = self.data.get_mut(..data.len()).ok_or(Error::NoSpace)?;
         dst.copy_from_slice(data);
         self.len = data.len();
         Ok(())
+    }
+
+    /// Retreive the MCTP EID
+    ///
+    /// May only be called on a complete valid MCTP packet.
+    fn mctp_header(&self) -> Header{
+        Reassembler::header(self).expect("Packet is valid MCTP")
     }
 }
 
@@ -93,7 +101,10 @@ impl<'a> PortTop<'a> {
     ///
     /// Do not call with locks held.
     /// May block waiting for a port queue to flush.
+    /// Packet must be a valid MCTP packet, may panic otherwise.
     async fn forward_packet(&self, pkt: &[u8]) -> Result<()> {
+        debug_assert!(Reassembler::header(pkt).is_ok());
+
         let mut sender = self.packets.lock().await;
         // Note: must not await while holding `sender`
 
@@ -121,6 +132,7 @@ impl<'a> PortTop<'a> {
     /// Do not call with locks held.
     /// May block waiting for a port queue to flush.
     async fn send_message(&self, fragmenter: &mut Fragmenter, pkt: &[&[u8]]) -> Result<Tag> {
+        trace!("send_message");
         let mut msg;
         let payload = if pkt.len() == 1 {
             pkt[0]
@@ -138,8 +150,9 @@ impl<'a> PortTop<'a> {
 
         loop {
             let mut sender = self.packets.lock().await;
-            let qpkt = sender.send().await;
 
+            let qpkt = sender.send().await;
+            qpkt.len = 0;
             let r = fragmenter.fragment(payload, &mut qpkt.data);
             match r {
                 SendOutput::Packet(p) => {
@@ -171,10 +184,22 @@ pub struct PortBottom<'a> {
 impl<'a> PortBottom<'a> {
     /// Receive a packet to send for this port.
     ///
-    /// Must call `receive_done()` after each `receive()` call.
-    pub async fn receive(&mut self) -> &[u8]
+    /// Must call `receive_done()` to consume the packet and advance the queue.
+    /// `receive()` may be called multiple times to peek at the same packet.
+    /// Also returns the destination EID.
+    pub async fn receive(&mut self) -> (&[u8], Eid)
     {
-        self.packets.receive().await
+        if self.packets.len() > 1 {
+            trace!("packets avail {}", self.packets.len());
+        }
+        let pkt = self.packets.receive().await;
+        (pkt, Eid(pkt.mctp_header().dest_endpoint_id()))
+    }
+
+    pub fn try_receive(&mut self) -> Option<&[u8]>
+    {
+        trace!("packets avail {} try", self.packets.len());
+        self.packets.try_receive().map(|p| &**p)
     }
 
     pub fn receive_done(&mut self) {
@@ -272,53 +297,53 @@ impl<'r> Router<'r> {
         }
     }
 
-    pub async fn receive(&self, pkt: &[u8]) {
+    pub async fn receive(&self, pkt: &[u8]) -> Option<Eid> {
         let mut inner = self.inner.lock().await;
 
-        trace!("receive");
+        let Ok(header) = Reassembler::header(pkt) else {
+            return None;
+        };
+        // Source EID is returned even if packet routing fails
+        let ret_src = Some(Eid(header.source_endpoint_id()));
 
         // Handle locally if possible
         if inner.stack.is_local_dest(pkt) {
-            trace!("local dest");
             match inner.stack.receive(pkt) {
                 // Complete message
                 Ok(Some((msg, handle))) => {
                     let typ = msg.typ;
                     let tag = msg.tag;
                     drop(inner);
-                    self.incoming_local(tag, typ, handle).await
+                    self.incoming_local(tag, typ, handle).await;
+                    return ret_src;
                 }
                 // Fragment consumed, message is incomplete
                 Ok(None) => {
-                    trace!("fragment");
+                    return ret_src;
                 }
                 Err(e) => {
                     debug!("Dropped local recv packet. {}", e);
+                    return ret_src;
                 }
             }
-            return;
         }
 
-        trace!("not local dest");
         // Look for a route to forward to
-        let Ok(header) = Reassembler::header(pkt) else {
-            debug!("bad header");
-            return;
-        };
         let dest_eid = Eid(header.dest_endpoint_id());
 
         let Some(p) = inner.lookup.by_eid(dest_eid) else {
             debug!("No route for recv {}", dest_eid);
-            return;
+            return ret_src;
         };
         drop(inner);
 
         let Some(top) = self.ports.get(p) else {
             debug!("Bad port ID from lookup");
-            return;
+            return ret_src;
         };
 
         let _ = top.forward_packet(pkt).await;
+        ret_src
     }
 
     async fn incoming_local(&self, tag: Tag, typ: MsgType, handle: ReceiveHandle) {
@@ -493,7 +518,9 @@ impl<'r> Router<'r> {
         }).await
     }
 
-    // Used by traits to send a message, see comment on .send_vectored() methods
+    /// Used by traits to send a message, see comment on .send_vectored() methods
+    ///
+    /// TODO should handle loopback if eid matches local stack's
     async fn app_send_message(
         &self,
         eid: Eid,
@@ -518,7 +545,8 @@ impl<'r> Router<'r> {
 
         let mtu = top.mtu;
         let mut fragmenter = inner.stack.start_send(eid, typ, tag, tag_expires,
-            integrity_check, Some(mtu), cookie)?;
+            integrity_check, Some(mtu), cookie)
+            .inspect_err(|e| trace!("error fragmenter {}", e))?;
         // release to allow other ports to continue work
         drop(inner);
 
