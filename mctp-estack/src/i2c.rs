@@ -19,7 +19,7 @@ pub const MCTP_I2C_COMMAND_CODE: u8 = 0x0f;
 
 const MCTP_I2C_HEADER: usize = 4;
 // bytecount is limited to u8, includes MCTP payload + 1 byte i2c source
-const MCTP_I2C_MAXMTU: usize = u8::MAX as usize - 1;
+pub const MCTP_I2C_MAXMTU: usize = u8::MAX as usize - 1;
 
 /// Size of fixed transmit buffer. This is the maximum size of a MCTP message.
 ///
@@ -34,7 +34,7 @@ type MctpI2cHeader =
     libmctp::smbus_proto::MCTPSMBusHeader<[u8; MCTP_I2C_HEADER]>;
 
 /// Simple packet processing to add/remove the 4 byte MCTP-I2C header.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MctpI2cEncap {
     own_addr: u8,
 }
@@ -44,15 +44,26 @@ impl MctpI2cEncap {
         Self { own_addr }
     }
 
-    /// Handles a MCTP fragment with the PEC already validated
-    ///
-    /// `packet` should omit the PEC byte.
-    /// Returns the MCTP message and the i2c source address.
-    pub fn receive_done_pec<'f>(
-        &mut self,
-        packet: &[u8],
-        mctp: &'f mut Stack,
-    ) -> Result<Option<(MctpMessage<'f>, u8, ReceiveHandle)>> {
+    pub fn own_addr(&self) -> u8 {
+        self.own_addr
+    }
+
+    pub fn decode<'f>(&self, mut packet: &'f [u8], pec: bool)
+    -> Result<(&'f [u8], u8)> {
+        if pec {
+            // Remove the pec byte, check it.
+            if packet.is_empty() {
+                return Err(Error::InvalidInput);
+            }
+            let packet_pec;
+            (packet_pec, packet) = packet.split_last().unwrap();
+            let calc_pec = smbus_pec::pec(packet);
+            if calc_pec != *packet_pec {
+                trace!("Incorrect PEC");
+                return Err(Error::InvalidInput);
+            }
+        }
+
         if packet.len() < MCTP_I2C_HEADER {
             return Err(Error::InvalidInput);
         }
@@ -68,12 +79,26 @@ impl MctpI2cEncap {
         if header.command_code() != MCTP_I2C_COMMAND_CODE {
             return Err(Error::InvalidInput);
         }
+        Ok((packet, header.source_slave_addr()))
+    }
+
+    /// Handles a MCTP fragment with the PEC already validated
+    ///
+    /// `packet` should omit the PEC byte.
+    /// Returns the MCTP message and the i2c source address.
+    pub fn receive_done_pec<'f>(
+        &self,
+        packet: &[u8],
+        mctp: &'f mut Stack,
+    ) -> Result<Option<(MctpMessage<'f>, u8, ReceiveHandle)>> {
+
+        let (mctp_packet, i2c_src) = self.decode(packet, false)?;
 
         // Pass to MCTP stack
-        let m = mctp.receive(packet)?;
+        let m = mctp.receive(mctp_packet)?;
 
         // Return a (message, i2c_source) tuple on completion
-        Ok(m.map(|(msg, handle)| (msg, header.source_slave_addr(), handle)))
+        Ok(m.map(|(msg, handle)| (msg, i2c_src, handle)))
     }
 
     /// `out` must be sized to hold 8+mctp_mtu, to allow for MCTP and I2C headers
@@ -106,6 +131,7 @@ impl MctpI2cEncap {
         let mut header = MctpI2cHeader::new();
         header.set_dest_slave_addr(i2c_dest);
         header.set_source_slave_addr(self.own_addr);
+        header.set_source_read_write(1);
         header.set_command_code(MCTP_I2C_COMMAND_CODE);
         debug_assert!(packet.len() <= MCTP_I2C_MAXMTU);
         header.set_byte_count((packet.len() + 1) as u8);
@@ -115,6 +141,36 @@ impl MctpI2cEncap {
         let out_len = MCTP_I2C_HEADER + packet.len();
         let out = &mut out[..out_len];
         SendOutput::Packet(out)
+    }
+
+    pub fn encode<'f>(&self, i2c_dest: u8, inp: &[u8], out: &'f mut [u8], pec: bool)
+        -> Result<&'f mut [u8]> {
+
+        let pec_extra = pec as usize;
+        let out_len = MCTP_I2C_HEADER + inp.len() + pec_extra;
+        if out.len() < out_len {
+            return Err(Error::BadArgument);
+        }
+        if inp.len() > MCTP_I2C_MAXMTU {
+            return Err(Error::BadArgument);
+        }
+
+        let (i2chead, packet) = out.split_at_mut(MCTP_I2C_HEADER);
+        let mut header = MctpI2cHeader::new();
+        header.set_dest_slave_addr(i2c_dest);
+        header.set_source_slave_addr(self.own_addr);
+        header.set_source_read_write(1);
+        header.set_command_code(MCTP_I2C_COMMAND_CODE);
+        // Include i2c source address byte in bytecount. No PEC.
+        header.set_byte_count((1 + inp.len()) as u8);
+        i2chead.copy_from_slice(&header.0);
+        packet[..inp.len()].copy_from_slice(inp);
+
+        if pec {
+            let pec_content = &out[..MCTP_I2C_HEADER+inp.len()];
+            out[MCTP_I2C_HEADER+inp.len()] = smbus_pec::pec(pec_content);
+        }
+        Ok(&mut out[..out_len])
     }
 }
 
