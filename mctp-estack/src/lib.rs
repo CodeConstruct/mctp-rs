@@ -96,6 +96,7 @@ pub struct Stack {
 impl Stack {
     pub fn new(own_eid: Eid, mtu: usize, now_millis: u64) -> Self {
         let now = EventStamp { clock: now_millis, counter: 0 };
+        assert!(mtu >= HEADER_LEN+1);
         Self {
             own_eid,
             now,

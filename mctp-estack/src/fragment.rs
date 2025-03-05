@@ -39,6 +39,9 @@ impl Fragmenter {
         }
         debug_assert!(typ.0 & 0x80 == 0, "IC bit's set in typ");
         debug_assert!(initial_seq & !mctp::MCTP_SEQ_MASK == 0);
+        if mtu < HEADER_LEN+1 {
+            return Err(Error::BadArgument);
+        }
         // TODO other validity checks
 
         Ok(Self {
