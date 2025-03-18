@@ -43,6 +43,12 @@ const REASSEMBLY_EXPIRY_TIMEOUT: u32 = 6000;
 /// In milliseconds.
 pub const DEFERRED_TIMEOUT: u32 = 6000;
 
+/// Timeout granularity.
+///
+/// Timeouts will be checked no more often than this interval (in milliseconds).
+/// See [`Stack::update()`].
+pub const TIMEOUT_INTERVAL: u32 = 100;
+
 #[derive(Debug)]
 struct Flow {
     // preallocated flows have None expiry
@@ -83,6 +89,8 @@ pub struct Stack {
 
     /// monotonic time and counter.
     now: EventStamp,
+    /// cached next expiry time from update()
+    next_timeout: u64,
 
     mtu: usize,
 
@@ -100,6 +108,7 @@ impl Stack {
         Self {
             own_eid,
             now,
+            next_timeout: 0,
             mtu,
             flows: LinearMap::new(),
             reassemblers: Default::default(),
@@ -126,12 +135,26 @@ impl Stack {
 
     /// Updates timeouts and returns the next timeout in milliseconds
     ///
-    /// `u32::MAX` will be returned if no timeouts are pending.
+    /// Must be called regularly to update the current clock value.
     /// Returns [`Error::InvalidInput`] if time goes backwards.
-    pub fn update(&mut self, now_millis: u64) -> Result<u32> {
+    ///
+    /// Returns `(next_timeout, any_expired)`.
+    /// `next_timeout` is a suitable interval (milliseconds) for the next
+    /// call to `update()`, currently a maximum of 100 ms.
+    ///
+    /// `any_expired` is set true if any message receive timeouts expired with this call.
+    pub fn update(&mut self, now_millis: u64) -> Result<(u64, bool)> {
         self.update_clock(now_millis)?;
 
-        let mut timeout = u32::MAX;
+        if let Some(remain) = self.next_timeout.checked_sub(now_millis) {
+            if remain > 0 {
+                // Skip timeout checks if within previous interval
+                return Ok((remain, false));
+            }
+        }
+
+        let mut timeout = TIMEOUT_INTERVAL;
+        let mut any_expired = false;
 
         // Check reassembler expiry for incomplete packets
         for r in self.reassemblers.iter_mut() {
@@ -141,6 +164,7 @@ impl Stack {
                     DEFERRED_TIMEOUT) {
                     None => {
                         trace!("Expired");
+                        any_expired = true;
                         *r = None;
                     }
                     // Not expired, update the timeout
@@ -159,12 +183,14 @@ impl Stack {
                 }
             }
         }
+        any_expired |= !to_remove.is_empty();
         for (peer, tv) in to_remove {
             self.remove_flow(peer, tv);
         }
 
+        self.next_timeout = timeout as u64 + now_millis;
 
-        Ok(timeout)
+        Ok((timeout as u64, any_expired))
     }
 
     /// Initiates a MCTP message send.

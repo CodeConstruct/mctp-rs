@@ -304,6 +304,21 @@ impl<'r> Router<'r> {
         }
     }
 
+    /// Called periodically to update the clock and check timeouts.
+    ///
+    /// A suitable interval (milliseconds) for the next call to `update_time()` will
+    /// be returned, currently a maximum of 100 ms.
+    pub async fn update_time(&self, now_millis: u64) -> Result<u64> {
+        let mut inner = self.inner.lock().await;
+        let (next, expired) = inner.stack.update(now_millis)?;
+        if expired {
+            // Wake pending sockets in case one was waiting on a now-expired response.
+            // TODO something more efficient, maybe Reassembler should hold a waker?
+            inner.app_receive_wakers.wake();
+        }
+        Ok(next)
+    }
+
     pub async fn receive(&self, pkt: &[u8], port: PortId) -> Option<Eid> {
         let mut inner = self.inner.lock().await;
 
