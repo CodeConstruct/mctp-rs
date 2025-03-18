@@ -1,4 +1,3 @@
-use embassy_sync::waitqueue::{MultiWakerRegistration, WakerRegistration};
 
 #[allow(unused)]
 use crate::fmt::{debug, error, info, trace, warn};
@@ -13,6 +12,7 @@ use crate::{AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, Header};
 use crate::reassemble::Reassembler;
 
 use embassy_sync::zerocopy_channel::{Channel, Sender, Receiver};
+use embassy_sync::waitqueue::{MultiWakerRegistration, WakerRegistration};
 
 use heapless::Vec;
 
@@ -32,14 +32,21 @@ type BlockingMutex<T> = embassy_sync::blocking_mutex::Mutex<RawMutex, RefCell<T>
 type PortRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 // type PortRawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+// Identifier for a Port
+#[derive(Debug, Clone, Copy)]
+pub struct PortId(pub u8);
+
 /// A trait implemented by applications to determine the routing table.
 pub trait PortLookup {
     /// Returns the port index for a destination EID.
     ///
     /// This is an index into the array of `ports` provided to [`Router::new`]
     ///
-    /// Return `None` for unreachable.
-    fn by_eid(&mut self, eid: Eid) -> Option<usize>;
+    /// Return `None` to drop the packet as unreachable.
+    ///
+    /// `source_port` is the incoming interface of a forwarded packet,
+    /// or `None` for locally generated packets.
+    fn by_eid(&mut self, eid: Eid, source_port: Option<PortId>) -> Option<PortId>;
 }
 
 /// Used like `heapless::Vec`, but lets the mut buffer be written into
@@ -266,7 +273,7 @@ pub struct Router<'r> {
     ports: &'r [PortTop<'r>],
 
     /// Listeners for different message types.
-    // Has a separate non-async Mutex so it can be used by RouterAsyncLister::drop()
+    // Has a separate non-async Mutex so it can be used by RouterAsyncListener::drop()
     // TODO filter by more than just MsgType, maybe have a Map of some sort?
     app_listeners: BlockingMutex<[Option<(MsgType, WakerRegistration)>;
         MAX_LISTENERS]>,
@@ -297,7 +304,7 @@ impl<'r> Router<'r> {
         }
     }
 
-    pub async fn receive(&self, pkt: &[u8]) -> Option<Eid> {
+    pub async fn receive(&self, pkt: &[u8], port: PortId) -> Option<Eid> {
         let mut inner = self.inner.lock().await;
 
         let Ok(header) = Reassembler::header(pkt) else {
@@ -331,13 +338,13 @@ impl<'r> Router<'r> {
         // Look for a route to forward to
         let dest_eid = Eid(header.dest_endpoint_id());
 
-        let Some(p) = inner.lookup.by_eid(dest_eid) else {
+        let Some(p) = inner.lookup.by_eid(dest_eid, Some(port)) else {
             debug!("No route for recv {}", dest_eid);
             return ret_src;
         };
         drop(inner);
 
-        let Some(top) = self.ports.get(p) else {
+        let Some(top) = self.ports.get(p.0 as usize) else {
             debug!("Bad port ID from lookup");
             return ret_src;
         };
@@ -533,12 +540,12 @@ impl<'r> Router<'r> {
     ) -> Result<Tag> {
         let mut inner = self.inner.lock().await;
 
-        let Some(p) = inner.lookup.by_eid(eid) else {
+        let Some(p) = inner.lookup.by_eid(eid, None) else {
             debug!("No route for recv {}", eid);
             return Err(Error::TxFailure);
         };
 
-        let Some(top) = self.ports.get(p) else {
+        let Some(top) = self.ports.get(p.0 as usize) else {
             debug!("Bad port ID from lookup");
             return Err(Error::TxFailure);
         };
