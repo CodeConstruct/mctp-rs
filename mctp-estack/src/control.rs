@@ -125,11 +125,8 @@ pub fn respond_set_eid<'a>(
     current_eid: Eid,
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
-    if req.command_code() != CommandCode::GetEndpointID {
+    if req.command_code() != CommandCode::SetEndpointID {
         return Err(CompletionCode::Error)
-    }
-    if !req.body.is_empty() {
-        return Err(CompletionCode::ErrorInvalidLength)
     }
     let status = if accepted {
         0b00000000
