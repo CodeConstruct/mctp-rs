@@ -159,7 +159,7 @@ pub fn respond_get_uuid<'a>(
 
 pub fn respond_get_msg_types<'a>(
     req: &MctpControlMsg,
-    msgtypes: &[u8],
+    msgtypes: &[MsgType],
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
     if req.command_code() != CommandCode::GetMessageTypeSupport {
@@ -168,11 +168,14 @@ pub fn respond_get_msg_types<'a>(
     if !req.body.is_empty() {
         return Err(CompletionCode::ErrorInvalidLength)
     }
-    let n: u8 = msgtypes.len().try_into().map_err(|_| CompletionCode::Error)?;
-    let body = [CompletionCode::Success as u8, n];
-    let rsp_buf = &mut rsp_buf[0..body.len()];
-    rsp_buf.clone_from_slice(&body);
-    req.new_resp(rsp_buf)
+    let n = msgtypes.len();
+    let body = rsp_buf.get_mut(..n + 2).ok_or(CompletionCode::Error)?;
+    body[0] = CompletionCode::Success as u8;
+    body[1] = n as u8;
+    for (i, t) in msgtypes.into_iter().enumerate() {
+        body[i + 2] = t.0;
+    }
+    req.new_resp(body)
 }
 
 pub fn respond_unimplemented<'a>(
@@ -281,6 +284,9 @@ impl<'a> MctpControl<'a> {
                 } else {
                     Err(CompletionCode::ErrorUnsupportedCmd)
                 }
+            }
+            CommandCode::GetMessageTypeSupport => {
+                respond_get_msg_types(req, self.types.as_slice(), &mut self.rsp_buf)
             }
             _ => {
                 Err(CompletionCode::ErrorUnsupportedCmd)
