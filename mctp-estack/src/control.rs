@@ -1,6 +1,6 @@
 //! MCTP Control Protocol implementation
 
-use mctp::{Eid, Error, RespChannel, MCTP_TYPE_CONTROL, Listener};
+use mctp::{Eid, Error, Listener};
 use libmctp::control_packet::CompletionCode;
 
 pub use libmctp::control_packet::CommandCode;
@@ -52,12 +52,12 @@ impl<'a> MctpControlMsg<'a> {
     }
 }
 
-pub fn respond_get_eid(
-    ch: &mut impl RespChannel,
+pub fn respond_get_eid<'a>(
     req: &MctpControlMsg,
     eid: Eid,
     medium_specific: u8,
-) -> ControlResult<()> {
+    rsp_buf: &'a mut [u8],
+) -> ControlResult<MctpControlMsg<'a>> {
     if req.command_code() != CommandCode::GetEndpointID {
         return Err(CompletionCode::Error);
     }
@@ -67,9 +67,10 @@ pub fn respond_get_eid(
     // simple endpoint, static EID supported
     let endpoint_type = 0b0000_0001;
     let body = [CompletionCode::Success as u8, eid.0, endpoint_type, medium_specific];
-    let msg = req.new_resp(&body)?;
-    ch.send_vectored(MCTP_TYPE_CONTROL, false, &msg.slices())
-        .map_err(|_| CompletionCode::Error)
+
+    let rsp_buf = &mut rsp_buf[0..body.len()];
+    rsp_buf.clone_from_slice(&body);
+    req.new_resp(rsp_buf)
 }
 
 pub struct SetEndpointId {
@@ -105,13 +106,12 @@ pub fn parse_set_eid<'f>(req: &MctpControlMsg) -> ControlResult<SetEndpointId> {
     Ok(ret)
 }
 
-
-pub fn respond_set_eid(
-    ch: &mut impl RespChannel,
+pub fn respond_set_eid<'a>(
     req: &MctpControlMsg,
     accepted: bool,
     current_eid: Eid,
-) -> ControlResult<()> {
+    rsp_buf: &'a mut [u8],
+) -> ControlResult<MctpControlMsg<'a>> {
     if req.command_code() != CommandCode::GetEndpointID {
         return Err(CompletionCode::Error)
     }
@@ -124,16 +124,16 @@ pub fn respond_set_eid(
         0b00010000
     };
     let body = [CompletionCode::Success as u8, status, current_eid.0, 0x00];
-    let msg = req.new_resp(&body)?;
-    ch.send_vectored(MCTP_TYPE_CONTROL, false, &msg.slices())
-        .map_err(|_| CompletionCode::Error)
+    let rsp_buf = &mut rsp_buf[0..body.len()];
+    rsp_buf.clone_from_slice(&body);
+    req.new_resp(rsp_buf)
 }
 
-pub fn respond_get_msg_types(
-    ch: &mut impl RespChannel,
+pub fn respond_get_msg_types<'a>(
     req: &MctpControlMsg,
     msgtypes: &[u8],
-) -> ControlResult<()> {
+    rsp_buf: &'a mut [u8],
+) -> ControlResult<MctpControlMsg<'a>> {
     if req.command_code() != CommandCode::GetMessageTypeSupport {
         return Err(CompletionCode::Error)
     }
@@ -142,40 +142,33 @@ pub fn respond_get_msg_types(
     }
     let n: u8 = msgtypes.len().try_into().map_err(|_| CompletionCode::Error)?;
     let body = [CompletionCode::Success as u8, n];
-    let msg = req.new_resp(&body)?;
-
-    let slices = [
-        msg.slices()[0],
-        msg.slices()[1],
-        msgtypes,
-    ];
-
-    ch.send_vectored(MCTP_TYPE_CONTROL, false, &slices)
-        .map_err(|_| CompletionCode::Error)
+    let rsp_buf = &mut rsp_buf[0..body.len()];
+    rsp_buf.clone_from_slice(&body);
+    req.new_resp(rsp_buf)
 }
 
-pub fn respond_unimplemented(
-    ch: &mut impl RespChannel,
+pub fn respond_unimplemented<'a>(
     req: &MctpControlMsg,
-) -> ControlResult<()> {
-    respond_error(ch, req, CompletionCode::ErrorUnsupportedCmd)
-        .map_err(|_| CompletionCode::Error)
+    rsp_buf: &'a mut [u8],
+) -> mctp::Result<MctpControlMsg<'a>> {
+    respond_error(req, CompletionCode::ErrorUnsupportedCmd, rsp_buf)
 }
 
 /// Respond with an error completion code.
 ///
 /// This returns a `mctp::Result` since failures can't be sent as a response.
-pub fn respond_error(
-    ch: &mut impl RespChannel,
+pub fn respond_error<'a>(
     req: &MctpControlMsg,
     err: CompletionCode,
-) -> mctp::Result<()> {
+    rsp_buf: &'a mut [u8],
+) -> mctp::Result<MctpControlMsg<'a>> {
     if err == CompletionCode::Success {
         return Err(Error::BadArgument)
     }
     let body = [err as u8];
-    let msg = req.new_resp(&body).map_err(|_| Error::BadArgument)?;
-    ch.send_vectored(MCTP_TYPE_CONTROL, false, &msg.slices())
+    let rsp_buf = &mut rsp_buf[0..body.len()];
+    rsp_buf.clone_from_slice(&body);
+    req.new_resp(rsp_buf).map_err(|_| mctp::Error::InternalError)
 }
 
 pub fn mctp_control_rx_req<'f, 'l, L>(listener: &'l mut L, buf: &'f mut [u8])
