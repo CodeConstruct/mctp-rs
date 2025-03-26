@@ -271,6 +271,13 @@ impl<'a> MctpControl<'a> {
                 let eid = self.router.get_eid().await;
                 respond_get_eid(req, eid, 0, &mut self.rsp_buf)
             }
+            CommandCode::SetEndpointID => {
+                let set = parse_set_eid(req)?;
+                let res = self.router.set_eid(set.eid).await;
+                let eid = self.router.get_eid().await;
+
+                respond_set_eid(req, res.is_ok(), eid, &mut self.rsp_buf)
+            }
             CommandCode::GetEndpointUUID => {
                 if let Some(uuid) = self.uuid {
                     respond_get_uuid(req, uuid, &mut self.rsp_buf)
