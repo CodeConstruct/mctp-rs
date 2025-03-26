@@ -636,6 +636,18 @@ impl<'r> Router<'r> {
             router: &self,
         })
     }
+
+    /// Retrieve the EID assigned to the local stack
+    pub async fn get_eid(&self) -> Eid {
+        let inner = self.inner.lock().await;
+        inner.stack.own_eid
+    }
+
+    /// Set the EID assigned to the local stack
+    pub async fn set_eid(&self, eid: Eid) -> mctp::Result<()> {
+        let mut inner = self.inner.lock().await;
+        inner.stack.set_eid(eid.0)
+    }
 }
 
 /// A request channel.
