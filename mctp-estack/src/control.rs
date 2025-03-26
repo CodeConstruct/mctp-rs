@@ -7,7 +7,7 @@
 
 //! MCTP Control Protocol implementation
 
-use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgType, RespChannel};
+use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgType};
 use libmctp::control_packet::CompletionCode;
 use uuid::Uuid;
 use crate::Router;
@@ -215,18 +215,20 @@ pub fn mctp_control_rx_req<'f, 'l, L>(listener: &'l mut L, buf: &'f mut [u8])
 }
 
 /// A Control Message handler.
-pub struct MctpControl {
+pub struct MctpControl<'a> {
     rsp_buf: [u8; MAX_MSG_SIZE],
     types: heapless::Vec<MsgType, MAX_MSG_TYPES>,
     uuid: Option<Uuid>,
+    router: &'a Router<'a>,
 }
 
-impl MctpControl {
-    pub fn new() -> Self {
+impl<'a> MctpControl<'a> {
+    pub fn new(router: &'a Router<'a>) -> Self {
         Self {
             rsp_buf: [0u8; MAX_MSG_SIZE],
             types: heapless::Vec::new(),
             uuid: None,
+            router,
         }
     }
 
@@ -235,7 +237,7 @@ impl MctpControl {
         let req = MctpControlMsg::from_buf(msg)
             .map_err(|_| mctp::Error::InvalidInput)?;
 
-        let resp = match self.handle_req(&req) {
+        let resp = match self.handle_req(&req).await {
             Err(e) => respond_error(&req, e, &mut self.rsp_buf),
             Ok(r) => Ok(r),
         }?;
@@ -245,11 +247,6 @@ impl MctpControl {
             false,
             &resp.slices()
         ).await
-    }
-
-    pub fn handle(&mut self, _msg: &[u8], mut _resp_chan: impl RespChannel)
-    -> mctp::Result<()> {
-        unimplemented!();
     }
 
     pub fn set_message_types(&mut self, types: &[MsgType]) -> mctp::Result<()> {
@@ -266,13 +263,13 @@ impl MctpControl {
         let _ = self.uuid.insert(*uuid);
     }
 
-    fn handle_req(&mut self, req: &MctpControlMsg) -> ControlResult<MctpControlMsg> {
+    async fn handle_req(&mut self, req: &'_ MctpControlMsg<'_>) -> ControlResult<MctpControlMsg> {
         let cc = req.command_code();
 
         match cc {
             CommandCode::GetEndpointID => {
-                // todo: fillers
-                respond_get_eid(req, Eid(9), 0, &mut self.rsp_buf)
+                let eid = self.router.get_eid().await;
+                respond_get_eid(req, eid, 0, &mut self.rsp_buf)
             }
             CommandCode::GetEndpointUUID => {
                 if let Some(uuid) = self.uuid {
