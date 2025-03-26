@@ -17,7 +17,7 @@ pub struct MctpControlMsg<'a> {
     pub body: &'a [u8],
 }
 
-const MAX_MSG_SIZE: usize = 8;
+const MAX_MSG_SIZE: usize = 20; /* largest is Get Endpoint UUID */
 const MAX_MSG_TYPES: usize = 8;
 
 impl<'a> MctpControlMsg<'a> {
@@ -135,6 +135,24 @@ pub fn respond_set_eid<'a>(
     req.new_resp(rsp_buf)
 }
 
+pub fn respond_get_uuid<'a>(
+    req: &MctpControlMsg,
+    uuid: Uuid,
+    rsp_buf: &'a mut [u8],
+) -> ControlResult<MctpControlMsg<'a>> {
+    if req.command_code() != CommandCode::GetEndpointUUID {
+        return Err(CompletionCode::Error)
+    }
+
+    let mut body = [0u8; 1 + 16];
+    body[0] = CompletionCode::Success as u8;
+    body[1..].clone_from_slice(uuid.as_bytes());
+
+    let rsp_buf = &mut rsp_buf[0..body.len()];
+    rsp_buf.clone_from_slice(&body);
+    req.new_resp(rsp_buf)
+}
+
 pub fn respond_get_msg_types<'a>(
     req: &MctpControlMsg,
     msgtypes: &[u8],
@@ -193,6 +211,7 @@ pub fn mctp_control_rx_req<'f, 'l, L>(listener: &'l mut L, buf: &'f mut [u8])
 pub struct MctpControl {
     rsp_buf: [u8; MAX_MSG_SIZE],
     types: heapless::Vec<MsgType, MAX_MSG_TYPES>,
+    uuid: Option<Uuid>,
 }
 
 impl MctpControl {
@@ -200,6 +219,7 @@ impl MctpControl {
         Self {
             rsp_buf: [0u8; MAX_MSG_SIZE],
             types: heapless::Vec::new(),
+            uuid: None,
         }
     }
 
@@ -235,6 +255,10 @@ impl MctpControl {
         Ok(())
     }
 
+    pub fn set_uuid(&mut self, uuid: &Uuid) {
+        let _ = self.uuid.insert(*uuid);
+    }
+
     fn handle_req(&mut self, req: &MctpControlMsg) -> ControlResult<MctpControlMsg> {
         let cc = req.command_code();
 
@@ -242,6 +266,13 @@ impl MctpControl {
             CommandCode::GetEndpointID => {
                 // todo: fillers
                 respond_get_eid(req, Eid(9), 0, &mut self.rsp_buf)
+            }
+            CommandCode::GetEndpointUUID => {
+                if let Some(uuid) = self.uuid {
+                    respond_get_uuid(req, uuid, &mut self.rsp_buf)
+                } else {
+                    Err(CompletionCode::ErrorUnsupportedCmd)
+                }
             }
             _ => {
                 Err(CompletionCode::ErrorUnsupportedCmd)
