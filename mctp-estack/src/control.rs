@@ -7,8 +7,10 @@
 
 //! MCTP Control Protocol implementation
 
-use mctp::{Eid, Error, Listener};
+use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgType, RespChannel};
 use libmctp::control_packet::CompletionCode;
+use uuid::Uuid;
+use crate::Router;
 
 pub use libmctp::control_packet::CommandCode;
 
@@ -21,6 +23,9 @@ pub struct MctpControlMsg<'a> {
     pub header: Header,
     pub body: &'a [u8],
 }
+
+const MAX_MSG_SIZE: usize = 8;
+const MAX_MSG_TYPES: usize = 8;
 
 impl<'a> MctpControlMsg<'a> {
     pub fn from_buf(buf: &'a [u8]) -> ControlResult<Self> {
@@ -80,6 +85,7 @@ pub fn respond_get_eid<'a>(
     req.new_resp(rsp_buf)
 }
 
+#[derive(Debug)]
 pub struct SetEndpointId {
     pub eid: Eid,
     pub force: bool,
@@ -188,4 +194,65 @@ pub fn mctp_control_rx_req<'f, 'l, L>(listener: &'l mut L, buf: &'f mut [u8])
 
     let msg = MctpControlMsg::from_buf(buf).map_err(|_| Error::InvalidInput)?;
     Ok((ch, msg))
+}
+
+/// A Control Message handler.
+pub struct MctpControl {
+    rsp_buf: [u8; MAX_MSG_SIZE],
+    types: heapless::Vec<MsgType, MAX_MSG_TYPES>,
+}
+
+impl MctpControl {
+    pub fn new() -> Self {
+        Self {
+            rsp_buf: [0u8; MAX_MSG_SIZE],
+            types: heapless::Vec::new(),
+        }
+    }
+
+    pub async fn handle_async(&mut self, msg: &[u8], mut resp_chan: impl AsyncRespChannel)
+    -> mctp::Result<()> {
+        let req = MctpControlMsg::from_buf(msg)
+            .map_err(|_| mctp::Error::InvalidInput)?;
+
+        let resp = match self.handle_req(&req) {
+            Err(e) => respond_error(&req, e, &mut self.rsp_buf),
+            Ok(r) => Ok(r),
+        }?;
+
+        resp_chan.send_vectored(
+            mctp::MCTP_TYPE_CONTROL,
+            false,
+            &resp.slices()
+        ).await
+    }
+
+    pub fn handle(&mut self, _msg: &[u8], mut _resp_chan: impl RespChannel)
+    -> mctp::Result<()> {
+        unimplemented!();
+    }
+
+    pub fn set_message_types(&mut self, types: &[MsgType]) -> mctp::Result<()> {
+        if types.len() > self.types.capacity() {
+            return Err(mctp::Error::NoSpace);
+        }
+        self.types.clear();
+        // We have already checked the length, so no Err here
+        let _ = self.types.extend_from_slice(types);
+        Ok(())
+    }
+
+    fn handle_req(&mut self, req: &MctpControlMsg) -> ControlResult<MctpControlMsg> {
+        let cc = req.command_code();
+
+        match cc {
+            CommandCode::GetEndpointID => {
+                // todo: fillers
+                respond_get_eid(req, Eid(9), 0, &mut self.rsp_buf)
+            }
+            _ => {
+                Err(CompletionCode::ErrorUnsupportedCmd)
+            }
+        }
+    }
 }
