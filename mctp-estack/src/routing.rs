@@ -189,12 +189,13 @@ pub struct PortBottom<'a> {
 }
 
 impl<'a> PortBottom<'a> {
-    /// Receive a packet to send for this port.
+    /// Retrieve an outbound packet to send for this port.
     ///
-    /// Must call `receive_done()` to consume the packet and advance the queue.
-    /// `receive()` may be called multiple times to peek at the same packet.
+    /// Should call [`outbound_done()`](Self::outbound_done) to consume the
+    /// packet and advance the queue.
+    /// `outbound()` may be called multiple times to peek at the same packet.
     /// Also returns the destination EID.
-    pub async fn receive(&mut self) -> (&[u8], Eid)
+    pub async fn outbound(&mut self) -> (&[u8], Eid)
     {
         if self.packets.len() > 1 {
             trace!("packets avail {}", self.packets.len());
@@ -203,13 +204,24 @@ impl<'a> PortBottom<'a> {
         (pkt, Eid(pkt.mctp_header().dest_endpoint_id()))
     }
 
-    pub fn try_receive(&mut self) -> Option<&[u8]>
+    /// Attempt to retrieve an outbound packet.
+    ///
+    /// This is the same as [`outbound()`](Self::outbound) but returns
+    /// `None` immediately if not available.
+    ///
+    /// Should call [`outbound_done()`](Self::outbound_done) to consume the
+    /// packet and advance the queue.
+    /// `try_outbound()` may be called multiple times to peek at the same packet.
+    pub fn try_outbound(&mut self) -> Option<(&[u8], Eid)>
     {
         trace!("packets avail {} try", self.packets.len());
-        self.packets.try_receive().map(|p| &**p)
+        self.packets.try_receive().map(|pkt|
+            (&**pkt, Eid(pkt.mctp_header().dest_endpoint_id()))
+        )
     }
 
-    pub fn receive_done(&mut self) {
+    /// Consume the outbound packet and advance the queue.
+    pub fn outbound_done(&mut self) {
         self.packets.receive_done()
     }
 }
@@ -319,7 +331,11 @@ impl<'r> Router<'r> {
         Ok(next)
     }
 
-    pub async fn receive(&self, pkt: &[u8], port: PortId) -> Option<Eid> {
+    /// Provide an incoming packet to the router.
+    ///
+    /// Returns the packet's MCTP source EID for any valid packet,
+    /// regardless of whether the packet is handled, forwarded, or dropped.
+    pub async fn inbound(&self, pkt: &[u8], port: PortId) -> Option<Eid> {
         let mut inner = self.inner.lock().await;
 
         let Ok(header) = Reassembler::header(pkt) else {
