@@ -38,11 +38,13 @@ pub struct PortId(pub u8);
 
 /// A trait implemented by applications to determine the routing table.
 pub trait PortLookup {
-    /// Returns the port index for a destination EID.
+    /// Returns the `PortId` for a destination EID.
     ///
-    /// This is an index into the array of `ports` provided to [`Router::new`]
+    /// `PortId` is an index into the array of `ports` provided to [`Router::new`]
     ///
-    /// Return `None` to drop the packet as unreachable.
+    /// Return `None` to drop the packet as unreachable. This lookup
+    /// is only called for outbound packets - packets destined for the local EID
+    /// will not be passed to this callback.
     ///
     /// `source_port` is the incoming interface of a forwarded packet,
     /// or `None` for locally generated packets.
@@ -302,6 +304,14 @@ pub struct RouterInner<'r> {
 }
 
 impl<'r> Router<'r> {
+    /// Create a new Router.
+    ///
+    /// The EID of the provided `stack` is used to match local destination packets.
+    ///
+    /// `ports` is a list of transport interfaces for the router. The indices
+    /// of the `ports`  slice are used as `PortId` identifiers.
+    ///
+    /// `lookup` callbacks define the routing table for outbound packets.
     pub fn new(stack: Stack, ports: &'r [PortTop<'r>], lookup: &'r mut dyn PortLookup) -> Self {
         let inner = RouterInner {
             stack,
@@ -620,6 +630,7 @@ impl<'r> Router<'r> {
     }
 }
 
+/// A request channel.
 pub struct RouterAsyncReqChannel<'r> {
     eid: Eid,
     sent_tag: Option<Tag>,
@@ -714,6 +725,7 @@ impl<'r> mctp::AsyncReqChannel for RouterAsyncReqChannel<'r> {
     }
 }
 
+/// A response channel.
 pub struct RouterAsyncRespChannel<'r> {
     eid: Eid,
     tv: TagValue,
@@ -746,6 +758,7 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
     }
 }
 
+/// A listener.
 pub struct RouterAsyncListener<'r> {
     router: &'r Router<'r>,
     cookie: AppCookie,
