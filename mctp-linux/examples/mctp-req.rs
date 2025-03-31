@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 /*
  * Simple MCTP example using Linux sockets: Get Endpoint ID requester.
  *
