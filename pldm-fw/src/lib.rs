@@ -626,7 +626,8 @@ pub fn request_update(
 
     let mut req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x10);
 
-    req.data.extend_from_slice(&XFER_SIZE.to_le_bytes());
+    let sz = XFER_SIZE as u32;
+    req.data.extend_from_slice(&sz.to_le_bytes());
     req.data.extend_from_slice(&1u16.to_le_bytes()); // NumberOfComponents
     req.data.extend_from_slice(&1u8.to_le_bytes()); // MaximumOutstandingTransferRequests
     req.data.extend_from_slice(&0u16.to_le_bytes()); // PackageDataLength
