@@ -13,7 +13,7 @@
 
 use heapless::Vec;
 use crate::{
-    AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack,
+    AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD,
 };
 use mctp::{Eid, MsgType, Tag, Error, Result};
 
@@ -29,11 +29,8 @@ const HDR_LEN: usize = 4;
 const MCTP_USB_MTU_MAX: usize = u8::MAX as usize - HDR_LEN;
 const TX_XFER_SIZE: usize = 512;
 
-// Arbitrary limit
-const TX_MSG_SIZE: usize = 1024;
-
 pub struct MctpUsbHandler {
-    tx_msg: Vec<u8, TX_MSG_SIZE>,
+    tx_msg: Vec<u8, MAX_PAYLOAD>,
     tx_xfer: [u8; TX_XFER_SIZE],
 }
 
@@ -96,7 +93,7 @@ impl MctpUsbHandler {
         mctp: &mut Stack,
         fill_msg: F,
     ) -> SendOutput
-        where F: FnOnce(&mut Vec<u8, TX_MSG_SIZE>) -> Option<()>,
+        where F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
     {
         self.tx_msg.clear();
         if fill_msg(&mut self.tx_msg).is_none() {

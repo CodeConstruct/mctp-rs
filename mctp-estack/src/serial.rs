@@ -9,7 +9,7 @@
 use crate::fmt::{debug, error, info, trace, warn};
 
 use crate::{
-    AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack,
+    AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD,
 };
 use mctp::{Eid, Error, MsgType, Result, Tag};
 
@@ -33,7 +33,6 @@ const FRAMING_ESCAPE: u8 = 0x7d;
 const FLAG_ESCAPED: u8 = 0x5e;
 const ESCAPE_ESCAPED: u8 = 0x5d;
 
-const TXMSGBUF: usize = 1024;
 // 6 serial header/footer bytes, 0xff MCTP packet bytes
 const TXFRAGBUF: usize = 6 + 0xff;
 
@@ -59,7 +58,7 @@ pub struct MctpSerialHandler {
     // Last-seen byte count field
     rxcount: usize,
 
-    send_message: Vec<u8, TXMSGBUF>,
+    send_message: Vec<u8, MAX_PAYLOAD>,
     send_fragment: [u8; TXFRAGBUF]
 }
 
@@ -206,7 +205,7 @@ impl MctpSerialHandler {
     // Returns SendOutput::Complete or SendOutput::Error
     pub async fn send_fill<F>(&mut self, eid: Eid, typ: MsgType, tag: Option<Tag>,
         ic: bool, cookie: Option<AppCookie>, output: &mut impl Write, mctp: &mut Stack, fill_msg: F) -> SendOutput
-    where F: FnOnce(&mut Vec<u8, TXMSGBUF>) -> Option<()>,
+    where F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
     {
         // Fetch the message from input
         self.send_message.clear();

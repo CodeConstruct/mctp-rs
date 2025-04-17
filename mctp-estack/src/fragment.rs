@@ -10,7 +10,7 @@ use crate::fmt::{debug, error, info, trace, warn};
 
 use mctp::{Eid, Error, MsgType, Result, Tag, MCTP_HEADER_VERSION_1};
 
-use crate::{AppCookie, Header, HEADER_LEN};
+use crate::{AppCookie, Header, HEADER_LEN, MAX_MTU};
 
 #[derive(Debug)]
 pub struct Fragmenter {
@@ -47,6 +47,11 @@ impl Fragmenter {
         debug_assert!(typ.0 & 0x80 == 0, "IC bit's set in typ");
         debug_assert!(initial_seq & !mctp::MCTP_SEQ_MASK == 0);
         if mtu < HEADER_LEN+1 {
+            debug!("mtu too small");
+            return Err(Error::BadArgument);
+        }
+        if mtu > MAX_MTU {
+            debug!("mtu too large");
             return Err(Error::BadArgument);
         }
         // TODO other validity checks

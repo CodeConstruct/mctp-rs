@@ -17,6 +17,11 @@
 //! Applications can create [`router::RouterAsyncListener`] and [`router::RouterAsyncReqChannel`]
 //! instances to communicate over MCTP. Those implement the standard [`mctp` crate](mctp)
 //! async traits.
+//!
+//! ## Configuration
+//!
+//! `mctp-estack` uses fixed sizes to be suitable on no-alloc platforms.
+//! These can be configured at build time, see [`config`]
 
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
@@ -33,6 +38,7 @@ use mctp::{Eid, MsgType, TagValue, Tag, Error, Result};
 
 mod fragment;
 mod reassemble;
+mod util;
 pub mod i2c;
 pub mod serial;
 pub mod usb;
@@ -44,11 +50,8 @@ use reassemble::Reassembler;
 pub use router::Router;
 
 use crate::fmt::*;
+pub(crate) use config::*;
 
-const FLOWS: usize = 8;
-
-const NUM_RECEIVE: usize = 4;
-const RECV_PAYLOAD: usize = 1032;
 
 /// Timeout for message reassembly.
 ///
@@ -68,6 +71,50 @@ pub const DEFERRED_TIMEOUT: u32 = 6000;
 /// See [`Stack::update()`].
 pub const TIMEOUT_INTERVAL: u32 = 100;
 
+pub(crate) const HEADER_LEN: usize = 4;
+
+/// Build-time configuration and defaults
+///
+/// To set a non-default value, set the `MCTP_ESTACK_...` environment variable
+/// during the build. Those variables can be set in the `[env]`
+/// section of `.cargo/config.toml`.
+pub mod config {
+    use crate::get_build_var;
+
+    /// Maximum size of a MCTP message payload in bytes, default 1032
+    ///
+    /// This does not include the MCTP type byte.
+    ///
+    /// Customise with `MCTP_ESTACK_MAX_MESSAGE` environment variable.
+    pub const MAX_PAYLOAD: usize = get_build_var!("MCTP_ESTACK_MAX_MESSAGE", 1032);
+
+    /// Number of concurrent receive messages, default 4
+    ///
+    /// The number of in-progress message reassemblies is limited to `NUM_RECEIVE`.
+    /// Total memory used for reassembly buffers is roughly
+    /// `MAX_PAYLOAD` * `NUM_RECEIVE` bytes.
+    ///
+    /// Customise with `MCTP_ESTACK_NUM_RECEIVE` environment variable.
+    /// Number of outstanding waiting responses, default 64
+    pub const NUM_RECEIVE: usize = get_build_var!("MCTP_ESTACK_NUM_RECEIVE", 4);
+    ///
+    /// After a message is sent with Tag Owner (TO) bit set, the stack will accept
+    /// response messages with the same tag and TO _unset_. `FLOWS` defines
+    /// the number of slots available for pending responses.
+    ///
+    /// Customise with `MCTP_ESTACK_FLOWS` environment variable.
+    /// Must be a power of two.
+    pub const FLOWS: usize = get_build_var!("MCTP_ESTACK_FLOWS", 64);
+
+    /// Maximum allowed MTU, default 255
+    ///
+    /// The largest MTU allowed for any link.
+    ///
+    /// Customise with `MCTP_ESTACK_MAX_MTU` environment variable.
+    pub const MAX_MTU: usize = get_build_var!("MCTP_ESTACK_MAX_MTU", 255);
+    const _: () = assert!(MAX_MTU >= crate::HEADER_LEN+1, "MAX_MTU too small");
+}
+
 #[derive(Debug)]
 struct Flow {
     // preallocated flows have None expiry
@@ -79,7 +126,6 @@ struct Flow {
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
 pub struct AppCookie(pub usize);
 
-pub(crate) const HEADER_LEN: usize = 4;
 type Header = libmctp::base_packet::MCTPTransportHeader<[u8; HEADER_LEN]>;
 
 /// A handle to a received message.
@@ -103,8 +149,8 @@ pub struct Stack {
     // The buffer is kept outside of the Reassembler, in case it is borrowed
     // from other storage locations in future.
     // This is [Option<>] rather than Vec so that indices remain stable
-    // for the ReceiveHandle. Could use a LinearMap instead?
-    reassemblers: [Option<(Reassembler, Vec<u8, RECV_PAYLOAD>)>; NUM_RECEIVE],
+    // for the ReceiveHandle. Could use a Map instead?
+    reassemblers: [Option<(Reassembler, Vec<u8, MAX_PAYLOAD>)>; NUM_RECEIVE],
 
     /// monotonic time and counter.
     now: EventStamp,
