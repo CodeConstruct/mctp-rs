@@ -27,7 +27,7 @@
 /// released.
 pub use heapless::Vec;
 
-use heapless::LinearMap;
+use heapless::FnvIndexMap;
 
 use mctp::{Eid, MsgType, TagValue, Tag, Error, Result};
 
@@ -98,7 +98,7 @@ pub struct Stack {
     own_eid: Eid,
 
     // flows where we own the tag
-    flows: LinearMap<(Eid, TagValue), Flow, FLOWS>,
+    flows: FnvIndexMap<(Eid, TagValue), Flow, FLOWS>,
 
     // The buffer is kept outside of the Reassembler, in case it is borrowed
     // from other storage locations in future.
@@ -139,7 +139,7 @@ impl Stack {
             now,
             next_timeout: 0,
             mtu,
-            flows: LinearMap::new(),
+            flows: Default::default(),
             reassemblers: Default::default(),
             next_tag: 0,
             next_seq: 0,
@@ -207,19 +207,26 @@ impl Stack {
         }
 
         // Expire reply-packet flows
-        let mut to_remove = Vec::<(Eid, TagValue), FLOWS>::new();
-        for (k, flow) in &self.flows {
-            if let Some(stamp) = flow.expiry_stamp {
-                match stamp.check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT) {
-                    None => to_remove.push(*k).unwrap(),
-                    Some(t) => timeout = timeout.min(t),
+        self.flows.retain(|_k, flow| {
+            match flow.expiry_stamp {
+                // no expiry
+                None => true,
+                Some(stamp) => {
+                    match stamp.check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT) {
+                        // expired, remove it
+                        None => {
+                            any_expired = true;
+                            false
+                        }
+                        Some(t) => {
+                            // still time left
+                            timeout = timeout.min(t);
+                            true
+                        }
+                    }
                 }
             }
-        }
-        any_expired |= !to_remove.is_empty();
-        for (peer, tv) in to_remove {
-            self.remove_flow(peer, tv);
-        }
+        });
 
         self.next_timeout = timeout as u64 + now_millis;
 
