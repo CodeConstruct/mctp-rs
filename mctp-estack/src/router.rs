@@ -58,6 +58,7 @@ pub trait PortLookup : Send {
 struct PktBuf {
     data: [u8; MAX_MTU],
     len: usize,
+    dest: Eid,
 }
 
 impl PktBuf {
@@ -65,22 +66,19 @@ impl PktBuf {
         Self {
             data: [0u8; MAX_MTU],
             len: 0,
+            dest: Eid(0),
         }
     }
 
     fn set(&mut self, data: &[u8]) -> Result<()> {
-        debug_assert!(Reassembler::header(data).is_ok());
+        let hdr = Reassembler::header(data);
+        debug_assert!(hdr.is_ok());
+        let hdr = hdr?;
         let dst = self.data.get_mut(..data.len()).ok_or(Error::NoSpace)?;
         dst.copy_from_slice(data);
         self.len = data.len();
+        self.dest = Eid(hdr.dest_endpoint_id());
         Ok(())
-    }
-
-    /// Retreive the MCTP EID
-    ///
-    /// May only be called on a complete valid MCTP packet.
-    fn mctp_header(&self) -> Header{
-        Reassembler::header(self).expect("Packet is valid MCTP")
     }
 }
 
@@ -146,6 +144,7 @@ impl<'a> PortTop<'a> {
         trace!("send_message");
         let mut msg;
         let payload = if pkt.len() == 1 {
+            // Avoid the copy when sending a single slice
             pkt[0]
         } else {
             msg = self.message.lock().await;
@@ -164,6 +163,7 @@ impl<'a> PortTop<'a> {
 
             let qpkt = sender.send().await;
             qpkt.len = 0;
+            qpkt.dest = fragmenter.dest();
             let r = fragmenter.fragment(payload, &mut qpkt.data);
             match r {
                 SendOutput::Packet(p) => {
@@ -205,7 +205,7 @@ impl<'a> PortBottom<'a> {
             trace!("packets avail {}", self.packets.len());
         }
         let pkt = self.packets.receive().await;
-        (pkt, Eid(pkt.mctp_header().dest_endpoint_id()))
+        (pkt, pkt.dest)
     }
 
     /// Attempt to retrieve an outbound packet.
@@ -219,9 +219,7 @@ impl<'a> PortBottom<'a> {
     pub fn try_outbound(&mut self) -> Option<(&[u8], Eid)>
     {
         trace!("packets avail {} try", self.packets.len());
-        self.packets.try_receive().map(|pkt|
-            (&**pkt, Eid(pkt.mctp_header().dest_endpoint_id()))
-        )
+        self.packets.try_receive().map(|pkt| (&**pkt, pkt.dest))
     }
 
     /// Consume the outbound packet and advance the queue.
