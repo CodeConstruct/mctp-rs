@@ -22,16 +22,12 @@ use embassy_sync::waitqueue::{MultiWakerRegistration, WakerRegistration};
 
 use heapless::Vec;
 
-// TODO sizing is a bit arbitrary.
-const MAX_LISTENERS: usize = 6;
-const MAX_RECEIVERS: usize = 20;
-
-// TODO sizing. These are both arbitrary.
-const MAX_MTU: usize = 255;
-const MAX_MESSAGE: usize = 1024;
+// TODO sizing is a bit arbitrary. They don't take up much space.
+const MAX_LISTENERS: usize = 20;
+const MAX_RECEIVERS: usize = 50;
 
 // TODO: feature to configure mutex?
-type RawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
+type RawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 type AsyncMutex<T> = embassy_sync::mutex::Mutex<RawMutex, T>;
 type BlockingMutex<T> = embassy_sync::blocking_mutex::Mutex<RawMutex, RefCell<T>>;
 
@@ -43,7 +39,7 @@ type PortRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 pub struct PortId(pub u8);
 
 /// A trait implemented by applications to determine the routing table.
-pub trait PortLookup {
+pub trait PortLookup : Send {
     /// Returns the `PortId` for a destination EID.
     ///
     /// `PortId` is an index into the array of `ports` provided to [`Router::new`]
