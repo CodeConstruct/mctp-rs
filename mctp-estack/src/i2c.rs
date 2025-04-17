@@ -10,6 +10,7 @@ use crate::fmt::{debug, error, info, trace, warn};
 
 use crate::{
     AppCookie, Fragmenter, MctpMessage, ReceiveHandle, SendOutput, Stack,
+    MAX_PAYLOAD,
 };
 use mctp::{Eid, Error, MsgType, Result, Tag};
 
@@ -20,15 +21,6 @@ pub const MCTP_I2C_COMMAND_CODE: u8 = 0x0f;
 const MCTP_I2C_HEADER: usize = 4;
 // bytecount is limited to u8, includes MCTP payload + 1 byte i2c source
 pub const MCTP_I2C_MAXMTU: usize = u8::MAX as usize - 1;
-
-/// Size of fixed transmit buffer. This is the maximum size of a MCTP message.
-///
-/// *TODO:* This will be replaced with a dynamically sized `send_message` buffer
-/// passed in.
-///
-/// Requires finding a replacement for `Vec` in `fill_msg` for `send_enqueue()`.
-/// Maybe heapless::VecView once it's in a release.
-pub const SENDBUF: usize = 1024;
 
 type MctpI2cHeader =
     libmctp::smbus_proto::MCTPSMBusHeader<[u8; MCTP_I2C_HEADER]>;
@@ -180,9 +172,7 @@ impl MctpI2cEncap {
 pub struct MctpI2cHandler {
     encap: MctpI2cEncap,
 
-    // TODO: replace with a &[u8] or similar so that we can avoid
-    // the const SENDBUF.
-    send_message: &'static mut Vec<u8, SENDBUF>,
+    send_message: &'static mut Vec<u8, MAX_PAYLOAD>,
     send_state: HandlerSendState,
 }
 
@@ -202,7 +192,7 @@ impl MctpI2cHandler {
     /// [`mctp_estack::Vec`](crate::Vec) can be used for API compatibility.
     pub fn new(
         own_addr: u8,
-        send_message: &'static mut Vec<u8, SENDBUF>,
+        send_message: &'static mut Vec<u8, MAX_PAYLOAD>,
     ) -> Self {
         Self {
             encap: MctpI2cEncap::new(own_addr),
@@ -300,7 +290,7 @@ impl MctpI2cHandler {
         fill_msg: F,
     ) -> Result<()>
     where
-        F: FnOnce(&mut Vec<u8, SENDBUF>) -> Option<()>,
+        F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
     {
         if !self.is_send_idle() {
             return Err(Error::Other);

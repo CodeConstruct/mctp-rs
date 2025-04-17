@@ -14,7 +14,7 @@ use core::future::{poll_fn, Future};
 use core::pin::pin;
 
 use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
-use crate::{AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, Header};
+use crate::{AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD, MAX_MTU};
 use crate::reassemble::Reassembler;
 
 use embassy_sync::zerocopy_channel::{Channel, Sender, Receiver};
@@ -100,7 +100,7 @@ pub struct PortTop<'a> {
 
     /// Temporary storage to flatten vectorised local sent messages
     // prior to fragmentation and queueing.
-    message: AsyncMutex<Vec<u8, MAX_MESSAGE>>,
+    message: AsyncMutex<Vec<u8, MAX_PAYLOAD>>,
 
     mtu: usize,
 }
