@@ -284,6 +284,11 @@ impl MctpSerialHandler {
     }
 }
 
+impl Default for MctpSerialHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(test)]
 mod tests {

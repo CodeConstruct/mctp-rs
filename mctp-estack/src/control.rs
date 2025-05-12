@@ -92,7 +92,7 @@ pub struct SetEndpointId {
     pub reset: bool,
 }
 
-pub fn parse_set_eid<'f>(req: &MctpControlMsg) -> ControlResult<SetEndpointId> {
+pub fn parse_set_eid(req: &MctpControlMsg) -> ControlResult<SetEndpointId> {
     if req.command_code() != CommandCode::SetEndpointID {
         return Err(CompletionCode::Error)
     }
@@ -172,7 +172,7 @@ pub fn respond_get_msg_types<'a>(
     let body = rsp_buf.get_mut(..n + 2).ok_or(CompletionCode::Error)?;
     body[0] = CompletionCode::Success as u8;
     body[1] = n as u8;
-    for (i, t) in msgtypes.into_iter().enumerate() {
+    for (i, t) in msgtypes.iter().enumerate() {
         body[i + 2] = t.0;
     }
     req.new_resp(body)

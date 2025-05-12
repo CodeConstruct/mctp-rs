@@ -105,7 +105,7 @@ pub struct PortTop<'a> {
     mtu: usize,
 }
 
-impl<'a> PortTop<'a> {
+impl PortTop<'_> {
     /// Enqueues a packet.
     ///
     /// Do not call with locks held.
@@ -192,7 +192,7 @@ pub struct PortBottom<'a> {
     packets: Receiver<'a, PortRawMutex, PktBuf>,
 }
 
-impl<'a> PortBottom<'a> {
+impl PortBottom<'_> {
     /// Retrieve an outbound packet to send for this port.
     ///
     /// Should call [`outbound_done()`](Self::outbound_done) to consume the
@@ -242,6 +242,12 @@ impl< const FORWARD_QUEUE: usize > PortStorage<FORWARD_QUEUE> {
         Self {
             packets: [const { PktBuf::new() }; FORWARD_QUEUE],
         }
+    }
+}
+
+impl< const FORWARD_QUEUE: usize > Default for PortStorage<FORWARD_QUEUE> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -459,7 +465,7 @@ impl<'r> Router<'r> {
                 return Ok(AppCookie(i))
             }
 
-            return Err(Error::NoSpace)
+            Err(Error::NoSpace)
         })
     }
 
@@ -627,7 +633,7 @@ impl<'r> Router<'r> {
         let cookie = self.app_bind(typ)?;
         Ok(RouterAsyncListener {
             cookie,
-            router: &self,
+            router: self,
         })
     }
 
@@ -658,7 +664,7 @@ impl<'r> RouterAsyncReqChannel<'r> {
             eid,
             sent_tag: None,
             tag_expires: true,
-            router: router,
+            router,
         }
     }
 
@@ -697,7 +703,7 @@ impl Drop for RouterAsyncReqChannel<'_> {
 /// A request channel
 ///
 /// Created with [`Router::req()`](Router::req).
-impl<'r> mctp::AsyncReqChannel for RouterAsyncReqChannel<'r> {
+impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     /// Send a message.
     ///
     /// This will async block until the message has been enqueued to the physical port.
@@ -809,9 +815,9 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
     }
 }
 
-impl <'r> Drop for RouterAsyncListener<'r> {
+impl Drop for RouterAsyncListener<'_> {
     fn drop(&mut self) {
-        if let Err(_) = self.router.app_unbind(self.cookie) {
+        if self.router.app_unbind(self.cookie).is_err() {
             // should be infallible, cookie should be valid.
             debug_assert!(false, "bad unbind");
         }

@@ -92,7 +92,7 @@ impl Reassembler {
             return false;
         }
 
-        return true;
+        true
     }
 
     /// Receive a packet, returning a message when complete.

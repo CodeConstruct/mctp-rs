@@ -171,7 +171,7 @@ pub enum SendOutput<'p> {
     },
 }
 
-impl<'f> SendOutput<'f> {
+impl SendOutput<'_> {
     /// Returns an unborrowed copy for Complete or Error variants.
     ///
     /// Panics if called with a Packet variant (borrowed).

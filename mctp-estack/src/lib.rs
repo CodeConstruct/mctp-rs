@@ -25,6 +25,8 @@
 
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
+#![allow(clippy::int_plus_one)]
+#![allow(clippy::too_many_arguments)]
 
 /// Re-exported so that callers can use the same `heapless` version.
 ///
@@ -487,7 +489,7 @@ impl Stack {
     fn done_reassemblers(&mut self) -> impl Iterator<Item = (usize, &mut Reassembler)> {
         self.reassemblers.iter_mut().enumerate().filter_map(|(i, r)| {
             // re must be Some and is_done
-            r.as_mut().and_then(|(re, _buf)| re.is_done().then(|| (i, re)))
+            r.as_mut().and_then(|(re, _buf)| re.is_done().then_some((i, re)))
         })
     }
 
@@ -665,7 +667,7 @@ pub struct MctpMessage<'a> {
     pub cookie: Option<AppCookie>,
 }
 
-impl<'a> core::fmt::Debug for MctpMessage<'a> {
+impl core::fmt::Debug for MctpMessage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Mctpmessage")
             .field("source", &self.source)

@@ -127,7 +127,6 @@ impl MctpUsbHandler {
             let r = fragmenter.fragment(&self.tx_msg, data);
             let len = match r {
                 SendOutput::Packet(p) => p.len(),
-                _
                 | SendOutput::Complete { .. }
                 | SendOutput::Error { .. }
                 => return r.unborrowed().unwrap(),
@@ -172,4 +171,10 @@ impl MctpUsbHandler {
         Ok(())
     }
 
+}
+
+impl Default for MctpUsbHandler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
