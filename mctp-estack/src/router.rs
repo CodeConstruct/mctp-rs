@@ -35,7 +35,7 @@ type PortRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 // type PortRawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 // Identifier for a Port
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PortId(pub u8);
 
 /// A trait implemented by applications to determine the routing table.
