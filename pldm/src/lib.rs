@@ -6,7 +6,6 @@
  */
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
-
 #![warn(missing_docs)]
 
 //! Platform Level Data Model (PLDM) base protocol support
@@ -85,10 +84,12 @@ type ErrStr = &'static str;
 #[macro_export]
 #[cfg(feature = "alloc")]
 macro_rules! proto_error {
-    ($msg: expr, $desc_str: expr)
-        => { $crate::PldmError::Protocol(format!("{}. {}", $msg, $desc_str)) };
-    ($msg: expr)
-        => { $crate::PldmError::Protocol(format!("{}.", $msg)) };
+    ($msg: expr, $desc_str: expr) => {
+        $crate::PldmError::Protocol(format!("{}. {}", $msg, $desc_str))
+    };
+    ($msg: expr) => {
+        $crate::PldmError::Protocol(format!("{}.", $msg))
+    };
 }
 
 /// Create a `PldmError::Protocol` from a message and optional description.
@@ -107,10 +108,13 @@ macro_rules! proto_error {
 #[macro_export]
 #[cfg(not(feature = "alloc"))]
 macro_rules! proto_error {
-    ($msg: expr, $desc_str: expr) => { $crate::PldmError::Protocol($msg) };
-    ($msg: expr) => { $crate::PldmError::Protocol($msg) };
+    ($msg: expr, $desc_str: expr) => {
+        $crate::PldmError::Protocol($msg)
+    };
+    ($msg: expr) => {
+        $crate::PldmError::Protocol($msg)
+    };
 }
-
 
 /// PLDM protocol return type
 pub type Result<T> = core::result::Result<T, PldmError>;
@@ -141,8 +145,7 @@ pub struct PldmRequest<'a> {
     pub data: VecOrSlice<'a, u8>,
 }
 
-impl<'a> Debug for PldmRequest<'a>
-{
+impl<'a> Debug for PldmRequest<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let vs = match self.data {
             #[cfg(feature = "alloc")]
@@ -150,13 +153,13 @@ impl<'a> Debug for PldmRequest<'a>
             VecOrSlice::Borrowed(_) => "Borrowed",
         };
         f.debug_struct("PldmRequest")
-        .field("iid", &self.iid)
-        .field("typ", &self.typ)
-        .field("cmd", &self.cmd)
-        .field("data.len()", &self.data.len())
-        .field("data..10", &&self.data[..self.data.len().min(10)])
-        .field("storage", &vs)
-        .finish()
+            .field("iid", &self.iid)
+            .field("typ", &self.typ)
+            .field("cmd", &self.cmd)
+            .field("data.len()", &self.data.len())
+            .field("data..10", &&self.data[..self.data.len().min(10)])
+            .field("storage", &vs)
+            .finish()
     }
 }
 
@@ -235,7 +238,10 @@ impl<'a> PldmRequest<'a> {
     /// May fail if the message data is not parsable as a PLDM message.
     pub fn from_buf_borrowed(data: &'a [u8]) -> Result<PldmRequest<'a>> {
         if data.len() < 3 {
-            return Err(proto_error!("Short request", format!("{} bytes", data.len())));
+            return Err(proto_error!(
+                "Short request",
+                format!("{} bytes", data.len())
+            ));
         }
 
         let rq = (data[0] & 0x80) != 0;
@@ -294,17 +300,16 @@ impl<'a> Debug for PldmResponse<'a> {
             VecOrSlice::Borrowed(_) => "Borrowed",
         };
         f.debug_struct("PldmResponse")
-        .field("iid", &self.iid)
-        .field("typ", &self.typ)
-        .field("cmd", &self.cmd)
-        .field("cc", &self.cc)
-        .field("data.len()", &self.data.len())
-        .field("data..10", &&self.data[..self.data.len().min(10)])
-        .field("storage", &vs)
-        .finish()
+            .field("iid", &self.iid)
+            .field("typ", &self.typ)
+            .field("cmd", &self.cmd)
+            .field("cc", &self.cc)
+            .field("data.len()", &self.data.len())
+            .field("data..10", &&self.data[..self.data.len().min(10)])
+            .field("storage", &vs)
+            .finish()
     }
 }
-
 
 #[cfg(feature = "alloc")]
 impl<'a> PldmResponse<'a> {
@@ -327,7 +332,10 @@ impl<'a> PldmResponse<'a> {
     /// Create a `PldmResponse` from a payload
     pub fn from_buf_borrowed(rx_buf: &'a [u8]) -> Result<Self> {
         if rx_buf.len() < 4 {
-            return Err(proto_error!("Short response", format!("{} bytes", rx_buf.len())));
+            return Err(proto_error!(
+                "Short response",
+                format!("{} bytes", rx_buf.len())
+            ));
         }
 
         let rq = (rx_buf[0] & 0x80) != 0;
@@ -385,24 +393,29 @@ pub fn pldm_xfer_buf<'buf>(
     mut req: PldmRequest,
     rx_buf: &'buf mut [u8],
 ) -> Result<PldmResponse<'buf>> {
-
     pldm_tx_req(ep, &mut req)?;
 
     let rsp = pldm_rx_resp_borrowed(ep, rx_buf)?;
 
     if rsp.iid != req.iid {
-        return Err(proto_error!("Incorrect instance ID in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.iid, rsp.iid)));
+        return Err(proto_error!(
+            "Incorrect instance ID in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.iid, rsp.iid)
+        ));
     }
 
     if rsp.typ != req.typ {
-        return Err(proto_error!("Incorrect PLDM type in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, rsp.typ)));
+        return Err(proto_error!(
+            "Incorrect PLDM type in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, rsp.typ)
+        ));
     }
 
     if rsp.cmd != req.cmd {
-        return Err(proto_error!("Incorrect PLDM command in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, rsp.cmd)));
+        return Err(proto_error!(
+            "Incorrect PLDM command in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, rsp.cmd)
+        ));
     }
 
     Ok(rsp)
@@ -417,8 +430,12 @@ pub fn pldm_xfer_buf<'buf>(
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
 #[cfg(feature = "alloc")]
-pub fn pldm_rx_req<'lis, L>(listener: &'lis mut L) -> Result<(L::RespChannel<'lis>, PldmRequest<'static>)>
-    where L: mctp::Listener {
+pub fn pldm_rx_req<'lis, L>(
+    listener: &'lis mut L,
+) -> Result<(L::RespChannel<'lis>, PldmRequest<'static>)>
+where
+    L: mctp::Listener,
+{
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
     let (ep, req) = pldm_rx_req_borrowed(listener, &mut rx_buf)?;
     Ok((ep, req.make_owned()))
@@ -433,12 +450,15 @@ pub fn pldm_rx_req<'lis, L>(listener: &'lis mut L) -> Result<(L::RespChannel<'li
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
 pub fn pldm_rx_req_borrowed<'lis, 'buf, L>(
-    listener: &'lis mut L, rx_buf: &'buf mut [u8],
+    listener: &'lis mut L,
+    rx_buf: &'buf mut [u8],
 ) -> Result<(L::RespChannel<'lis>, PldmRequest<'buf>)>
-    where L: mctp::Listener {
+where
+    L: mctp::Listener,
+{
     let (rx_buf, ep, _tag, _typ, ic) = listener.recv(rx_buf)?;
     if ic {
-        return Err(proto_error!("IC bit set"))
+        return Err(proto_error!("IC bit set"));
     }
     let req = PldmRequest::from_buf_borrowed(rx_buf)?;
 
@@ -447,11 +467,12 @@ pub fn pldm_rx_req_borrowed<'lis, 'buf, L>(
 
 /// Receive an incoming PLDM response in a borrowed buffer.
 pub fn pldm_rx_resp_borrowed<'buf>(
-    ep: &mut impl mctp::ReqChannel, rx_buf: &'buf mut [u8],
+    ep: &mut impl mctp::ReqChannel,
+    rx_buf: &'buf mut [u8],
 ) -> Result<PldmResponse<'buf>> {
     let (rx_buf, _eid, _tag, ic) = ep.recv(rx_buf)?;
     if ic {
-        return Err(proto_error!("IC bit set"))
+        return Err(proto_error!("IC bit set"));
     }
     PldmResponse::from_buf_borrowed(rx_buf)
 }
@@ -481,11 +502,7 @@ pub fn pldm_tx_req(
     const REQ_IID: u8 = 0;
     req.iid = REQ_IID;
 
-    let tx_buf = [
-        1 << 7 | req.iid,
-        req.typ & 0x3f,
-        req.cmd,
-    ];
+    let tx_buf = [1 << 7 | req.iid, req.typ & 0x3f, req.cmd];
 
     let txs = &[&tx_buf, req.data.as_ref()];
     ep.send_vectored(mctp::MCTP_TYPE_PLDM, false, txs)?;

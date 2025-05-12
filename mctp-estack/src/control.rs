@@ -7,17 +7,18 @@
 
 //! MCTP Control Protocol implementation
 
-use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgType};
-use libmctp::control_packet::CompletionCode;
-use uuid::Uuid;
 use crate::Router;
+use libmctp::control_packet::CompletionCode;
+use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgType};
+use uuid::Uuid;
 
 pub use libmctp::control_packet::CommandCode;
 
 type Header = libmctp::control_packet::MCTPControlMessageHeader<[u8; 2]>;
 
 /// A `Result` with a MCTP Control Completion Code as error
-pub type ControlResult<T> = core::result::Result<T, libmctp::control_packet::CompletionCode>;
+pub type ControlResult<T> =
+    core::result::Result<T, libmctp::control_packet::CompletionCode>;
 
 pub struct MctpControlMsg<'a> {
     pub header: Header,
@@ -44,7 +45,10 @@ impl<'a> MctpControlMsg<'a> {
         Ok(Self { header, body })
     }
 
-    pub fn new_resp<'f>(&self, body: &'f [u8]) -> ControlResult<MctpControlMsg<'f>> {
+    pub fn new_resp<'f>(
+        &self,
+        body: &'f [u8],
+    ) -> ControlResult<MctpControlMsg<'f>> {
         if self.header.rq() == 0 {
             return Err(CompletionCode::ErrorInvalidData);
         }
@@ -78,7 +82,12 @@ pub fn respond_get_eid<'a>(
     }
     // simple endpoint, static EID supported
     let endpoint_type = 0b0000_0001;
-    let body = [CompletionCode::Success as u8, eid.0, endpoint_type, medium_specific];
+    let body = [
+        CompletionCode::Success as u8,
+        eid.0,
+        endpoint_type,
+        medium_specific,
+    ];
 
     let rsp_buf = &mut rsp_buf[0..body.len()];
     rsp_buf.clone_from_slice(&body);
@@ -94,15 +103,20 @@ pub struct SetEndpointId {
 
 pub fn parse_set_eid(req: &MctpControlMsg) -> ControlResult<SetEndpointId> {
     if req.command_code() != CommandCode::SetEndpointID {
-        return Err(CompletionCode::Error)
+        return Err(CompletionCode::Error);
     }
     if req.body.len() != 2 {
-        return Err(CompletionCode::ErrorInvalidLength)
+        return Err(CompletionCode::ErrorInvalidLength);
     }
 
-    let eid = Eid::new_normal(req.body[1]).map_err(|_| CompletionCode::ErrorInvalidData)?;
+    let eid = Eid::new_normal(req.body[1])
+        .map_err(|_| CompletionCode::ErrorInvalidData)?;
 
-    let mut ret = SetEndpointId { eid, force: false, reset: false };
+    let mut ret = SetEndpointId {
+        eid,
+        force: false,
+        reset: false,
+    };
 
     match req.body[0] & 0x03 {
         // Set
@@ -126,13 +140,9 @@ pub fn respond_set_eid<'a>(
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
     if req.command_code() != CommandCode::SetEndpointID {
-        return Err(CompletionCode::Error)
+        return Err(CompletionCode::Error);
     }
-    let status = if accepted {
-        0b00000000
-    } else {
-        0b00010000
-    };
+    let status = if accepted { 0b00000000 } else { 0b00010000 };
     let body = [CompletionCode::Success as u8, status, current_eid.0, 0x00];
     let rsp_buf = &mut rsp_buf[0..body.len()];
     rsp_buf.clone_from_slice(&body);
@@ -145,7 +155,7 @@ pub fn respond_get_uuid<'a>(
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
     if req.command_code() != CommandCode::GetEndpointUUID {
-        return Err(CompletionCode::Error)
+        return Err(CompletionCode::Error);
     }
 
     let mut body = [0u8; 1 + 16];
@@ -163,10 +173,10 @@ pub fn respond_get_msg_types<'a>(
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
     if req.command_code() != CommandCode::GetMessageTypeSupport {
-        return Err(CompletionCode::Error)
+        return Err(CompletionCode::Error);
     }
     if !req.body.is_empty() {
-        return Err(CompletionCode::ErrorInvalidLength)
+        return Err(CompletionCode::ErrorInvalidLength);
     }
     let n = msgtypes.len();
     let body = rsp_buf.get_mut(..n + 2).ok_or(CompletionCode::Error)?;
@@ -194,17 +204,22 @@ pub fn respond_error<'a>(
     rsp_buf: &'a mut [u8],
 ) -> mctp::Result<MctpControlMsg<'a>> {
     if err == CompletionCode::Success {
-        return Err(Error::BadArgument)
+        return Err(Error::BadArgument);
     }
     let body = [err as u8];
     let rsp_buf = &mut rsp_buf[0..body.len()];
     rsp_buf.clone_from_slice(&body);
-    req.new_resp(rsp_buf).map_err(|_| mctp::Error::InternalError)
+    req.new_resp(rsp_buf)
+        .map_err(|_| mctp::Error::InternalError)
 }
 
-pub fn mctp_control_rx_req<'f, 'l, L>(listener: &'l mut L, buf: &'f mut [u8])
-    -> mctp::Result<(L::RespChannel<'l>, MctpControlMsg<'f>)> where L: Listener {
-
+pub fn mctp_control_rx_req<'f, 'l, L>(
+    listener: &'l mut L,
+    buf: &'f mut [u8],
+) -> mctp::Result<(L::RespChannel<'l>, MctpControlMsg<'f>)>
+where
+    L: Listener,
+{
     let (buf, ch, _tag, _typ, ic) = listener.recv(buf)?;
     if ic {
         return Err(Error::InvalidInput);
@@ -232,8 +247,11 @@ impl<'a> MctpControl<'a> {
         }
     }
 
-    pub async fn handle_async(&mut self, msg: &[u8], mut resp_chan: impl AsyncRespChannel)
-    -> mctp::Result<()> {
+    pub async fn handle_async(
+        &mut self,
+        msg: &[u8],
+        mut resp_chan: impl AsyncRespChannel,
+    ) -> mctp::Result<()> {
         let req = MctpControlMsg::from_buf(msg)
             .map_err(|_| mctp::Error::InvalidInput)?;
 
@@ -242,11 +260,9 @@ impl<'a> MctpControl<'a> {
             Ok(r) => Ok(r),
         }?;
 
-        resp_chan.send_vectored(
-            mctp::MCTP_TYPE_CONTROL,
-            false,
-            &resp.slices()
-        ).await
+        resp_chan
+            .send_vectored(mctp::MCTP_TYPE_CONTROL, false, &resp.slices())
+            .await
     }
 
     pub fn set_message_types(&mut self, types: &[MsgType]) -> mctp::Result<()> {
@@ -263,7 +279,10 @@ impl<'a> MctpControl<'a> {
         let _ = self.uuid.insert(*uuid);
     }
 
-    async fn handle_req(&mut self, req: &'_ MctpControlMsg<'_>) -> ControlResult<MctpControlMsg> {
+    async fn handle_req(
+        &mut self,
+        req: &'_ MctpControlMsg<'_>,
+    ) -> ControlResult<MctpControlMsg> {
         let cc = req.command_code();
 
         match cc {
@@ -285,12 +304,12 @@ impl<'a> MctpControl<'a> {
                     Err(CompletionCode::ErrorUnsupportedCmd)
                 }
             }
-            CommandCode::GetMessageTypeSupport => {
-                respond_get_msg_types(req, self.types.as_slice(), &mut self.rsp_buf)
-            }
-            _ => {
-                Err(CompletionCode::ErrorUnsupportedCmd)
-            }
+            CommandCode::GetMessageTypeSupport => respond_get_msg_types(
+                req,
+                self.types.as_slice(),
+                &mut self.rsp_buf,
+            ),
+            _ => Err(CompletionCode::ErrorUnsupportedCmd),
         }
     }
 }

@@ -5,11 +5,11 @@
  * Copyright (c) 2024 Code Construct
  */
 
-use mctp_linux::MctpLinuxReq;
 use mctp::{Eid, ReqChannel, MCTP_TYPE_CONTROL};
+use mctp_linux::MctpLinuxReq;
 
 fn main() -> std::io::Result<()> {
-    const EID : Eid = Eid(8);
+    const EID: Eid = Eid(8);
 
     // Create a new endpoint using the linux socket support
     let mut ep = MctpLinuxReq::new(EID, None)?;
@@ -27,7 +27,10 @@ fn main() -> std::io::Result<()> {
     let mut rx_buf = vec![0u8; 16];
     let (rx_buf, eid, tag, ic) = ep.recv(&mut rx_buf)?;
 
-    println!("response from {}, tag {}, ic {:?}: {:x?}", eid, tag, ic, rx_buf);
+    println!(
+        "response from {}, tag {}, ic {:?}: {:x?}",
+        eid, tag, ic, rx_buf
+    );
 
     Ok(())
 }

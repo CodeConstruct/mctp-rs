@@ -24,9 +24,9 @@ use pldm::PldmError;
 
 use crate::pkg;
 use crate::{
-    DeviceIdentifiers, FirmwareParameters, GetStatusResponse, PldmFDState,
-    RequestUpdateResponse, UpdateTransferProgress, PLDM_TYPE_FW, FwCode,
-    UpdateComponentResponse,
+    DeviceIdentifiers, FirmwareParameters, FwCode, GetStatusResponse,
+    PldmFDState, RequestUpdateResponse, UpdateComponentResponse,
+    UpdateTransferProgress, PLDM_TYPE_FW,
 };
 
 pub type Result<T> = core::result::Result<T, PldmUpdateError>;
@@ -234,13 +234,11 @@ pub fn pass_component_table(
         data.push(xfer_flags(n, len));
         let c = u16::from(&component.classification);
         data.extend_from_slice(&c.to_le_bytes());
-        data
-            .extend_from_slice(&component.identifier.to_le_bytes());
+        data.extend_from_slice(&component.identifier.to_le_bytes());
 
         data.extend_from_slice(&update.index.to_le_bytes());
 
-        data
-            .extend_from_slice(&component.comparison_stamp.to_le_bytes());
+        data.extend_from_slice(&component.comparison_stamp.to_le_bytes());
 
         component.version.write_utf8_bytes(&mut data);
 
@@ -309,13 +307,11 @@ where
     let mut data = vec![];
     let c = u16::from(&component.classification);
     data.extend_from_slice(&c.to_le_bytes());
-    data
-        .extend_from_slice(&component.identifier.to_le_bytes());
+    data.extend_from_slice(&component.identifier.to_le_bytes());
 
     data.extend_from_slice(&index.to_le_bytes());
 
-    data
-        .extend_from_slice(&component.comparison_stamp.to_le_bytes());
+    data.extend_from_slice(&component.comparison_stamp.to_le_bytes());
 
     let sz: u32 = component.file_size as u32;
     let mut sz_done: u32 = 0;
@@ -333,14 +329,19 @@ where
         return Err(PldmUpdateError::new_command(0x14, rsp.cc));
     }
 
-    let (_, res) = all_consuming(UpdateComponentResponse::parse)(rsp.data.as_ref())
-        .map_err(|_e| {
-            PldmUpdateError::new_proto("can't parse Update Component response".into())
-        })?;
+    let (_, res) =
+        all_consuming(UpdateComponentResponse::parse)(rsp.data.as_ref())
+            .map_err(|_e| {
+                PldmUpdateError::new_proto(
+                    "can't parse Update Component response".into(),
+                )
+            })?;
 
     if res.response_code != 0 {
-        return Err(PldmUpdateError::new_update(
-            format!("Update Component rejected with code 0x{:02x}", res.response_code)));
+        return Err(PldmUpdateError::new_update(format!(
+            "Update Component rejected with code 0x{:02x}",
+            res.response_code
+        )));
     }
 
     let start = chrono::Utc::now();
@@ -414,7 +415,8 @@ where
                 let elapsed = chrono::Utc::now() - start;
 
                 if res == 0 {
-                    let rate = elapsed.checked_div(sz_done as i32)
+                    let rate = elapsed
+                        .checked_div(sz_done as i32)
                         .and_then(|r| r.num_microseconds())
                         .unwrap_or(0);
                     let bps = if rate > 0 {
@@ -566,8 +568,8 @@ fn check_fd_state(
 
     let (_, res) = all_consuming(GetStatusResponse::parse)(rsp.data.as_ref())
         .map_err(|_e| {
-            PldmUpdateError::new_proto("can't parse Get Status response".into())
-        })?;
+        PldmUpdateError::new_proto("can't parse Get Status response".into())
+    })?;
 
     //todo: flag
     debug!("state: {:?}", res.current_state);

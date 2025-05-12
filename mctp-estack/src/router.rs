@@ -9,16 +9,19 @@
 use crate::fmt::{debug, error, info, trace, warn};
 
 use core::cell::RefCell;
-use core::task::Poll;
 use core::future::{poll_fn, Future};
 use core::pin::pin;
+use core::task::Poll;
 
-use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
-use crate::{AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD, MAX_MTU};
 use crate::reassemble::Reassembler;
+use crate::{
+    AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, MAX_MTU,
+    MAX_PAYLOAD,
+};
+use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
 
-use embassy_sync::zerocopy_channel::{Channel, Sender, Receiver};
 use embassy_sync::waitqueue::{MultiWakerRegistration, WakerRegistration};
+use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use heapless::Vec;
 
@@ -29,7 +32,8 @@ const MAX_RECEIVERS: usize = 50;
 // TODO: feature to configure mutex?
 type RawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 type AsyncMutex<T> = embassy_sync::mutex::Mutex<RawMutex, T>;
-type BlockingMutex<T> = embassy_sync::blocking_mutex::Mutex<RawMutex, RefCell<T>>;
+type BlockingMutex<T> =
+    embassy_sync::blocking_mutex::Mutex<RawMutex, RefCell<T>>;
 
 type PortRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 // type PortRawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -39,7 +43,7 @@ type PortRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 pub struct PortId(pub u8);
 
 /// A trait implemented by applications to determine the routing table.
-pub trait PortLookup : Send {
+pub trait PortLookup: Send {
     /// Returns the `PortId` for a destination EID.
     ///
     /// `PortId` is an index into the array of `ports` provided to [`Router::new`]
@@ -50,7 +54,11 @@ pub trait PortLookup : Send {
     ///
     /// `source_port` is the incoming interface of a forwarded packet,
     /// or `None` for locally generated packets.
-    fn by_eid(&mut self, eid: Eid, source_port: Option<PortId>) -> Option<PortId>;
+    fn by_eid(
+        &mut self,
+        eid: Eid,
+        source_port: Option<PortId>,
+    ) -> Option<PortId>;
 }
 
 /// Used like `heapless::Vec`, but lets the mut buffer be written into
@@ -120,7 +128,7 @@ impl PortTop<'_> {
         // Check space first (can't rollback after try_send)
         if pkt.len() > self.mtu {
             debug!("Forward packet too large");
-            return Err(Error::NoSpace)
+            return Err(Error::NoSpace);
         }
 
         // Get a slot to send
@@ -140,7 +148,11 @@ impl PortTop<'_> {
     ///
     /// Do not call with locks held.
     /// May block waiting for a port queue to flush.
-    async fn send_message(&self, fragmenter: &mut Fragmenter, pkt: &[&[u8]]) -> Result<Tag> {
+    async fn send_message(
+        &self,
+        fragmenter: &mut Fragmenter,
+        pkt: &[&[u8]],
+    ) -> Result<Tag> {
         trace!("send_message");
         let mut msg;
         let payload = if pkt.len() == 1 {
@@ -170,13 +182,13 @@ impl PortTop<'_> {
                     qpkt.len = p.len();
                     sender.send_done();
                     if fragmenter.is_done() {
-                        break Ok(fragmenter.tag())
+                        break Ok(fragmenter.tag());
                     }
                 }
                 SendOutput::Error { err, .. } => {
                     debug!("Error packetising");
                     sender.send_done();
-                    break Err(err)
+                    break Err(err);
                 }
                 SendOutput::Complete { .. } => unreachable!(),
             }
@@ -199,8 +211,7 @@ impl PortBottom<'_> {
     /// packet and advance the queue.
     /// `outbound()` may be called multiple times to peek at the same packet.
     /// Also returns the destination EID.
-    pub async fn outbound(&mut self) -> (&[u8], Eid)
-    {
+    pub async fn outbound(&mut self) -> (&[u8], Eid) {
         if self.packets.len() > 1 {
             trace!("packets avail {}", self.packets.len());
         }
@@ -216,8 +227,7 @@ impl PortBottom<'_> {
     /// Should call [`outbound_done()`](Self::outbound_done) to consume the
     /// packet and advance the queue.
     /// `try_outbound()` may be called multiple times to peek at the same packet.
-    pub fn try_outbound(&mut self) -> Option<(&[u8], Eid)>
-    {
+    pub fn try_outbound(&mut self) -> Option<(&[u8], Eid)> {
         trace!("packets avail {} try", self.packets.len());
         self.packets.try_receive().map(|pkt| (&**pkt, pkt.dest))
     }
@@ -237,7 +247,7 @@ pub struct PortStorage<const FORWARD_QUEUE: usize = 4> {
     packets: [PktBuf; FORWARD_QUEUE],
 }
 
-impl< const FORWARD_QUEUE: usize > PortStorage<FORWARD_QUEUE> {
+impl<const FORWARD_QUEUE: usize> PortStorage<FORWARD_QUEUE> {
     pub fn new() -> Self {
         Self {
             packets: [const { PktBuf::new() }; FORWARD_QUEUE],
@@ -245,7 +255,7 @@ impl< const FORWARD_QUEUE: usize > PortStorage<FORWARD_QUEUE> {
     }
 }
 
-impl< const FORWARD_QUEUE: usize > Default for PortStorage<FORWARD_QUEUE> {
+impl<const FORWARD_QUEUE: usize> Default for PortStorage<FORWARD_QUEUE> {
     fn default() -> Self {
         Self::new()
     }
@@ -257,9 +267,9 @@ pub struct PortBuilder<'a> {
 }
 
 impl<'a> PortBuilder<'a> {
-
-    pub fn new<const FORWARD_QUEUE: usize>(storage: &'a mut PortStorage<FORWARD_QUEUE>)
-    -> Self {
+    pub fn new<const FORWARD_QUEUE: usize>(
+        storage: &'a mut PortStorage<FORWARD_QUEUE>,
+    ) -> Self {
         // PortBuilder and PortStorage need to be separate structs, since
         // zerocopy_channel::Channel takes a slice.
         Self {
@@ -267,8 +277,7 @@ impl<'a> PortBuilder<'a> {
         }
     }
 
-    pub fn build(&mut self, mtu: usize) -> Result<(PortTop, PortBottom)>
-    {
+    pub fn build(&mut self, mtu: usize) -> Result<(PortTop, PortBottom)> {
         if mtu > MAX_MTU {
             debug!("port mtu {} > MAX_MTU {}", mtu, MAX_MTU);
             return Err(Error::BadArgument);
@@ -281,9 +290,7 @@ impl<'a> PortBuilder<'a> {
             packets: AsyncMutex::new(ps),
             mtu,
         };
-        let b = PortBottom {
-            packets: pr,
-        };
+        let b = PortBottom { packets: pr };
         Ok((t, b))
     }
 }
@@ -295,8 +302,8 @@ pub struct Router<'r> {
     /// Listeners for different message types.
     // Has a separate non-async Mutex so it can be used by RouterAsyncListener::drop()
     // TODO filter by more than just MsgType, maybe have a Map of some sort?
-    app_listeners: BlockingMutex<[Option<(MsgType, WakerRegistration)>;
-        MAX_LISTENERS]>,
+    app_listeners:
+        BlockingMutex<[Option<(MsgType, WakerRegistration)>; MAX_LISTENERS]>,
 }
 
 pub struct RouterInner<'r> {
@@ -318,7 +325,11 @@ impl<'r> Router<'r> {
     /// of the `ports`  slice are used as `PortId` identifiers.
     ///
     /// `lookup` callbacks define the routing table for outbound packets.
-    pub fn new(stack: Stack, ports: &'r [PortTop<'r>], lookup: &'r mut dyn PortLookup) -> Self {
+    pub fn new(
+        stack: Stack,
+        ports: &'r [PortTop<'r>],
+        lookup: &'r mut dyn PortLookup,
+    ) -> Self {
         let inner = RouterInner {
             stack,
             app_receive_wakers: MultiWakerRegistration::new(),
@@ -327,7 +338,9 @@ impl<'r> Router<'r> {
 
         Self {
             inner: AsyncMutex::new(inner),
-            app_listeners: BlockingMutex::new(RefCell::new([const { None }; MAX_LISTENERS])),
+            app_listeners: BlockingMutex::new(RefCell::new(
+                [const { None }; MAX_LISTENERS],
+            )),
             ports,
         }
     }
@@ -400,7 +413,12 @@ impl<'r> Router<'r> {
         ret_src
     }
 
-    async fn incoming_local(&self, tag: Tag, typ: MsgType, handle: ReceiveHandle) {
+    async fn incoming_local(
+        &self,
+        tag: Tag,
+        typ: MsgType,
+        handle: ReceiveHandle,
+    ) {
         trace!("incoming local, type {}", typ.0);
         if tag.is_owner() {
             self.incoming_listener(typ, handle).await
@@ -423,7 +441,9 @@ impl<'r> Router<'r> {
                     if *t == typ {
                         // OK unwrap: only set once
                         let handle = handle.take().unwrap();
-                        inner.stack.set_cookie(&handle, Some(AppCookie(cookie)));
+                        inner
+                            .stack
+                            .set_cookie(&handle, Some(AppCookie(cookie)));
                         inner.stack.return_handle(handle);
                         waker.wake();
                         trace!("listener match");
@@ -459,10 +479,11 @@ impl<'r> Router<'r> {
             }
 
             // Find a free slot
-            if let Some((i, bind)) = a.iter_mut()
-                .enumerate().find(|(_i, bind)| bind.is_none()) {
+            if let Some((i, bind)) =
+                a.iter_mut().enumerate().find(|(_i, bind)| bind.is_none())
+            {
                 *bind = Some((typ, WakerRegistration::new()));
-                return Ok(AppCookie(i))
+                return Ok(AppCookie(i));
             }
 
             Err(Error::NoSpace)
@@ -475,7 +496,7 @@ impl<'r> Router<'r> {
             let bind = a.get_mut(cookie.0).ok_or(Error::BadArgument)?;
 
             if bind.is_none() {
-                return Err(Error::BadArgument)
+                return Err(Error::BadArgument);
             }
 
             // Clear the bind.
@@ -514,7 +535,9 @@ impl<'r> Router<'r> {
             // TODO: get_deferred is inefficient lookup, does it matter?
             let handle = match (cookie, tag_eid) {
                 // lookup by cookie for Listener
-                (Some(cookie), None) => inner.stack.get_deferred_bycookie(&[cookie]),
+                (Some(cookie), None) => {
+                    inner.stack.get_deferred_bycookie(&[cookie])
+                }
                 // lookup by tag/eid for ReqChannel
                 (None, Some((tag, eid))) => inner.stack.get_deferred(eid, tag),
                 // one of them must have been set
@@ -569,7 +592,8 @@ impl<'r> Router<'r> {
 
             inner.stack.finished_receive(handle);
             Poll::Ready(res)
-        }).await
+        })
+        .await
     }
 
     /// Used by traits to send a message, see comment on .send_vectored() methods
@@ -598,8 +622,17 @@ impl<'r> Router<'r> {
         };
 
         let mtu = top.mtu;
-        let mut fragmenter = inner.stack.start_send(eid, typ, tag, tag_expires,
-            integrity_check, Some(mtu), cookie)
+        let mut fragmenter = inner
+            .stack
+            .start_send(
+                eid,
+                typ,
+                tag,
+                tag_expires,
+                integrity_check,
+                Some(mtu),
+                cookie,
+            )
             .inspect_err(|e| trace!("error fragmenter {}", e))?;
         // release to allow other ports to continue work
         drop(inner);
@@ -611,9 +644,7 @@ impl<'r> Router<'r> {
     ///
     /// Must only be called for owned tags.
     async fn app_release_tag(&self, eid: Eid, tag: Tag) {
-        let Tag::Owned(tv) = tag else {
-            unreachable!()
-        };
+        let Tag::Owned(tv) = tag else { unreachable!() };
         let mut inner = self.inner.lock().await;
 
         if let Err(e) = inner.stack.cancel_flow(eid, tv) {
@@ -673,7 +704,7 @@ impl<'r> RouterAsyncReqChannel<'r> {
     /// `async_drop` must be called prior to drop.
     pub fn tag_noexpire(&mut self) -> Result<()> {
         if self.sent_tag.is_some() {
-            return Err(Error::BadArgument)
+            return Err(Error::BadArgument);
         }
         self.tag_expires = false;
         Ok(())
@@ -719,8 +750,18 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     ) -> Result<()> {
         // For the first call, we pass a None tag, get an Owned one allocated.
         // Subsequent calls will fail unless tag_noexpire() was performed.
-        let tag = self.router.app_send_message(self.eid, typ, self.sent_tag, self.tag_expires,
-            integrity_check, bufs, None).await?;
+        let tag = self
+            .router
+            .app_send_message(
+                self.eid,
+                typ,
+                self.sent_tag,
+                self.tag_expires,
+                integrity_check,
+                bufs,
+                None,
+            )
+            .await?;
         debug_assert!(matches!(tag, Tag::Owned(_)));
         self.sent_tag = Some(tag);
         Ok(())
@@ -732,11 +773,13 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     ) -> Result<(&'f mut [u8], MsgType, Tag, bool)> {
         let Some(Tag::Owned(tv)) = self.sent_tag else {
             debug!("recv without send");
-            return Err(Error::BadArgument)
+            return Err(Error::BadArgument);
         };
         let recv_tag = Tag::Unowned(tv);
-        let (buf, eid, typ, tag, ic ) =
-            self.router.app_recv_message(None, Some((recv_tag, self.eid)), buf).await?;
+        let (buf, eid, typ, tag, ic) = self
+            .router
+            .app_recv_message(None, Some((recv_tag, self.eid)), buf)
+            .await?;
         debug_assert_eq!(tag, recv_tag);
         debug_assert_eq!(eid, self.eid);
         Ok((buf, typ, tag, ic))
@@ -758,7 +801,10 @@ pub struct RouterAsyncRespChannel<'r> {
 }
 
 impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
-    type ReqChannel<'a> = RouterAsyncReqChannel<'r> where Self: 'a;
+    type ReqChannel<'a>
+        = RouterAsyncReqChannel<'r>
+    where
+        Self: 'a;
 
     /// Send a message.
     ///
@@ -770,7 +816,17 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
         bufs: &[&[u8]],
     ) -> Result<()> {
         let tag = Some(Tag::Unowned(self.tv));
-        self.router.app_send_message(self.eid, typ, tag, false, integrity_check, bufs, None).await?;
+        self.router
+            .app_send_message(
+                self.eid,
+                typ,
+                tag,
+                false,
+                integrity_check,
+                bufs,
+                None,
+            )
+            .await?;
         Ok(())
     }
 
@@ -793,13 +849,20 @@ pub struct RouterAsyncListener<'r> {
 
 impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
     // type RespChannel<'a> = RouterAsyncRespChannel<'a> where Self: 'a;
-    type RespChannel<'a> = RouterAsyncRespChannel<'r> where Self: 'a;
+    type RespChannel<'a>
+        = RouterAsyncRespChannel<'r>
+    where
+        Self: 'a;
 
     async fn recv<'f>(
         &mut self,
-        buf: &'f mut [u8])
-    -> mctp::Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)> {
-        let (msg, eid, typ, tag, ic) = self.router.app_recv_message(Some(self.cookie), None, buf).await?;
+        buf: &'f mut [u8],
+    ) -> mctp::Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>
+    {
+        let (msg, eid, typ, tag, ic) = self
+            .router
+            .app_recv_message(Some(self.cookie), None, buf)
+            .await?;
 
         let Tag::Owned(tv) = tag else {
             debug_assert!(false, "listeners only accept owned tags");

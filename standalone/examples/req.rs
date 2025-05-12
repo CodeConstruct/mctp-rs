@@ -6,7 +6,7 @@
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
-use anyhow::{Result, Context, bail};
+use anyhow::{bail, Context, Result};
 use log::LevelFilter;
 
 use mctp::{Eid, MsgType, ReqChannel};
@@ -41,9 +41,7 @@ struct Args {
 
 const REQ_MSG_TYPE: MsgType = MsgType(1);
 
-
 fn main() -> Result<()> {
-
     let args: Args = argh::from_env();
 
     let level = if args.trace {
@@ -54,12 +52,13 @@ fn main() -> Result<()> {
         LevelFilter::Info
     };
 
-    let conf = simplelog::ConfigBuilder::new()
-        .build();
+    let conf = simplelog::ConfigBuilder::new().build();
     simplelog::SimpleLogger::init(level, conf)?;
 
-
-    let s = std::fs::OpenOptions::new().write(true).read(true).open(args.serial)?;
+    let s = std::fs::OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open(args.serial)?;
     let s = smol::Async::new(s)?;
     let s = embedded_io_adapters::futures_03::FromFutures::new(s);
 
@@ -70,9 +69,8 @@ fn main() -> Result<()> {
 
     if args.serial_corner {
         serial_corner_cases(&mut ch)?;
-        return Ok(())
+        return Ok(());
     }
-
 
     let mut payload = [0u8; 257];
     loop {
@@ -91,7 +89,12 @@ fn main() -> Result<()> {
     }
 }
 
-fn req(ch: &mut impl ReqChannel, typ: MsgType, payload: &[u8], fatal: bool) -> Result<()> {
+fn req(
+    ch: &mut impl ReqChannel,
+    typ: MsgType,
+    payload: &[u8],
+    fatal: bool,
+) -> Result<()> {
     ch.send(typ, &payload).context("Error sending")?;
 
     info!("Sent OK");
@@ -110,7 +113,6 @@ fn req(ch: &mut impl ReqChannel, typ: MsgType, payload: &[u8], fatal: bool) -> R
     assert!(rep == payload);
     Ok(())
 }
-
 
 /// Test roundtrip of payloads with escape bytes
 fn serial_corner_cases(ch: &mut impl ReqChannel) -> Result<()> {

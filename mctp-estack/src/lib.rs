@@ -36,16 +36,16 @@ pub use heapless::Vec;
 
 use heapless::FnvIndexMap;
 
-use mctp::{Eid, MsgType, TagValue, Tag, Error, Result};
+use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
 
+pub mod control;
 mod fragment;
-mod reassemble;
-mod util;
 pub mod i2c;
+mod reassemble;
+pub mod router;
 pub mod serial;
 pub mod usb;
-pub mod control;
-pub mod router;
+mod util;
 
 pub use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
@@ -53,7 +53,6 @@ pub use router::Router;
 
 use crate::fmt::*;
 pub(crate) use config::*;
-
 
 /// Timeout for message reassembly.
 ///
@@ -88,7 +87,8 @@ pub mod config {
     /// This does not include the MCTP type byte.
     ///
     /// Customise with `MCTP_ESTACK_MAX_MESSAGE` environment variable.
-    pub const MAX_PAYLOAD: usize = get_build_var!("MCTP_ESTACK_MAX_MESSAGE", 1032);
+    pub const MAX_PAYLOAD: usize =
+        get_build_var!("MCTP_ESTACK_MAX_MESSAGE", 1032);
 
     /// Number of concurrent receive messages, default 4
     ///
@@ -114,7 +114,8 @@ pub mod config {
     ///
     /// Customise with `MCTP_ESTACK_MAX_MTU` environment variable.
     pub const MAX_MTU: usize = get_build_var!("MCTP_ESTACK_MAX_MTU", 255);
-    const _: () = assert!(MAX_MTU >= crate::HEADER_LEN+1, "MAX_MTU too small");
+    const _: () =
+        assert!(MAX_MTU >= crate::HEADER_LEN + 1, "MAX_MTU too small");
 }
 
 #[derive(Debug)]
@@ -180,8 +181,11 @@ impl Stack {
     /// calls may use a smaller MTU if needed (for example a per-link or per-EID MTU).
     /// `new()` will panic if a MTU smaller than 5 is given (minimum MCTP header and type byte).
     pub fn new(own_eid: Eid, mtu: usize, now_millis: u64) -> Self {
-        let now = EventStamp { clock: now_millis, counter: 0 };
-        assert!(mtu >= HEADER_LEN+1);
+        let now = EventStamp {
+            clock: now_millis,
+            counter: 0,
+        };
+        assert!(mtu >= HEADER_LEN + 1);
         Self {
             own_eid,
             now,
@@ -240,9 +244,11 @@ impl Stack {
         // Check reassembler expiry for incomplete packets
         for r in self.reassemblers.iter_mut() {
             if let Some((re, _buf)) = r {
-                match re.check_expired(&self.now,
+                match re.check_expired(
+                    &self.now,
                     REASSEMBLY_EXPIRY_TIMEOUT,
-                    DEFERRED_TIMEOUT) {
+                    DEFERRED_TIMEOUT,
+                ) {
                     None => {
                         trace!("Expired");
                         any_expired = true;
@@ -260,7 +266,9 @@ impl Stack {
                 // no expiry
                 None => true,
                 Some(stamp) => {
-                    match stamp.check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT) {
+                    match stamp
+                        .check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT)
+                    {
                         // expired, remove it
                         None => {
                             any_expired = true;
@@ -302,7 +310,6 @@ impl Stack {
         mtu: Option<usize>,
         cookie: Option<AppCookie>,
     ) -> Result<Fragmenter> {
-
         // Add an entry to the flow table for owned tags
         let tag = match tag {
             None => {
@@ -310,7 +317,8 @@ impl Stack {
                 Tag::Owned(self.set_flow(dest, None, tag_expires, cookie)?)
             }
             Some(Tag::Owned(tv)) => {
-                let check = self.set_flow(dest, Some(tv), tag_expires, cookie)?;
+                let check =
+                    self.set_flow(dest, Some(tv), tag_expires, cookie)?;
                 debug_assert!(check == tv);
                 Tag::Owned(tv)
             }
@@ -344,14 +352,18 @@ impl Stack {
     /// Callers must call [`finished_receive`](Stack::finished_receive)
     /// or [`fetch_message_with`](Stack::fetch_message_with)
     /// for any returned [`ReceiveHandle`].
-    pub fn receive(&mut self, packet: &[u8]) -> Result<Option<(MctpMessage, ReceiveHandle)>> {
+    pub fn receive(
+        &mut self,
+        packet: &[u8],
+    ) -> Result<Option<(MctpMessage, ReceiveHandle)>> {
         // Get or insert a reassembler for this packet
         let idx = self.get_reassembler(packet)?;
         let (re, buf) = if let Some(r) = &mut self.reassemblers[idx] {
             r
         } else {
             // Create a new one
-            let mut re = Reassembler::new(self.own_eid, packet, self.now.increment())?;
+            let mut re =
+                Reassembler::new(self.own_eid, packet, self.now.increment())?;
 
             if !re.tag.is_owner() {
                 // Only allow it if we had an existing flow
@@ -362,7 +374,6 @@ impl Stack {
                 }
             }
             self.reassemblers[idx].insert((re, Vec::new()))
-
         };
 
         // Feed the packet to the reassembler
@@ -402,7 +413,8 @@ impl Stack {
     /// The message is provided to a closure.
     /// This allows using a closure that takes ownership of non-copyable objects.
     pub fn fetch_message_with<F>(&mut self, handle: ReceiveHandle, f: F)
-        where F: FnOnce(MctpMessage)
+    where
+        F: FnOnce(MctpMessage),
     {
         let m = self.fetch_message(&handle);
         f(m);
@@ -452,13 +464,16 @@ impl Stack {
     /// Messages are only available for [`DEFERRED_TIMEOUT`], after
     /// that time they will be discarded and the message slot/tag may
     /// be reused.
-    pub fn get_deferred(&mut self, source: Eid, tag: Tag) -> Option<ReceiveHandle> {
+    pub fn get_deferred(
+        &mut self,
+        source: Eid,
+        tag: Tag,
+    ) -> Option<ReceiveHandle> {
         // Find the earliest matching entry
-        self.done_reassemblers().filter(|(_i, re)| {
-            re.tag == tag && re.peer == source
-        })
-        .min_by_key(|(_i, re)| re.stamp)
-        .map(|(i, re)| re.take_handle(i))
+        self.done_reassemblers()
+            .filter(|(_i, re)| re.tag == tag && re.peer == source)
+            .min_by_key(|(_i, re)| re.stamp)
+            .map(|(i, re)| re.take_handle(i))
     }
 
     /// Retrieves a message deferred from a previous [`receive`](Self::receive) callback.
@@ -469,31 +484,45 @@ impl Stack {
     /// Messages are only available for [`DEFERRED_TIMEOUT`], after
     /// that time they will be discarded and the message slot may
     /// be reused.
-    pub fn get_deferred_bycookie(&mut self, cookies: &[AppCookie]) -> Option<ReceiveHandle> {
+    pub fn get_deferred_bycookie(
+        &mut self,
+        cookies: &[AppCookie],
+    ) -> Option<ReceiveHandle> {
         // Find the earliest matching entry
-        self.done_reassemblers().filter(|(_i, re)| {
-            if let Some(c) = re.cookie {
-                if cookies.contains(&c) {
-                    return true
+        self.done_reassemblers()
+            .filter(|(_i, re)| {
+                if let Some(c) = re.cookie {
+                    if cookies.contains(&c) {
+                        return true;
+                    }
                 }
-            }
-            false
-        })
-        .min_by_key(|(_i, re)| re.stamp)
-        .map(|(i, re)| re.take_handle(i))
+                false
+            })
+            .min_by_key(|(_i, re)| re.stamp)
+            .map(|(i, re)| re.take_handle(i))
     }
 
     /// Returns an iterator over completed reassemblers.
     ///
     /// The Item is (enumerate_index, reassembler)
-    fn done_reassemblers(&mut self) -> impl Iterator<Item = (usize, &mut Reassembler)> {
-        self.reassemblers.iter_mut().enumerate().filter_map(|(i, r)| {
-            // re must be Some and is_done
-            r.as_mut().and_then(|(re, _buf)| re.is_done().then_some((i, re)))
-        })
+    fn done_reassemblers(
+        &mut self,
+    ) -> impl Iterator<Item = (usize, &mut Reassembler)> {
+        self.reassemblers
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                // re must be Some and is_done
+                r.as_mut()
+                    .and_then(|(re, _buf)| re.is_done().then_some((i, re)))
+            })
     }
 
-    pub fn set_cookie(&mut self, handle: &ReceiveHandle, cookie: Option<AppCookie>) {
+    pub fn set_cookie(
+        &mut self,
+        handle: &ReceiveHandle,
+        cookie: Option<AppCookie>,
+    ) {
         // OK unwrap: handle can't be invalid
         let (re, _buf) = self.reassemblers[handle.0].as_mut().unwrap();
         re.set_cookie(cookie)
@@ -517,9 +546,10 @@ impl Stack {
     /// Returns an index in to the `reassemblers` array
     fn get_reassembler(&mut self, packet: &[u8]) -> Result<usize> {
         // Look for an existing match
-        let pos = self.reassemblers.iter().position(|r|
-            r.as_ref().is_some_and(|(re, _buf)| re.matches_packet(packet))
-        );
+        let pos = self.reassemblers.iter().position(|r| {
+            r.as_ref()
+                .is_some_and(|(re, _buf)| re.matches_packet(packet))
+        });
         if let Some(pos) = pos {
             return Ok(pos);
         }
@@ -527,7 +557,7 @@ impl Stack {
         // Find a spare slot
         let pos = self.reassemblers.iter().position(|r| r.is_none());
         if let Some(pos) = pos {
-            return Ok(pos)
+            return Ok(pos);
         }
 
         trace!("out of reassemblers");
@@ -537,7 +567,9 @@ impl Stack {
     fn alloc_tag(&mut self, peer: Eid) -> Option<TagValue> {
         // Find used tags as a bitmask
         let mut used = 0u8;
-        for (_fpeer, tag) in self.flows.keys().filter(|(fpeer, _tag)| *fpeer == peer) {
+        for (_fpeer, tag) in
+            self.flows.keys().filter(|(fpeer, _tag)| *fpeer == peer)
+        {
             debug_assert!(tag.0 <= mctp::MCTP_TAG_MAX);
             let bit = 1u8 << tag.0;
             debug_assert!(used & bit == 0);
@@ -565,10 +597,13 @@ impl Stack {
     ///
     /// A tag will be allocated if fixedtag = None
     /// Returns [`Error::TagUnavailable`] if all tags or flows are used.
-    fn new_flow(&mut self, peer: Eid, fixedtag: Option<TagValue>,
+    fn new_flow(
+        &mut self,
+        peer: Eid,
+        fixedtag: Option<TagValue>,
         flow_expires: bool,
-        cookie: Option<AppCookie>) -> Result<TagValue> {
-
+        cookie: Option<AppCookie>,
+    ) -> Result<TagValue> {
         let tag = fixedtag.or_else(|| self.alloc_tag(peer));
         trace!("new flow tag {}", peer);
 
@@ -582,16 +617,23 @@ impl Stack {
             expiry_stamp,
             cookie,
         };
-        let r = self.flows.insert((peer, tag), f)
-        .map_err(|_| Error::TagUnavailable)?;
+        let r = self
+            .flows
+            .insert((peer, tag), f)
+            .map_err(|_| Error::TagUnavailable)?;
         debug_assert!(r.is_none(), "Duplicate flow insertion");
         trace!("new flow {}", peer);
         Ok(tag)
     }
 
     /// Creates a new tag, or ensures that an existing one matches.
-    fn set_flow(&mut self, peer: Eid, tag: Option<TagValue>,
-        flow_expires: bool, cookie: Option<AppCookie>) -> Result<TagValue> {
+    fn set_flow(
+        &mut self,
+        peer: Eid,
+        tag: Option<TagValue>,
+        flow_expires: bool,
+        cookie: Option<AppCookie>,
+    ) -> Result<TagValue> {
         trace!("set flow {}", peer);
 
         if let Some(tv) = tag {
@@ -649,7 +691,6 @@ impl Stack {
         }
         Ok(())
     }
-
 }
 
 // For received reassembled messages
@@ -684,7 +725,6 @@ impl core::fmt::Debug for MctpMessage<'_> {
 #[derive(Default, Debug, Ord, PartialOrd, PartialEq, Eq, Copy, Clone)]
 pub(crate) struct EventStamp {
     // Ordering of members matters here for `Ord` derive
-
     /// Monotonic real clock in milliseconds
     pub clock: u64,
     /// A counter to order events having the same realclock value
@@ -728,7 +768,6 @@ pub(crate) mod fmt {
 
     #[cfg(feature = "log")]
     pub use log::{debug, error, info, trace, warn};
-
 }
 
 #[cfg(test)]

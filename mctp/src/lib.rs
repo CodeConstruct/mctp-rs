@@ -8,7 +8,6 @@
 // Tests may use std
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
-
 #![warn(missing_docs)]
 
 //! Management Component Transport Protocol (MCTP)
@@ -123,9 +122,7 @@ impl Tag {
     /// Returns the tag
     pub fn tag(&self) -> TagValue {
         match self {
-            Self::Unowned(tag) | Self::Owned(tag) => {
-                *tag
-            }
+            Self::Unowned(tag) | Self::Owned(tag) => *tag,
         }
     }
 
@@ -139,7 +136,7 @@ impl core::fmt::Display for Tag {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
             Tag::Owned(v) => write!(fmt, "TO,{:x}", v.0),
-            Tag::Unowned(v) => write!(fmt, "!TO,{:x}", v.0)
+            Tag::Unowned(v) => write!(fmt, "!TO,{:x}", v.0),
         }
     }
 }
@@ -188,7 +185,7 @@ pub enum Error {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error { }
+impl std::error::Error for Error {}
 
 impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
@@ -250,11 +247,7 @@ pub trait ReqChannel {
     /// that calls [`send_vectored`](Self::send_vectored).
     ///
     /// IC bit is unset.
-    fn send(
-        &mut self,
-        typ: MsgType,
-        buf: &[u8],
-    ) -> Result<()> {
+    fn send(&mut self, typ: MsgType, buf: &[u8]) -> Result<()> {
         self.send_vectored(typ, false, &[buf])
     }
 
@@ -286,9 +279,7 @@ pub trait AsyncReqChannel {
         typ: MsgType,
         buf: &[u8],
     ) -> impl Future<Output = Result<()>> {
-        async move {
-            self.send_vectored(typ, false, &[buf]).await
-        }
+        async move { self.send_vectored(typ, false, &[buf]).await }
     }
 
     fn recv<'f>(
@@ -329,11 +320,7 @@ pub trait RespChannel {
     /// that calls [`send_vectored`](Self::send_vectored).
     ///
     /// IC bit is unset.
-    fn send(
-        &mut self,
-        typ: MsgType,
-        buf: &[u8],
-    ) -> Result<()> {
+    fn send(&mut self, typ: MsgType, buf: &[u8]) -> Result<()> {
         self.send_vectored(typ, false, &[buf])
     }
 
@@ -348,7 +335,9 @@ pub trait RespChannel {
 /// Async equivalent of [`RespChannel`]
 pub trait AsyncRespChannel {
     /// `ReqChannel` type returned by [`req_channel`](Self::req_channel)
-    type ReqChannel<'a>: AsyncReqChannel where Self: 'a;
+    type ReqChannel<'a>: AsyncReqChannel
+    where
+        Self: 'a;
 
     /// Send a slice of buffers to this endpoint, blocking.
     ///
@@ -377,9 +366,7 @@ pub trait AsyncRespChannel {
         typ: MsgType,
         buf: &[u8],
     ) -> impl Future<Output = Result<()>> {
-        async move {
-            self.send_vectored(typ, false, &[buf]).await
-        }
+        async move { self.send_vectored(typ, false, &[buf]).await }
     }
 
     /// Return the remote Endpoint ID
@@ -396,7 +383,9 @@ pub trait AsyncRespChannel {
 /// will specify the MCTP message parameters (eg, message type) to listen for.
 pub trait Listener {
     /// `RespChannel` type returned by this `Listener`
-    type RespChannel<'a>: RespChannel where Self: 'a;
+    type RespChannel<'a>: RespChannel
+    where
+        Self: 'a;
 
     #[allow(clippy::type_complexity)]
     /// Blocking receive
@@ -416,7 +405,9 @@ pub trait Listener {
 /// Async equivalent of [`Listener`]
 pub trait AsyncListener {
     /// `RespChannel` type returned by this `Listener`
-    type RespChannel<'a>: AsyncRespChannel where Self: 'a;
+    type RespChannel<'a>: AsyncRespChannel
+    where
+        Self: 'a;
 
     #[allow(clippy::type_complexity)]
     /// Blocking receive
@@ -429,7 +420,15 @@ pub trait AsyncListener {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> impl Future<Output = Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>>;
+    ) -> impl Future<
+        Output = Result<(
+            &'f mut [u8],
+            Self::RespChannel<'_>,
+            Tag,
+            MsgType,
+            bool,
+        )>,
+    >;
 }
 
 const MCTP_IC_MASK: u8 = 0x80;
@@ -446,5 +445,8 @@ pub fn encode_type_ic(typ: MsgType, ic: bool) -> u8 {
 ///
 /// For transport implementations.
 pub fn decode_type_ic(ic_typ: u8) -> (MsgType, bool) {
-    (MsgType(ic_typ & !MCTP_IC_MASK), (ic_typ & MCTP_IC_MASK) != 0)
+    (
+        MsgType(ic_typ & !MCTP_IC_MASK),
+        (ic_typ & MCTP_IC_MASK) != 0,
+    )
 }

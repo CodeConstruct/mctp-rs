@@ -46,7 +46,7 @@ impl Fragmenter {
         }
         debug_assert!(typ.0 & 0x80 == 0, "IC bit's set in typ");
         debug_assert!(initial_seq & !mctp::MCTP_SEQ_MASK == 0);
-        if mtu < HEADER_LEN+1 {
+        if mtu < HEADER_LEN + 1 {
             debug!("mtu too small");
             return Err(Error::BadArgument);
         }
@@ -179,8 +179,12 @@ impl SendOutput<'_> {
     pub(crate) fn unborrowed<'x>(self) -> Option<SendOutput<'x>> {
         match self {
             Self::Packet(_) => unreachable!(),
-            Self::Complete { tag, cookie } => Some(SendOutput::Complete { tag, cookie }),
-            Self::Error { err, cookie } => Some(SendOutput::Error { err, cookie }),
+            Self::Complete { tag, cookie } => {
+                Some(SendOutput::Complete { tag, cookie })
+            }
+            Self::Error { err, cookie } => {
+                Some(SendOutput::Error { err, cookie })
+            }
         }
     }
 

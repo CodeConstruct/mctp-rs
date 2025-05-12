@@ -13,16 +13,17 @@ use nom::{
     sequence::tuple,
     Finish, IResult,
 };
-use thiserror::Error;
 use std::io::{BufReader, Read};
 use std::os::unix::fs::FileExt;
-use uuid::{Uuid, uuid};
+use thiserror::Error;
+use uuid::{uuid, Uuid};
 
-const PKG_UUID_1_0_X : Uuid = uuid!("f018878c-cb7d-4943-9800-a02f059aca02");
-const PKG_UUID_1_1_X : Uuid = uuid!("1244d264-8d7d-4718-a030-fc8a56587d5a");
+const PKG_UUID_1_0_X: Uuid = uuid!("f018878c-cb7d-4943-9800-a02f059aca02");
+const PKG_UUID_1_1_X: Uuid = uuid!("1244d264-8d7d-4718-a030-fc8a56587d5a");
 
 use crate::{
-    parse_string, parse_string_adjacent, ComponentClassification, DeviceIdentifiers, Descriptor, DescriptorString,
+    parse_string, parse_string_adjacent, ComponentClassification, Descriptor,
+    DescriptorString, DeviceIdentifiers,
 };
 
 type VResult<I, O> = IResult<I, O>;
@@ -195,11 +196,7 @@ impl Package {
         let mut init = [0u8; HDR_INIT_SIZE];
         reader.read_exact(&mut init)?;
 
-        let (_, (
-            identifier,
-            _hdr_format,
-            hdr_size,
-        )) = all_consuming(tuple((
+        let (_, (identifier, _hdr_format, hdr_size)) = all_consuming(tuple((
             map_res(
                 take::<_, _, nom::error::Error<_>>(16usize),
                 Uuid::from_slice,
@@ -223,16 +220,12 @@ impl Package {
             )
         })?;
 
-        let (r, (
-                _release_date_time,
-                component_bitmap_length,
-                version
-        )) = tuple((
-                take(13usize),
-                le_u16,
-                parse_string_adjacent,
-        ))(&buf).finish()
-            .map_err(|_| PldmPackageError::new_format("can't parse header"))?;
+        let (r, (_release_date_time, component_bitmap_length, version)) =
+            tuple((take(13usize), le_u16, parse_string_adjacent))(&buf)
+                .finish()
+                .map_err(|_| {
+                    PldmPackageError::new_format("can't parse header")
+                })?;
 
         let f = |d| PackageDevice::parse(d, component_bitmap_length);
         let (r, devices) = length_count(le_u8, f)(r)
@@ -270,13 +263,16 @@ impl Package {
         let mut whole_header = Vec::new();
         whole_header.extend_from_slice(&init);
         whole_header.extend_from_slice(&buf);
-        let (cs_payload, checksum) = whole_header.split_at(whole_header.len()-4);
+        let (cs_payload, checksum) =
+            whole_header.split_at(whole_header.len() - 4);
         // safe unwrap, know init.len() > 4
         let checksum = u32::from_le_bytes(checksum.try_into().unwrap());
         let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
         let cs_calc = crc32.checksum(cs_payload);
         if cs_calc != checksum {
-            return Err(PldmPackageError::new_format("Incorrect header checksum"))
+            return Err(PldmPackageError::new_format(
+                "Incorrect header checksum",
+            ));
         }
 
         Ok(Package {
@@ -288,11 +284,14 @@ impl Package {
         })
     }
 
-    pub fn new_virtual(classification: ComponentClassification,
-                       identifier: u16,
-                       payload_file: std::fs::File) -> Result<Self> {
+    pub fn new_virtual(
+        classification: ComponentClassification,
+        identifier: u16,
+        payload_file: std::fs::File,
+    ) -> Result<Self> {
         let metadata = payload_file.metadata()?;
-        let payload_len = metadata.len()
+        let payload_len = metadata
+            .len()
             .try_into()
             .map_err(|_| PldmPackageError::new_format("invalid file size?"))?;
 

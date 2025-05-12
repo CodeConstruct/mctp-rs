@@ -5,13 +5,12 @@
  * Copyright (c) 2023 Code Construct
  */
 
-
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use argh::FromArgs;
 use enumset::{EnumSet, EnumSetType};
-use std::io::Write;
-use std::fmt::Write as _;
 use mctp_linux::{MctpAddr, MctpLinuxListener};
+use std::fmt::Write as _;
+use std::io::Write;
 
 fn comma_separated<T: EnumSetType + std::fmt::Debug>(e: EnumSet<T>) -> String {
     let mut s = String::new();
@@ -41,7 +40,11 @@ fn print_device_info(
     }
     println!(
         "  Components:{}",
-        if fwp.components.is_empty() { " none" } else { "" }
+        if fwp.components.is_empty() {
+            " none"
+        } else {
+            ""
+        }
     );
     for (idx, comp) in fwp.components.iter().enumerate() {
         println!("    [{}]", idx);
@@ -98,11 +101,17 @@ fn print_update(update: &pldm_fw::ua::Update) {
     println!("  Components to update:");
     for (idx, cmp_idx) in update.components.iter().enumerate() {
         let cmp = &update.package.components[*cmp_idx];
-        println!("   {:2}: id {:04x}, version {}", idx, cmp.identifier, cmp.version);
+        println!(
+            "   {:2}: id {:04x}, version {}",
+            idx, cmp.identifier, cmp.version
+        );
     }
 }
 
-fn extract_component(pkg: &pldm_fw::pkg::Package, idx: usize) -> anyhow::Result<()> {
+fn extract_component(
+    pkg: &pldm_fw::pkg::Package,
+    idx: usize,
+) -> anyhow::Result<()> {
     if idx >= pkg.components.len() {
         bail!("no component with index {}", idx);
     }
@@ -149,7 +158,7 @@ fn open_package(fname: String) -> anyhow::Result<pldm_fw::pkg::Package> {
 #[derive(FromArgs, Debug)]
 #[argh(description = "PLDM update utility")]
 struct Args {
-    #[argh(switch, short='d')]
+    #[argh(switch, short = 'd')]
     /// debug logging
     debug: bool,
 
@@ -208,7 +217,7 @@ struct UpdateCommand {
     self_contained_activation: bool,
 
     /// don't require confirmation to update
-    #[argh(switch, short='y')]
+    #[argh(switch, short = 'y')]
     confirm: bool,
 }
 
@@ -259,9 +268,9 @@ fn duration_str(d: &chrono::Duration) -> String {
 }
 
 fn bps_str(bps: f32) -> String {
-    const B_PER_MB : f32 = 1_000_000.0;
+    const B_PER_MB: f32 = 1_000_000.0;
     #[allow(non_upper_case_globals)]
-    const B_PER_kB : f32 = 1_000.0;
+    const B_PER_kB: f32 = 1_000.0;
     let threshold = 0.8;
 
     if bps > (B_PER_MB * threshold) {
@@ -273,8 +282,7 @@ fn bps_str(bps: f32) -> String {
     }
 }
 
-fn progress(p: &pldm_fw::UpdateTransferProgress)
-{
+fn progress(p: &pldm_fw::UpdateTransferProgress) {
     if p.complete {
         println!(
             "Firmware transfer complete, duration {}, {}",
@@ -285,7 +293,9 @@ fn progress(p: &pldm_fw::UpdateTransferProgress)
         let (offset, len) = p.cur_xfer.unwrap_or((0, 0));
         println!(
             "Data request: offset 0x{:08x}, len 0x{:x}, {:2}% {}, {} remaining",
-            offset, len, p.percent,
+            offset,
+            len,
+            p.percent,
             bps_str(p.bps),
             duration_str(&p.remaining),
         );
@@ -301,9 +311,7 @@ fn main() -> anyhow::Result<()> {
         log::LevelFilter::Warn
     };
 
-    env_logger::Builder::new()
-        .filter_level(level)
-        .init();
+    env_logger::Builder::new().filter_level(level).init();
 
     match args.command {
         Command::Inventory(i) => {
@@ -317,7 +325,10 @@ fn main() -> anyhow::Result<()> {
             let pkg = open_package(u.file)?;
             let mut ep = u.addr.create_endpoint()?;
             let ep = &mut ep;
-            let mut listener = MctpLinuxListener::new(mctp::MCTP_TYPE_PLDM, Some(u.addr.net()))?;
+            let mut listener = MctpLinuxListener::new(
+                mctp::MCTP_TYPE_PLDM,
+                Some(u.addr.net()),
+            )?;
             let dev = pldm_fw::ua::query_device_identifiers(ep)?;
             let fwp = pldm_fw::ua::query_firmware_parameters(ep)?;
             let mut update = pldm_fw::ua::Update::new(
@@ -335,12 +346,17 @@ fn main() -> anyhow::Result<()> {
 
             let c = u.confirm || confirm_update();
             if !c {
-                return Ok(())
+                return Ok(());
             }
 
             let _ = pldm_fw::ua::request_update(ep, &update)?;
             pldm_fw::ua::pass_component_table(ep, &update)?;
-            pldm_fw::ua::update_components_progress(ep, &mut listener, &mut update, progress)?;
+            pldm_fw::ua::update_components_progress(
+                ep,
+                &mut listener,
+                &mut update,
+                progress,
+            )?;
             pldm_fw::ua::activate_firmware(ep, u.self_contained_activation)?;
         }
         Command::Cancel(c) => {
@@ -365,7 +381,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Version(_) => {
             println!("pldm-fw version {}", env!("VERSION"));
-            return Ok(())
+            return Ok(());
         }
     }
 

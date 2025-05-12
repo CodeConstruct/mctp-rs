@@ -59,12 +59,12 @@ pub struct MctpSerialHandler {
     rxcount: usize,
 
     send_message: Vec<u8, MAX_PAYLOAD>,
-    send_fragment: [u8; TXFRAGBUF]
+    send_fragment: [u8; TXFRAGBUF],
 }
 
 // https://www.rfc-editor.org/rfc/rfc1662
 // checksum is complement of the output
-const CRC_FCS: Crc::<u16> = Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+const CRC_FCS: Crc<u16> = Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
 
 impl MctpSerialHandler {
     pub fn new() -> Self {
@@ -79,8 +79,11 @@ impl MctpSerialHandler {
     }
 
     /// Receive with a timeout.
-    pub async fn receive_async<'f>(&mut self, input: &mut impl Read, mctp: &'f mut Stack)
-    -> Result<Option<(MctpMessage<'f>, ReceiveHandle)>> {
+    pub async fn receive_async<'f>(
+        &mut self,
+        input: &mut impl Read,
+        mctp: &'f mut Stack,
+    ) -> Result<Option<(MctpMessage<'f>, ReceiveHandle)>> {
         let packet = self.read_frame_async(input).await?;
         mctp.receive(packet)
     }
@@ -88,7 +91,10 @@ impl MctpSerialHandler {
     /// Read a frame.
     ///
     /// This is async cancel-safe.
-    async fn read_frame_async(&mut self, input: &mut impl Read) -> Result<&[u8]> {
+    async fn read_frame_async(
+        &mut self,
+        input: &mut impl Read,
+    ) -> Result<&[u8]> {
         // TODO: This reads one byte a time, might need a buffering wrapper
         // for performance. Will require more thought about cancel-safety
 
@@ -190,7 +196,10 @@ impl MctpSerialHandler {
                         let packet = &self.rxbuf[2..][..self.rxcount];
                         return Some(packet);
                     } else {
-                        warn!("Bad checksum got {:04x} calc {:04x}", cs, cs_calc);
+                        warn!(
+                            "Bad checksum got {:04x} calc {:04x}",
+                            cs, cs_calc
+                        );
                     }
                 } else {
                     // restart
@@ -203,9 +212,19 @@ impl MctpSerialHandler {
     }
 
     // Returns SendOutput::Complete or SendOutput::Error
-    pub async fn send_fill<F>(&mut self, eid: Eid, typ: MsgType, tag: Option<Tag>,
-        ic: bool, cookie: Option<AppCookie>, output: &mut impl Write, mctp: &mut Stack, fill_msg: F) -> SendOutput
-    where F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
+    pub async fn send_fill<F>(
+        &mut self,
+        eid: Eid,
+        typ: MsgType,
+        tag: Option<Tag>,
+        ic: bool,
+        cookie: Option<AppCookie>,
+        output: &mut impl Write,
+        mctp: &mut Stack,
+        fill_msg: F,
+    ) -> SendOutput
+    where
+        F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
     {
         // Fetch the message from input
         self.send_message.clear();
@@ -213,40 +232,53 @@ impl MctpSerialHandler {
             return SendOutput::Error {
                 err: Error::Other,
                 cookie: None,
-            }
+            };
         }
 
-        let mut fragmenter = match mctp.start_send(eid, typ, tag, true, ic, Some(MCTP_SERIAL_MAXMTU), cookie) {
+        let mut fragmenter = match mctp.start_send(
+            eid,
+            typ,
+            tag,
+            true,
+            ic,
+            Some(MCTP_SERIAL_MAXMTU),
+            cookie,
+        ) {
             Ok(f) => f,
-            Err(err) => {
-                return SendOutput::Error {
-                    err,
-                    cookie: None,
-                }
-            }
+            Err(err) => return SendOutput::Error { err, cookie: None },
         };
 
         loop {
-            let r = fragmenter.fragment(&self.send_message, &mut self.send_fragment);
+            let r = fragmenter
+                .fragment(&self.send_message, &mut self.send_fragment);
             match r {
                 SendOutput::Packet(p) => {
-                    trace!("packet len {} msg {}", p.len(), self.send_message.len());
+                    trace!(
+                        "packet len {} msg {}",
+                        p.len(),
+                        self.send_message.len()
+                    );
                     // Write to serial
                     if let Err(_e) = Self::frame_to_serial(p, output).await {
                         trace!("Serial write error");
                         return SendOutput::Error {
                             err: Error::TxFailure,
                             cookie: None,
-                        }
+                        };
                     }
                 }
-                _ => return r.unborrowed().unwrap()
+                _ => return r.unborrowed().unwrap(),
             }
         }
     }
 
-    async fn frame_to_serial<W>(p: &[u8], output: &mut W) -> core::result::Result<(), W::Error> 
-    where W: Write {
+    async fn frame_to_serial<W>(
+        p: &[u8],
+        output: &mut W,
+    ) -> core::result::Result<(), W::Error>
+    where
+        W: Write,
+    {
         debug_assert!(p.len() <= u8::MAX.into());
         debug_assert!(p.len() > 4);
 
@@ -263,10 +295,16 @@ impl MctpSerialHandler {
         Ok(())
     }
 
-    async fn write_escaped<W>(p: &[u8], output: &mut W) -> core::result::Result<(), W::Error>
-    where W: Write {
-        for c in p.split_inclusive(|&b| b == FRAMING_FLAG || b == FRAMING_ESCAPE) {
-
+    async fn write_escaped<W>(
+        p: &[u8],
+        output: &mut W,
+    ) -> core::result::Result<(), W::Error>
+    where
+        W: Write,
+    {
+        for c in
+            p.split_inclusive(|&b| b == FRAMING_FLAG || b == FRAMING_ESCAPE)
+        {
             let (last, rest) = c.split_last().unwrap();
             match *last {
                 FRAMING_FLAG => {
@@ -293,21 +331,24 @@ impl Default for MctpSerialHandler {
 #[cfg(test)]
 mod tests {
 
-    use crate::*;
     use crate::serial::*;
-    use proptest::prelude::*;
+    use crate::*;
     use embedded_io_adapters::futures_03::FromFutures;
+    use proptest::prelude::*;
 
     fn start_log() {
         let _ = env_logger::Builder::new()
-        .filter(None, log::LevelFilter::Trace)
-        .is_test(true).try_init();
+            .filter(None, log::LevelFilter::Trace)
+            .is_test(true)
+            .try_init();
     }
 
     async fn do_roundtrip(payload: &[u8]) {
         let mut esc = vec![];
         let mut s = FromFutures::new(&mut esc);
-        MctpSerialHandler::frame_to_serial(&payload, &mut s).await.unwrap();
+        MctpSerialHandler::frame_to_serial(&payload, &mut s)
+            .await
+            .unwrap();
         debug!("{:02x?}", payload);
         debug!("{:02x?}", esc);
 
@@ -322,9 +363,9 @@ mod tests {
         // Fixed testcases
         start_log();
         smol::block_on(async {
-            for payload in [
-                &[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36],
-            ] {
+            for payload in
+                [&[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36]]
+            {
                 do_roundtrip(payload).await
             }
         })
@@ -339,5 +380,4 @@ mod tests {
 
         }
     }
-
 }

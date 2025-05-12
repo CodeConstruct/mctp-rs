@@ -65,10 +65,7 @@ pub struct SliceWriter<'a> {
 impl<'a> SliceWriter<'a> {
     /// Constructs a new `SliceWriter`
     pub fn new(s: &'a mut [u8]) -> Self {
-        Self {
-            s,
-            pos: 0,
-        }
+        Self { s, pos: 0 }
     }
 
     /// Returns the number of bytes written
@@ -141,7 +138,7 @@ impl<'a> SliceWriter<'a> {
         let out = self.s.get_mut(self.pos..)?;
         let l = write(out)?;
         if l > out.len() {
-            return None
+            return None;
         }
         self.pos += l;
         Some(l)
@@ -168,10 +165,10 @@ impl<'a> SliceWriter<'a> {
         }
 
         // Fill the data
-        let out = self.s.get_mut(self.pos+sz..)?;
+        let out = self.s.get_mut(self.pos + sz..)?;
         let l = write(out)?;
         if l > out.len() {
-            return None
+            return None;
         }
 
         // Fill the length prefix. This writes to the original position.
@@ -216,32 +213,37 @@ mod tests {
     fn slicewriter_prefix() {
         let mut x = [99u8; 20];
         let mut w = SliceWriter::new(&mut x);
-        let l = w.push_prefix_le::<u16, _>(|m| {
-            let mut ww = SliceWriter::new(m);
-            ww.push(&[1,2,3,4,5])?;
-            Some(ww.written())
-        }).unwrap();
+        let l = w
+            .push_prefix_le::<u16, _>(|m| {
+                let mut ww = SliceWriter::new(m);
+                ww.push(&[1, 2, 3, 4, 5])?;
+                Some(ww.written())
+            })
+            .unwrap();
         assert_eq!(l, 7);
         let x = &x[..l];
         assert_eq!(x, [5, 0, 1, 2, 3, 4, 5]);
 
         let mut x = [99u8; 20];
         let mut w = SliceWriter::new(&mut x);
-        let l = w.push_prefix_le::<u16, _>(|m| {
-            m[0] = 1;
-            Some(1)
-        }).unwrap();
+        let l = w
+            .push_prefix_le::<u16, _>(|m| {
+                m[0] = 1;
+                Some(1)
+            })
+            .unwrap();
         assert_eq!(l, 3);
-        let l = w.push_prefix_le::<u64, _>(|m| {
-            m[0] = 3;
-            Some(1)
-        }).unwrap();
+        let l = w
+            .push_prefix_le::<u64, _>(|m| {
+                m[0] = 3;
+                Some(1)
+            })
+            .unwrap();
         assert_eq!(l, 9);
 
         let wr = w.written();
         let x = &x[..wr];
-        assert_eq!(x, [1, 0, 1,
-            1, 0, 0, 0, 0, 0, 0, 0, 3]);
+        assert_eq!(x, [1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 3]);
     }
 
     #[test]

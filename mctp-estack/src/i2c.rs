@@ -40,8 +40,11 @@ impl MctpI2cEncap {
         self.own_addr
     }
 
-    pub fn decode<'f>(&self, mut packet: &'f [u8], pec: bool)
-    -> Result<(&'f [u8], u8)> {
+    pub fn decode<'f>(
+        &self,
+        mut packet: &'f [u8],
+        pec: bool,
+    ) -> Result<(&'f [u8], u8)> {
         if pec {
             // Remove the pec byte, check it.
             if packet.is_empty() {
@@ -83,7 +86,6 @@ impl MctpI2cEncap {
         packet: &[u8],
         mctp: &'f mut Stack,
     ) -> Result<Option<(MctpMessage<'f>, u8, ReceiveHandle)>> {
-
         let (mctp_packet, i2c_src) = self.decode(packet, false)?;
 
         // Pass to MCTP stack
@@ -114,9 +116,9 @@ impl MctpI2cEncap {
         let packet = match r {
             SendOutput::Packet(packet) => packet,
             // Just return on Complete or Error
-            | SendOutput::Complete { .. }
-            | SendOutput::Error { .. }
-            => return r.unborrowed().unwrap(),
+            SendOutput::Complete { .. } | SendOutput::Error { .. } => {
+                return r.unborrowed().unwrap()
+            }
         };
 
         // Write the i2c header and return the whole packet
@@ -135,9 +137,13 @@ impl MctpI2cEncap {
         SendOutput::Packet(out)
     }
 
-    pub fn encode<'f>(&self, i2c_dest: u8, inp: &[u8], out: &'f mut [u8], pec: bool)
-        -> Result<&'f mut [u8]> {
-
+    pub fn encode<'f>(
+        &self,
+        i2c_dest: u8,
+        inp: &[u8],
+        out: &'f mut [u8],
+        pec: bool,
+    ) -> Result<&'f mut [u8]> {
         let pec_extra = pec as usize;
         let out_len = MCTP_I2C_HEADER + inp.len() + pec_extra;
         if out.len() < out_len {
@@ -159,8 +165,8 @@ impl MctpI2cEncap {
         packet[..inp.len()].copy_from_slice(inp);
 
         if pec {
-            let pec_content = &out[..MCTP_I2C_HEADER+inp.len()];
-            out[MCTP_I2C_HEADER+inp.len()] = smbus_pec::pec(pec_content);
+            let pec_content = &out[..MCTP_I2C_HEADER + inp.len()];
+            out[MCTP_I2C_HEADER + inp.len()] = smbus_pec::pec(pec_content);
         }
         Ok(&mut out[..out_len])
     }
@@ -304,8 +310,15 @@ impl MctpI2cHandler {
         // going through a kernel to fetch the message.
         fill_msg(self.send_message).ok_or(Error::InvalidInput)?;
 
-        let fragmenter =
-            mctp.start_send(eid, typ, tag, true, ic, Some(MCTP_I2C_MAXMTU), cookie)?;
+        let fragmenter = mctp.start_send(
+            eid,
+            typ,
+            tag,
+            true,
+            ic,
+            Some(MCTP_I2C_MAXMTU),
+            cookie,
+        )?;
         self.send_state = HandlerSendState::Sending {
             fragmenter,
             i2c_dest,

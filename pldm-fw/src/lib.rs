@@ -594,7 +594,7 @@ impl Descriptor {
                 _ => {
                     debug!("Unknown descriptor type 0x{typ:04x}");
                     Self::parse_fail
-                },
+                }
             };
             map_parser(take(len), all_consuming(g))
         };

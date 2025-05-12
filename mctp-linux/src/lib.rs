@@ -46,13 +46,7 @@ use std::os::unix::io::RawFd;
 use std::time::Duration;
 
 use mctp::{
-    Eid,
-    MCTP_ADDR_ANY,
-    MCTP_TAG_OWNER,
-    MsgType,
-    Result,
-    Tag,
-    TagValue,
+    Eid, MsgType, Result, Tag, TagValue, MCTP_ADDR_ANY, MCTP_TAG_OWNER,
 };
 
 /* until we have these in libc... */
@@ -139,7 +133,6 @@ fn tag_to_smctp(tag: &Tag) -> u8 {
     tag.tag().0 | to_bit
 }
 
-
 // helper for IO error construction
 fn last_os_error() -> mctp::Error {
     mctp::Error::Io(Error::last_os_error())
@@ -166,7 +159,7 @@ impl MctpSocket {
             )
         };
         if rc < 0 {
-            return Err(last_os_error())
+            return Err(last_os_error());
         }
         Ok(MctpSocket(rc))
     }
@@ -283,7 +276,7 @@ impl MctpSocket {
             let tv = unsafe { tv.assume_init() };
             if tv.tv_sec < 0 || tv.tv_usec < 0 {
                 // Negative timeout from socket
-                return Err(mctp::Error::Other)
+                return Err(mctp::Error::Other);
             }
 
             if tv.tv_sec == 0 && tv.tv_usec == 0 {
@@ -351,7 +344,12 @@ impl mctp::ReqChannel for MctpLinuxReq {
         bufs: &[&[u8]],
     ) -> Result<()> {
         let typ_ic = mctp::encode_type_ic(typ, ic);
-        let addr = MctpSockAddr::new(self.eid.0, self.net, typ_ic, mctp::MCTP_TAG_OWNER);
+        let addr = MctpSockAddr::new(
+            self.eid.0,
+            self.net,
+            typ_ic,
+            mctp::MCTP_TAG_OWNER,
+        );
         // TODO: implement sendmsg() with iovecs
         let concat = bufs
             .iter()
@@ -362,8 +360,10 @@ impl mctp::ReqChannel for MctpLinuxReq {
         Ok(())
     }
 
-    fn recv<'f>(&mut self, buf: &'f mut [u8])
-        -> Result<(&'f mut [u8], MsgType, Tag, bool)> {
+    fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> Result<(&'f mut [u8], MsgType, Tag, bool)> {
         if !self.sent {
             return Err(mctp::Error::BadArgument);
         }
@@ -373,7 +373,7 @@ impl mctp::ReqChannel for MctpLinuxReq {
         let tag = tag_from_smctp(addr.0.smctp_tag);
         if src != self.eid {
             // Kernel gave us a message from a different sender?
-            return Err(mctp::Error::Other)
+            return Err(mctp::Error::Other);
         }
         Ok((&mut buf[..sz], typ, tag, ic))
     }
@@ -391,7 +391,6 @@ pub struct MctpLinuxListener {
 }
 
 impl MctpLinuxListener {
-
     /// Create a new `MctpLinuxListener`.
     ///
     /// This will listen for MCTP message type `typ`, on an optional
@@ -400,14 +399,14 @@ impl MctpLinuxListener {
         let sock = MctpSocket::new()?;
         // Linux requires MCTP_ADDR_ANY for binds.
         let net = net.unwrap_or(MCTP_NET_ANY);
-        let addr =
-            MctpSockAddr::new(MCTP_ADDR_ANY.0, net, typ.0, mctp::MCTP_TAG_OWNER);
-        sock.bind(&addr)?;
-        Ok(Self {
-            sock,
+        let addr = MctpSockAddr::new(
+            MCTP_ADDR_ANY.0,
             net,
-            typ,
-        })
+            typ.0,
+            mctp::MCTP_TAG_OWNER,
+        );
+        sock.bind(&addr)?;
+        Ok(Self { sock, net, typ })
     }
 
     /// Borrow the internal MCTP socket
@@ -426,24 +425,29 @@ impl MctpLinuxListener {
 }
 
 impl mctp::Listener for MctpLinuxListener {
-
     type RespChannel<'a> = MctpLinuxResp<'a>;
 
-    fn recv<'f>(&mut self, buf: &'f mut [u8])
-        -> Result<(&'f mut [u8], MctpLinuxResp<'_>, Tag, MsgType, bool)> {
+    fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> Result<(&'f mut [u8], MctpLinuxResp<'_>, Tag, MsgType, bool)> {
         let (sz, addr) = self.sock.recvfrom(buf)?;
         let src = Eid(addr.0.smctp_addr);
         let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
         let tag = tag_from_smctp(addr.0.smctp_tag);
         if let Tag::Unowned(_) = tag {
             // bind() shouldn't give non-owned packets.
-            return Err(mctp::Error::InternalError)
+            return Err(mctp::Error::InternalError);
         }
         if typ != self.typ {
             // bind() should return the requested type
-            return Err(mctp::Error::InternalError)
+            return Err(mctp::Error::InternalError);
         }
-        let ep = MctpLinuxResp { eid: src, tv: tag.tag(), listener: self };
+        let ep = MctpLinuxResp {
+            eid: src,
+            tv: tag.tag(),
+            listener: self,
+        };
         Ok((&mut buf[..sz], ep, tag, typ, ic))
     }
 }
@@ -471,7 +475,8 @@ impl mctp::RespChannel for MctpLinuxResp<'_> {
     ) -> Result<()> {
         let typ_ic = mctp::encode_type_ic(typ, ic);
         let tag = tag_to_smctp(&Tag::Unowned(self.tv));
-        let addr = MctpSockAddr::new(self.eid.0, self.listener.net, typ_ic, tag);
+        let addr =
+            MctpSockAddr::new(self.eid.0, self.listener.net, typ_ic, tag);
         // TODO: implement sendmsg() with iovecs
         let concat = bufs
             .iter()

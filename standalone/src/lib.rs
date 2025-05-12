@@ -5,4 +5,4 @@
 
 mod serial;
 
-pub use serial::{MctpSerialListener, MctpSerialResp, MctpSerialReq};
+pub use serial::{MctpSerialListener, MctpSerialReq, MctpSerialResp};

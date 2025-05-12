@@ -11,11 +11,11 @@
 
 #![allow(unused)]
 
-use heapless::Vec;
 use crate::{
     AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD,
 };
-use mctp::{Eid, MsgType, Tag, Error, Result};
+use heapless::Vec;
+use mctp::{Eid, Error, MsgType, Result, Tag};
 
 #[cfg(feature = "defmt")]
 #[allow(unused)]
@@ -54,8 +54,8 @@ impl MctpUsbHandler {
     /// `remainder` is the remaining portion of xfer (which can be
     /// passed to a subsequent `decode()` call).
     pub fn decode(xfer: &[u8]) -> Result<(&[u8], &[u8])> {
-        let (hdr, data) = xfer.split_at_checked(HDR_LEN)
-            .ok_or(Error::RxFailure)?;
+        let (hdr, data) =
+            xfer.split_at_checked(HDR_LEN).ok_or(Error::RxFailure)?;
 
         if hdr[0..2] != [0x1a, 0xb4] {
             debug!("mismatch: {:x} {:x}", hdr[0], hdr[1]);
@@ -74,8 +74,10 @@ impl MctpUsbHandler {
         Ok(data)
     }
 
-    pub fn receive<'f>(xfer: &[u8], mctp: &'f mut Stack)
-    -> Result<Option<(MctpMessage<'f>, ReceiveHandle)>> {
+    pub fn receive<'f>(
+        xfer: &[u8],
+        mctp: &'f mut Stack,
+    ) -> Result<Option<(MctpMessage<'f>, ReceiveHandle)>> {
         // debug!("xfer: {xfer:02x?}");
         // TODO remainder in case of multiple MCTP per USB packet
         let (data, _rem) = Self::decode(xfer)?;
@@ -93,14 +95,15 @@ impl MctpUsbHandler {
         mctp: &mut Stack,
         fill_msg: F,
     ) -> SendOutput
-        where F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
+    where
+        F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
     {
         self.tx_msg.clear();
         if fill_msg(&mut self.tx_msg).is_none() {
             return SendOutput::Error {
                 err: Error::Other,
                 cookie: None,
-            }
+            };
         }
 
         let res = mctp.start_send(
@@ -110,16 +113,11 @@ impl MctpUsbHandler {
             true,
             ic,
             Some(MCTP_USB_MTU_MAX),
-            cookie
+            cookie,
         );
         let mut fragmenter = match res {
             Ok(f) => f,
-            Err(err) => {
-                return SendOutput::Error {
-                    err,
-                    cookie: None,
-                }
-            }
+            Err(err) => return SendOutput::Error { err, cookie: None },
         };
 
         loop {
@@ -127,24 +125,24 @@ impl MctpUsbHandler {
             let r = fragmenter.fragment(&self.tx_msg, data);
             let len = match r {
                 SendOutput::Packet(p) => p.len(),
-                | SendOutput::Complete { .. }
-                | SendOutput::Error { .. }
-                => return r.unborrowed().unwrap(),
+                SendOutput::Complete { .. } | SendOutput::Error { .. } => {
+                    return r.unborrowed().unwrap()
+                }
             };
             if Self::header(len, hdr).is_err() {
                 return SendOutput::Error {
                     err: Error::InternalError,
                     cookie: None,
-                }
+                };
             }
-            let slice = &self.tx_xfer[0..len+4];
+            let slice = &self.tx_xfer[0..len + 4];
             let res = xfer.send_xfer(slice);
             if let Err(_e) = res {
                 trace!("USB transfer error");
                 return SendOutput::Error {
                     err: Error::TxFailure,
                     cookie: None,
-                }
+                };
             }
         }
     }
@@ -154,15 +152,16 @@ impl MctpUsbHandler {
     /// `mctplen` is the length of the remaining MCTP packet
     /// after the header.
     /// `hdr` must be a 4 byte slice.
-    pub fn header(mctp_len: usize, hdr: &mut [u8]) -> Result<()>
-    {
+    pub fn header(mctp_len: usize, hdr: &mut [u8]) -> Result<()> {
         if hdr.len() != 4 {
-            return Err(Error::BadArgument)
+            return Err(Error::BadArgument);
         }
 
-        let usb_len: u8 = mctp_len.checked_add(4)
+        let usb_len: u8 = mctp_len
+            .checked_add(4)
             .ok_or(Error::BadArgument)?
-            .try_into().map_err(|_| Error::BadArgument)?;
+            .try_into()
+            .map_err(|_| Error::BadArgument)?;
 
         hdr[0] = 0x1a;
         hdr[1] = 0xb4;
@@ -170,7 +169,6 @@ impl MctpUsbHandler {
         hdr[3] = usb_len;
         Ok(())
     }
-
 }
 
 impl Default for MctpUsbHandler {

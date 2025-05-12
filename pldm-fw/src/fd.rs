@@ -25,8 +25,8 @@ use num_traits::FromPrimitive;
 
 use mctp::{Eid, ReqChannel, RespChannel};
 use pldm::{
-    pldm_tx_req, pldm_tx_resp, proto_error, CCode, PldmError,
-    PldmRequest, PldmResponse,
+    pldm_tx_req, pldm_tx_resp, proto_error, CCode, PldmError, PldmRequest,
+    PldmResponse,
 };
 
 use crate::*;
@@ -89,7 +89,7 @@ enum State<C: ReqChannel> {
     Activate,
 }
 
-impl <C: ReqChannel> From<&State<C>> for PldmFDState {
+impl<C: ReqChannel> From<&State<C>> for PldmFDState {
     fn from(s: &State<C>) -> PldmFDState {
         match s {
             State::Idle { .. } => PldmFDState::Idle,
@@ -154,7 +154,11 @@ impl<R: RespChannel> Responder<R> {
         }
 
         let Some(cmd) = Cmd::from_u8(req.cmd) else {
-            self.reply_error(&req, &mut comm, CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8);
+            self.reply_error(
+                &req,
+                &mut comm,
+                CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8,
+            );
             return Ok(());
         };
 
@@ -192,8 +196,12 @@ impl<R: RespChannel> Responder<R> {
             Cmd::QueryDeviceIdentifiers => self.cmd_qdi(&req, &mut comm, d),
             Cmd::GetFirmwareParameters => self.cmd_fwparams(&req, &mut comm, d),
             Cmd::RequestUpdate => self.cmd_update(&req, eid, &mut comm, d),
-            Cmd::PassComponentTable => self.cmd_pass_components(&req, &mut comm, d),
-            Cmd::UpdateComponent => return self.cmd_update_component(&req, comm, d),
+            Cmd::PassComponentTable => {
+                self.cmd_pass_components(&req, &mut comm, d)
+            }
+            Cmd::UpdateComponent => {
+                return self.cmd_update_component(&req, comm, d)
+            }
             Cmd::ActivateFirmware => self.cmd_activate(&req, &mut comm, d),
             Cmd::CancelUpdate => self.cmd_cancel_update(&req, &mut comm, d),
             Cmd::CancelUpdateComponent => {
@@ -220,10 +228,21 @@ impl<R: RespChannel> Responder<R> {
 
     pub fn pending_reply_ep(&mut self) -> Option<&mut R::ReqChannel> {
         let r = match &mut self.state {
-            | State::Download { req_comm, req_pending, ..}
-            | State::Verify { req_comm, req_pending, ..}
-            | State::Apply { req_comm, req_pending, ..}
-            => req_pending.then(|| req_comm),
+            State::Download {
+                req_comm,
+                req_pending,
+                ..
+            }
+            | State::Verify {
+                req_comm,
+                req_pending,
+                ..
+            }
+            | State::Apply {
+                req_comm,
+                req_pending,
+                ..
+            } => req_pending.then(|| req_comm),
             _ => None,
         };
         trace!("pending reply {}", r.is_some());
@@ -259,12 +278,7 @@ impl<R: RespChannel> Responder<R> {
         }
     }
 
-    fn reply_error(
-        &self,
-        req: &PldmRequest,
-        comm: &mut R,
-        cc: u8,
-    ) {
+    fn reply_error(&self, req: &PldmRequest, comm: &mut R, cc: u8) {
         let mut resp = req.response_borrowed(&[]);
         resp.cc = cc;
         let _ = pldm_tx_resp(comm, &resp)
@@ -365,7 +379,11 @@ impl<R: RespChannel> Responder<R> {
         dev: &mut impl Device,
     ) -> Result<()> {
         if !matches!(self.state, State::LearnComponents) {
-            self.reply_error(req, comm, FwCode::INVALID_STATE_FOR_COMMAND as u8);
+            self.reply_error(
+                req,
+                comm,
+                FwCode::INVALID_STATE_FOR_COMMAND as u8,
+            );
             return Ok(());
         }
 
@@ -690,12 +708,13 @@ impl<R: RespChannel> Responder<R> {
             State::Verify { .. } => self.progress_verify(dev),
             State::Apply { .. } => self.progress_apply(dev),
             State::Idle { .. } => {
-                if dev.now() - self.update_timestamp_fd_t1 > Self::FD_T1_TIMEOUT {
+                if dev.now() - self.update_timestamp_fd_t1 > Self::FD_T1_TIMEOUT
+                {
                     // TODO cancel any updates in Device?
                     self.set_state_idle_timeout();
                 }
             }
-            _ => ()
+            _ => (),
         }
     }
 
@@ -721,10 +740,7 @@ impl<R: RespChannel> Responder<R> {
     }
 
     // Download state progress
-    fn progress_download(
-        &mut self,
-        dev: &mut impl Device,
-    ) {
+    fn progress_download(&mut self, dev: &mut impl Device) {
         let State::Download {
             offset,
             ref request,
@@ -770,7 +786,8 @@ impl<R: RespChannel> Responder<R> {
             req_comm,
             req_pending,
             ..
-        } = &mut self.state else {
+        } = &mut self.state
+        else {
             unreachable!();
         };
 
@@ -785,7 +802,10 @@ impl<R: RespChannel> Responder<R> {
             // transfer complete sent
             if *tr == TransferResult::Success {
                 self.set_state_with(|prev| {
-                    let State::Download { details, req_comm, .. } = prev else {
+                    let State::Download {
+                        details, req_comm, ..
+                    } = prev
+                    else {
                         unreachable!()
                     };
                     State::Verify {
@@ -811,10 +831,7 @@ impl<R: RespChannel> Responder<R> {
     }
 
     // Verify state progress
-    fn progress_verify(
-        &mut self,
-        dev: &mut impl Device,
-    ) {
+    fn progress_verify(&mut self, dev: &mut impl Device) {
         let State::Verify {
             verify_result,
             request,
@@ -857,7 +874,10 @@ impl<R: RespChannel> Responder<R> {
 
         if *vr == VerifyResult::Success {
             self.set_state_with(|prev| {
-                let State::Verify { details, req_comm, .. } = prev else {
+                let State::Verify {
+                    details, req_comm, ..
+                } = prev
+                else {
                     unreachable!()
                 };
                 State::Apply {
@@ -875,10 +895,7 @@ impl<R: RespChannel> Responder<R> {
     }
 
     // Apply state progress
-    fn progress_apply(
-        &mut self,
-        dev: &mut impl Device,
-    ) {
+    fn progress_apply(&mut self, dev: &mut impl Device) {
         let State::Apply {
             apply_result,
             request,
@@ -1001,8 +1018,10 @@ impl<R: RespChannel> Responder<R> {
     ///
     /// The closure is provided with the previous state as an argument.
     /// This can be used to move members between State enum variants.
-    fn set_state_with<F>(&mut self, update: F) where F: FnOnce(State<R::ReqChannel>) -> State<R::ReqChannel> {
-
+    fn set_state_with<F>(&mut self, update: F)
+    where
+        F: FnOnce(State<R::ReqChannel>) -> State<R::ReqChannel>,
+    {
         self.prev_state = (&self.state).into();
 
         // Using ReadyXfer here as a placeholder without any contents,
