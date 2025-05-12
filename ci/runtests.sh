@@ -6,6 +6,7 @@ set -e
 export CARGO_TARGET_DIR=target/ci
 
 rustup target add thumbv7em-none-eabihf
+rustup component add rustfmt
 
 export RUSTDOCFLAGS='-D warnings'
 export RUSTFLAGS="-D warnings"
@@ -31,5 +32,7 @@ cargo build --features log
 )
 
 cargo doc --features mctp-estack/log
+
+cargo fmt -- --check
 
 echo success
