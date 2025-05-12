@@ -398,6 +398,7 @@ pub trait Listener {
     /// `RespChannel` type returned by this `Listener`
     type RespChannel<'a>: RespChannel where Self: 'a;
 
+    #[allow(clippy::type_complexity)]
     /// Blocking receive
     ///
     /// This receives a single MCTP message matched by the `Listener`.
@@ -417,6 +418,7 @@ pub trait AsyncListener {
     /// `RespChannel` type returned by this `Listener`
     type RespChannel<'a>: AsyncRespChannel where Self: 'a;
 
+    #[allow(clippy::type_complexity)]
     /// Blocking receive
     ///
     /// This receives a single MCTP message matched by the `Listener`.
@@ -446,4 +448,3 @@ pub fn encode_type_ic(typ: MsgType, ic: bool) -> u8 {
 pub fn decode_type_ic(ic_typ: u8) -> (MsgType, bool) {
     (MsgType(ic_typ & !MCTP_IC_MASK), (ic_typ & MCTP_IC_MASK) != 0)
 }
-
