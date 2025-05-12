@@ -511,7 +511,7 @@ impl std::str::FromStr for MctpAddr {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<MctpAddr, String> {
-        let mut parts = s.split(|c| c == ',');
+        let mut parts = s.split(',');
 
         let p1 = parts.next();
         let p2 = parts.next();
