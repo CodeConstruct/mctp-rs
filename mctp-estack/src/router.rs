@@ -9,9 +9,10 @@
 use crate::fmt::{debug, error, info, trace, warn};
 
 use core::cell::RefCell;
+use core::debug_assert;
 use core::future::{poll_fn, Future};
 use core::pin::pin;
-use core::task::Poll;
+use core::task::{Poll, Waker};
 
 use crate::reassemble::Reassembler;
 use crate::{
@@ -20,20 +21,26 @@ use crate::{
 };
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
-use embassy_sync::waitqueue::{MultiWakerRegistration, WakerRegistration};
+use embassy_sync::waitqueue::WakerRegistration;
 use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
-use heapless::Vec;
+use heapless::{Entry, FnvIndexMap, Vec};
 
+/// Maximum number of listeners per `Router`.
 // TODO sizing is a bit arbitrary. They don't take up much space.
-const MAX_LISTENERS: usize = 20;
-const MAX_RECEIVERS: usize = 50;
+pub const MAX_LISTENERS: usize = 20;
+
+/// Maximum number of channels per `Router`.
+///
+/// This is the maximum count of instantiated `RouterListener`,
+/// `RouterRespChannel`, `RouterReqChannel` at one time.
+// Must be power of 2.
+pub const MAX_CHANNELS: usize = 64;
 
 // TODO: feature to configure mutex?
 type RawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 type AsyncMutex<T> = embassy_sync::mutex::Mutex<RawMutex, T>;
-type BlockingMutex<T> =
-    embassy_sync::blocking_mutex::Mutex<RawMutex, RefCell<T>>;
+type BlockingMutex<T> = embassy_sync::blocking_mutex::Mutex<RawMutex, T>;
 
 type PortRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 // type PortRawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -299,6 +306,75 @@ impl<'a> PortBuilder<'a> {
     }
 }
 
+#[derive(Default)]
+struct WakerPoolInner {
+    pool: FnvIndexMap<AppCookie, WakerRegistration, MAX_CHANNELS>,
+    next: usize,
+}
+
+struct WakerPool {
+    inner: BlockingMutex<RefCell<WakerPoolInner>>,
+}
+
+impl Default for WakerPool {
+    fn default() -> Self {
+        Self {
+            inner: BlockingMutex::new(RefCell::new(Default::default())),
+        }
+    }
+}
+
+impl WakerPool {
+    fn wake(&self, cookie: AppCookie) {
+        self.inner.lock(|i| i.borrow_mut().pool[&cookie].wake())
+    }
+
+    fn wake_all(&self) {
+        self.inner.lock(|i| {
+            for w in i.borrow_mut().pool.values_mut() {
+                w.wake()
+            }
+        })
+    }
+
+    fn register(&self, cookie: AppCookie, waker: &Waker) {
+        self.inner
+            .lock(|i| i.borrow_mut().pool[&cookie].register(waker))
+    }
+
+    /// Returns `Error::NoSpace` if all slots are occupied.
+    fn alloc(&self) -> Result<AppCookie> {
+        self.inner.lock(|i| {
+            let mut i = i.borrow_mut();
+
+            loop {
+                // Allocate an arbitrary AppCookie
+                i.next = i.next.wrapping_add(1);
+                let cookie = AppCookie(i.next);
+                let Entry::Vacant(entry) = i.pool.entry(cookie) else {
+                    // Cookie was already in the map.
+                    // This is unlikely, a retry will soon succeed.
+                    continue;
+                };
+
+                break if entry.insert(WakerRegistration::new()).is_err() {
+                    // Map is full
+                    Err(Error::NoSpace)
+                } else {
+                    Ok(cookie)
+                };
+            }
+        })
+    }
+
+    fn remove(&self, cookie: AppCookie) {
+        self.inner.lock(|i| {
+            let e = i.borrow_mut().pool.remove(&cookie);
+            debug_assert!(e.is_some());
+        });
+    }
+}
+
 /// An async MCTP stack with routing.
 ///
 /// This interfaces between transport ports and MCTP using applications.
@@ -326,15 +402,14 @@ pub struct Router<'r> {
     // Has a separate non-async Mutex so it can be used by RouterAsyncListener::drop()
     // TODO filter by more than just MsgType, maybe have a Map of some sort?
     app_listeners:
-        BlockingMutex<[Option<(MsgType, WakerRegistration)>; MAX_LISTENERS]>,
+        BlockingMutex<RefCell<[Option<(MsgType, AppCookie)>; MAX_LISTENERS]>>,
+
+    recv_wakers: WakerPool,
 }
 
 pub struct RouterInner<'r> {
     /// Core MCTP stack
     stack: Stack,
-
-    // Wakers for RouterAsyncReqChannel and RouterAsyncRespChannel
-    app_receive_wakers: MultiWakerRegistration<MAX_RECEIVERS>,
 
     lookup: &'r mut dyn PortLookup,
 }
@@ -353,17 +428,15 @@ impl<'r> Router<'r> {
         ports: &'r [PortTop<'r>],
         lookup: &'r mut dyn PortLookup,
     ) -> Self {
-        let inner = RouterInner {
-            stack,
-            app_receive_wakers: MultiWakerRegistration::new(),
-            lookup,
-        };
+        let inner = RouterInner { stack, lookup };
+
+        let app_listeners =
+            BlockingMutex::new(RefCell::new([const { None }; MAX_LISTENERS]));
 
         Self {
             inner: AsyncMutex::new(inner),
-            app_listeners: BlockingMutex::new(RefCell::new(
-                [const { None }; MAX_LISTENERS],
-            )),
+            app_listeners,
+            recv_wakers: Default::default(),
             ports,
         }
     }
@@ -376,9 +449,9 @@ impl<'r> Router<'r> {
         let mut inner = self.inner.lock().await;
         let (next, expired) = inner.stack.update(now_millis)?;
         if expired {
-            // Wake pending sockets in case one was waiting on a now-expired response.
+            // Wake pending receivers in case one was waiting on a now-expired response.
             // TODO something more efficient, maybe Reassembler should hold a waker?
-            inner.app_receive_wakers.wake();
+            self.recv_wakers.wake_all();
         }
         Ok(next)
     }
@@ -403,10 +476,13 @@ impl<'r> Router<'r> {
             match inner.stack.receive(pkt) {
                 // Complete message
                 Ok(Some((msg, handle))) => {
+                    // Release the lock before further processing
                     let typ = msg.typ;
-                    let tag = msg.tag;
+                    let cookie = msg.cookie;
+                    let is_owner = msg.tag.is_owner();
                     drop(inner);
-                    self.incoming_local(tag, typ, handle).await;
+
+                    self.incoming_local(typ, is_owner, cookie, handle).await;
                     return ret_src;
                 }
                 // Fragment consumed, message is incomplete
@@ -440,15 +516,22 @@ impl<'r> Router<'r> {
 
     async fn incoming_local(
         &self,
-        tag: Tag,
         typ: MsgType,
+        is_owner: bool,
+        cookie: Option<AppCookie>,
         handle: ReceiveHandle,
     ) {
         trace!("incoming local, type {}", typ.0);
-        if tag.is_owner() {
+
+        debug_assert!(
+            is_owner == cookie.is_none(),
+            "cookie set only for responses"
+        );
+
+        if is_owner {
             self.incoming_listener(typ, handle).await
         } else {
-            self.incoming_response(tag, handle).await
+            self.incoming_response(cookie, handle).await
         }
     }
 
@@ -456,24 +539,24 @@ impl<'r> Router<'r> {
         let mut inner = self.inner.lock().await;
         let mut handle = Some(handle);
 
-        // wake the packet listener
+        // Find the matching listener
         self.app_listeners.lock(|a| {
             let mut a = a.borrow_mut();
-            // Find the matching listener
-            for (cookie, entry) in a.iter_mut().enumerate() {
-                if let Some((t, waker)) = entry {
-                    trace!("entry. {} vs {}", t.0, typ.0);
-                    if *t == typ {
-                        // OK unwrap: only set once
-                        let handle = handle.take().unwrap();
-                        inner
-                            .stack
-                            .set_cookie(&handle, Some(AppCookie(cookie)));
-                        inner.stack.return_handle(handle);
-                        waker.wake();
-                        trace!("listener match");
-                        break;
-                    }
+            for e in a.iter_mut() {
+                let Some((t, cookie)) = e else {
+                    continue;
+                };
+                if *t == typ {
+                    // OK unwrap: only set once
+                    let handle = handle.take().unwrap();
+
+                    // Mark the message for that listener
+                    inner.stack.set_cookie(&handle, Some(*cookie));
+                    inner.stack.return_handle(handle);
+
+                    self.recv_wakers.wake(*cookie);
+                    trace!("listener match");
+                    break;
                 }
             }
         });
@@ -484,12 +567,16 @@ impl<'r> Router<'r> {
         }
     }
 
-    async fn incoming_response(&self, _tag: Tag, handle: ReceiveHandle) {
+    async fn incoming_response(
+        &self,
+        cookie: Option<AppCookie>,
+        handle: ReceiveHandle,
+    ) {
         let mut inner = self.inner.lock().await;
         inner.stack.return_handle(handle);
-        // TODO: inefficient waking them all. should
-        // probably wake only the useful one.
-        inner.app_receive_wakers.wake();
+        if let Some(cookie) = cookie {
+            self.recv_wakers.wake(cookie);
+        }
     }
 
     fn app_bind(&self, typ: MsgType) -> Result<AppCookie> {
@@ -504,14 +591,11 @@ impl<'r> Router<'r> {
             }
 
             // Find a free slot
-            if let Some((i, bind)) =
-                a.iter_mut().enumerate().find(|(_i, bind)| bind.is_none())
-            {
-                *bind = Some((typ, WakerRegistration::new()));
-                return Ok(AppCookie(i));
-            }
-
-            Err(Error::NoSpace)
+            let slot =
+                a.iter_mut().find(|e| e.is_none()).ok_or(Error::NoSpace)?;
+            let cookie = self.recv_wakers.alloc()?;
+            *slot = Some((typ, cookie));
+            Ok(cookie)
         })
     }
 
@@ -528,97 +612,49 @@ impl<'r> Router<'r> {
             *bind = None;
             // No need to wake any waker, unbind only occurs
             // on RouterAsyncListener::drop.
+            self.recv_wakers.remove(cookie);
             Ok(())
         })
     }
 
-    /// Receive a message.
-    ///
-    /// Listeners will pass the cookie returned from `[app_bind]`.
-    /// Other receivers will pass `tag_eid`.
-    async fn app_recv_message<'f>(
+    async fn app_recv<'f>(
         &self,
-        cookie: Option<AppCookie>,
-        tag_eid: Option<(Tag, Eid)>,
+        cookie: AppCookie,
         buf: &'f mut [u8],
     ) -> Result<(&'f mut [u8], Eid, MsgType, Tag, MsgIC)> {
-        // Allow single use inside poll_fn
-        let mut buf = Some(buf);
-
-        poll_fn(|cx| {
-            // Lock it inside the poll_fn
-            let l = self.inner.lock();
-            let l = pin!(l);
-            let mut inner = match l.poll(cx) {
-                Poll::Ready(i) => i,
-                Poll::Pending => return Poll::Pending,
-            };
-
-            trace!("poll recv message");
-
-            // Find the message's handle
-            // TODO: get_deferred is inefficient lookup, does it matter?
-            let handle = match (cookie, tag_eid) {
-                // lookup by cookie for Listener
-                (Some(cookie), None) => {
-                    inner.stack.get_deferred_bycookie(&[cookie])
-                }
-                // lookup by tag/eid for ReqChannel
-                (None, Some((tag, eid))) => inner.stack.get_deferred(eid, tag),
-                // one of them must have been set
-                _ => unreachable!(),
-            };
-
-            let Some(handle) = handle else {
-                // No message handle. Maybe it hasn't arrived yet, find the waker
-                // to register.
-
-                if let Some(cookie) = cookie {
-                    // This is a Listener.
-                    trace!("listener, cookie index {}", cookie.0);
-                    self.app_listeners.lock(|a| {
-                        let mut a = a.borrow_mut();
-                        let Some(bind) = a.get_mut(cookie.0) else {
-                            debug_assert!(false, "recv bad cookie");
-                            return;
-                        };
-                        let Some((_typ, waker)) = bind else {
-                            debug_assert!(false, "recv no listener");
-                            return;
-                        };
-                        waker.register(cx.waker());
-                    });
-                } else {
-                    // Other receivers.
-                    trace!("other recv");
-                    inner.app_receive_wakers.register(cx.waker());
-                }
-                trace!("pending");
+        // Wait for the message to arrive
+        let (mut inner, handle) = poll_fn(|cx| {
+            let l = pin!(self.inner.lock());
+            let Poll::Ready(mut inner) = l.poll(cx) else {
                 return Poll::Pending;
             };
 
-            // A matching message was found. Fetch it, copy the contents to the caller,
-            // and finish with it for the stack.
-            trace!("got handle");
-
-            let msg = inner.stack.fetch_message(&handle);
-
-            // OK unwrap, set above and only hit once on Poll::Ready
-            let buf = buf.take().unwrap();
-            let res = if msg.payload.len() > buf.len() {
-                trace!("no space");
-                Err(Error::NoSpace)
-            } else {
-                trace!("good len {}", msg.payload.len());
-                let buf = &mut buf[..msg.payload.len()];
-                buf.copy_from_slice(msg.payload);
-                Ok((buf, msg.source, msg.typ, msg.tag, msg.ic))
+            let Some(handle) = inner.stack.get_deferred_bycookie(&[cookie])
+            else {
+                self.recv_wakers.register(cookie, cx.waker());
+                return Poll::Pending;
             };
 
-            inner.stack.finished_receive(handle);
-            Poll::Ready(res)
+            Poll::Ready((inner, handle))
         })
-        .await
+        .await;
+
+        // fetch the message using the handle
+        let msg = inner.stack.fetch_message(&handle);
+
+        let res = if msg.payload.len() > buf.len() {
+            trace!("no space");
+            Err(Error::NoSpace)
+        } else {
+            trace!("good len {}", msg.payload.len());
+            let buf = &mut buf[..msg.payload.len()];
+            buf.copy_from_slice(msg.payload);
+            Ok((buf, msg.source, msg.typ, msg.tag, msg.ic))
+        };
+
+        // handle must be returned
+        inner.stack.finished_receive(handle);
+        res
     }
 
     /// Used by traits to send a message, see comment on .send_vectored() methods
@@ -712,6 +748,7 @@ pub struct RouterAsyncReqChannel<'r> {
     sent_tag: Option<Tag>,
     router: &'r Router<'r>,
     tag_expires: bool,
+    cookie: Option<AppCookie>,
 }
 
 impl<'r> RouterAsyncReqChannel<'r> {
@@ -721,6 +758,7 @@ impl<'r> RouterAsyncReqChannel<'r> {
             sent_tag: None,
             tag_expires: true,
             router,
+            cookie: None,
         }
     }
 
@@ -752,6 +790,9 @@ impl Drop for RouterAsyncReqChannel<'_> {
     fn drop(&mut self) {
         if !self.tag_expires && self.sent_tag.is_some() {
             warn!("Didn't call async_drop()");
+        }
+        if let Some(c) = self.cookie {
+            self.router.recv_wakers.remove(c);
         }
     }
 }
@@ -789,6 +830,9 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
             .await?;
         debug_assert!(matches!(tag, Tag::Owned(_)));
         self.sent_tag = Some(tag);
+        if self.cookie.is_none() {
+            self.cookie = Some(self.router.recv_wakers.alloc()?);
+        }
         Ok(())
     }
 
@@ -800,11 +844,12 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
             debug!("recv without send");
             return Err(Error::BadArgument);
         };
+        let Some(cookie) = self.cookie else {
+            return Err(Error::BadArgument);
+        };
         let recv_tag = Tag::Unowned(tv);
-        let (buf, eid, typ, tag, ic) = self
-            .router
-            .app_recv_message(None, Some((recv_tag, self.eid)), buf)
-            .await?;
+        let (buf, eid, typ, tag, ic) =
+            self.router.app_recv(cookie, buf).await?;
         debug_assert_eq!(tag, recv_tag);
         debug_assert_eq!(eid, self.eid);
         Ok((typ, ic, buf))
@@ -883,10 +928,8 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
         buf: &'f mut [u8],
     ) -> mctp::Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)>
     {
-        let (msg, eid, typ, tag, ic) = self
-            .router
-            .app_recv_message(Some(self.cookie), None, buf)
-            .await?;
+        let (msg, eid, typ, tag, ic) =
+            self.router.app_recv(self.cookie, buf).await?;
 
         let Tag::Owned(tv) = tag else {
             debug_assert!(false, "listeners only accept owned tags");

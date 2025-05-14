@@ -496,14 +496,7 @@ impl Stack {
     ) -> Option<ReceiveHandle> {
         // Find the earliest matching entry
         self.done_reassemblers()
-            .filter(|(_i, re)| {
-                if let Some(c) = re.cookie {
-                    if cookies.contains(&c) {
-                        return true;
-                    }
-                }
-                false
-            })
+            .filter(|(_i, re)| re.cookie.is_some_and(|c| cookies.contains(&c)))
             .min_by_key(|(_i, re)| re.stamp)
             .map(|(i, re)| re.take_handle(i))
     }
