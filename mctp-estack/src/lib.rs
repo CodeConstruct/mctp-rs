@@ -126,7 +126,7 @@ struct Flow {
 }
 
 /// An opaque identifier that applications can use to associate responses.
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash, PartialOrd, Ord)]
 pub struct AppCookie(pub usize);
 
 type Header = libmctp::base_packet::MCTPTransportHeader<[u8; HEADER_LEN]>;
