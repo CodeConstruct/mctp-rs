@@ -17,7 +17,6 @@ crc = "3"
 embedded-io-async = { workspace = true }
 defmt = { workspace = true, optional = true }
 embassy-sync = "0.6"
-embassy-futures = "0.1"
 smbus-pec = { version = "1.0", features = ["lookup-table"] }
 uuid = { version = "1.16.0", default-features = false }
 
