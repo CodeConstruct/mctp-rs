@@ -11,6 +11,8 @@ rustup component add rustfmt
 export RUSTDOCFLAGS='-D warnings'
 export RUSTFLAGS="-D warnings"
 
+cargo fmt -- --check
+
 # stable, std
 cargo build --release --features mctp-estack/log
 cargo test --features mctp-estack/log
@@ -32,7 +34,5 @@ cargo build --features log
 )
 
 cargo doc --features mctp-estack/log
-
-cargo fmt -- --check
 
 echo success
