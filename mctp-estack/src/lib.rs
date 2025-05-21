@@ -530,7 +530,9 @@ impl Stack {
 
     /// Sets the local Endpoint ID.
     pub fn set_eid(&mut self, eid: u8) -> Result<()> {
-        self.own_eid = Eid::new_normal(eid)?;
+        self.own_eid = Eid::new_normal(eid)
+            .inspect_err(|_e| warn!("Invalid Set EID {}", eid))?;
+        info!("Set EID to {}", eid);
         Ok(())
     }
 

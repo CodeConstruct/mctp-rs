@@ -7,6 +7,7 @@
 
 //! MCTP Control Protocol implementation
 
+use crate::fmt::*;
 use crate::Router;
 use libmctp::control_packet::CompletionCode;
 use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgType};
@@ -63,8 +64,15 @@ impl<'a> MctpControlMsg<'a> {
         [&self.header.0, self.body]
     }
 
-    pub fn command_code(&self) -> CommandCode {
-        self.header.command_code().into()
+    /// Extract the MCTP control message command code.
+    ///
+    /// Unrecognised values will return `Err`.
+    pub fn command_code(&self) -> core::result::Result<CommandCode, u8> {
+        let cc = self.header.command_code();
+        match CommandCode::from(cc) {
+            CommandCode::Unknown => Err(cc),
+            cmd => Ok(cmd),
+        }
     }
 }
 
@@ -74,7 +82,7 @@ pub fn respond_get_eid<'a>(
     medium_specific: u8,
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
-    if req.command_code() != CommandCode::GetEndpointID {
+    if req.command_code() != Ok(CommandCode::GetEndpointID) {
         return Err(CompletionCode::Error);
     }
     if !req.body.is_empty() {
@@ -102,15 +110,17 @@ pub struct SetEndpointId {
 }
 
 pub fn parse_set_eid(req: &MctpControlMsg) -> ControlResult<SetEndpointId> {
-    if req.command_code() != CommandCode::SetEndpointID {
+    if req.command_code() != Ok(CommandCode::SetEndpointID) {
         return Err(CompletionCode::Error);
     }
     if req.body.len() != 2 {
         return Err(CompletionCode::ErrorInvalidLength);
     }
 
-    let eid = Eid::new_normal(req.body[1])
-        .map_err(|_| CompletionCode::ErrorInvalidData)?;
+    let eid = Eid::new_normal(req.body[1]).map_err(|_| {
+        warn!("Invalid Set EID {}", req.body[1]);
+        CompletionCode::ErrorInvalidData
+    })?;
 
     let mut ret = SetEndpointId {
         eid,
@@ -139,7 +149,7 @@ pub fn respond_set_eid<'a>(
     current_eid: Eid,
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
-    if req.command_code() != CommandCode::SetEndpointID {
+    if req.command_code() != Ok(CommandCode::SetEndpointID) {
         return Err(CompletionCode::Error);
     }
     let status = if accepted { 0b00000000 } else { 0b00010000 };
@@ -154,7 +164,7 @@ pub fn respond_get_uuid<'a>(
     uuid: Uuid,
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
-    if req.command_code() != CommandCode::GetEndpointUUID {
+    if req.command_code() != Ok(CommandCode::GetEndpointUUID) {
         return Err(CompletionCode::Error);
     }
 
@@ -172,7 +182,7 @@ pub fn respond_get_msg_types<'a>(
     msgtypes: &[MsgType],
     rsp_buf: &'a mut [u8],
 ) -> ControlResult<MctpControlMsg<'a>> {
-    if req.command_code() != CommandCode::GetMessageTypeSupport {
+    if req.command_code() != Ok(CommandCode::GetMessageTypeSupport) {
         return Err(CompletionCode::Error);
     }
     if !req.body.is_empty() {
@@ -256,7 +266,10 @@ impl<'a> MctpControl<'a> {
             .map_err(|_| mctp::Error::InvalidInput)?;
 
         let resp = match self.handle_req(&req).await {
-            Err(e) => respond_error(&req, e, &mut self.rsp_buf),
+            Err(e) => {
+                debug!("Control error response {:?}", e);
+                respond_error(&req, e, &mut self.rsp_buf)
+            }
             Ok(r) => Ok(r),
         }?;
 
@@ -283,8 +296,13 @@ impl<'a> MctpControl<'a> {
         &mut self,
         req: &'_ MctpControlMsg<'_>,
     ) -> ControlResult<MctpControlMsg> {
-        let cc = req.command_code();
+        let cc = req.command_code().map_err(|cc| {
+            debug!("Unsupported control command {}", cc);
+            CompletionCode::ErrorUnsupportedCmd
+        })?;
 
+        #[cfg(feature = "log")]
+        debug!("Control request {:?}", cc);
         match cc {
             CommandCode::GetEndpointID => {
                 let eid = self.router.get_eid().await;
