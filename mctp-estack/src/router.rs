@@ -16,8 +16,7 @@ use core::task::{Poll, Waker};
 
 use crate::reassemble::Reassembler;
 use crate::{
-    AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, MAX_MTU,
-    MAX_PAYLOAD,
+    AppCookie, Fragmenter, MctpMessage, SendOutput, Stack, MAX_MTU, MAX_PAYLOAD,
 };
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
@@ -474,14 +473,8 @@ impl<'r> Router<'r> {
         if inner.stack.is_local_dest(pkt) {
             match inner.stack.receive(pkt) {
                 // Complete message
-                Ok(Some((msg, handle))) => {
-                    // Release the lock before further processing
-                    let typ = msg.typ;
-                    let cookie = msg.cookie;
-                    let is_owner = msg.tag.is_owner();
-                    drop(inner);
-
-                    self.incoming_local(typ, is_owner, cookie, handle).await;
+                Ok(Some(msg)) => {
+                    self.incoming_local(msg).await;
                     return ret_src;
                 }
                 // Fragment consumed, message is incomplete
@@ -513,64 +506,43 @@ impl<'r> Router<'r> {
         ret_src
     }
 
-    async fn incoming_local(
-        &self,
-        typ: MsgType,
-        is_owner: bool,
-        cookie: Option<AppCookie>,
-        handle: ReceiveHandle,
-    ) {
-        trace!("incoming local, type {}", typ.0);
-
+    async fn incoming_local(&self, msg: MctpMessage<'_>) {
+        trace!("incoming local, type {}", msg.typ.0);
         debug_assert!(
-            is_owner == cookie.is_none(),
+            msg.tag.is_owner() == msg.cookie().is_none(),
             "cookie set only for responses"
         );
 
-        if is_owner {
-            self.incoming_listener(typ, handle).await
+        if msg.tag.is_owner() {
+            self.incoming_listener(msg).await
         } else {
-            self.incoming_response(cookie, handle).await
+            self.incoming_response(msg).await
         }
     }
 
-    async fn incoming_listener(&self, typ: MsgType, handle: ReceiveHandle) {
-        let mut inner = self.inner.lock().await;
-        let mut handle = Some(handle);
-
-        // Find the matching listener
+    async fn incoming_listener(&self, mut msg: MctpMessage<'_>) {
+        // wake the packet listener
         self.app_listeners.lock(|a| {
             let mut a = a.borrow_mut();
+            // Find the matching listener
             for (t, cookie) in a.iter_mut() {
-                if *t == typ {
-                    // OK unwrap: only set once
-                    let handle = handle.take().unwrap();
-
+                if *t == msg.typ {
                     // Mark the message for that listener
-                    inner.stack.set_cookie(&handle, Some(*cookie));
-                    inner.stack.return_handle(handle);
+                    msg.set_cookie(Some(*cookie));
+                    msg.retain();
 
                     self.recv_wakers.wake(*cookie);
                     trace!("listener match");
-                    break;
+                    return;
                 }
             }
-        });
-
-        if let Some(handle) = handle.take() {
             trace!("listener no match");
-            inner.stack.finished_receive(handle);
-        }
+        });
     }
 
-    async fn incoming_response(
-        &self,
-        cookie: Option<AppCookie>,
-        handle: ReceiveHandle,
-    ) {
-        let mut inner = self.inner.lock().await;
-        inner.stack.return_handle(handle);
-        if let Some(cookie) = cookie {
+    async fn incoming_response(&self, mut msg: MctpMessage<'_>) {
+        if let Some(cookie) = msg.cookie() {
+            msg.retain();
             self.recv_wakers.wake(cookie);
         }
     }
@@ -613,39 +585,35 @@ impl<'r> Router<'r> {
         cookie: AppCookie,
         buf: &'f mut [u8],
     ) -> Result<(&'f mut [u8], Eid, MsgType, Tag, MsgIC)> {
+        // buf can only be taken once
+        let mut buf = Some(buf);
+
         // Wait for the message to arrive
-        let (mut inner, handle) = poll_fn(|cx| {
+        poll_fn(|cx| {
             let l = pin!(self.inner.lock());
             let Poll::Ready(mut inner) = l.poll(cx) else {
                 return Poll::Pending;
             };
 
-            let Some(handle) = inner.stack.get_deferred_bycookie(&[cookie])
-            else {
+            let Some(msg) = inner.stack.get_deferred_bycookie(&[cookie]) else {
                 self.recv_wakers.register(cookie, cx.waker());
                 return Poll::Pending;
             };
 
-            Poll::Ready((inner, handle))
+            let buf = buf.take().unwrap();
+            let res = if msg.payload.len() > buf.len() {
+                trace!("no space");
+                Err(Error::NoSpace)
+            } else {
+                trace!("good len {}", msg.payload.len());
+                let buf = &mut buf[..msg.payload.len()];
+                buf.copy_from_slice(msg.payload);
+                Ok((buf, msg.source, msg.typ, msg.tag, msg.ic))
+            };
+
+            Poll::Ready(res)
         })
-        .await;
-
-        // fetch the message using the handle
-        let msg = inner.stack.fetch_message(&handle);
-
-        let res = if msg.payload.len() > buf.len() {
-            trace!("no space");
-            Err(Error::NoSpace)
-        } else {
-            trace!("good len {}", msg.payload.len());
-            let buf = &mut buf[..msg.payload.len()];
-            buf.copy_from_slice(msg.payload);
-            Ok((buf, msg.source, msg.typ, msg.tag, msg.ic))
-        };
-
-        // handle must be returned
-        inner.stack.finished_receive(handle);
-        res
+        .await
     }
 
     /// Used by traits to send a message, see comment on .send_vectored() methods

@@ -26,6 +26,8 @@ enum State {
     /// An error must be returned whenver Bad state is set,
     /// and the caller will dispose of the Reassembler.
     Bad,
+    /// Reassembler is not used at all.
+    Unused,
 }
 
 #[derive(Debug)]
@@ -38,13 +40,22 @@ pub(crate) struct Reassembler {
     pub tag: Tag,
     pub cookie: Option<AppCookie>,
     state: State,
-    // Set true when the ReceiveHandle to this reassembler exists.
-    handle_taken: bool,
     // Time of SOM received for Active state, or time of EOM for Done state.
     pub stamp: EventStamp,
 }
 
 impl Reassembler {
+    pub fn new_unused() -> Self {
+        Self {
+            state: State::Unused,
+            peer: Eid(0),
+            tag: Tag::Unowned(TagValue(0)),
+            dest_eid: Eid(0),
+            stamp: EventStamp::default(),
+            cookie: None,
+        }
+    }
+
     pub fn new(own_eid: Eid, packet: &[u8], stamp: EventStamp) -> Result<Self> {
         let header = Self::header(packet)?;
 
@@ -76,7 +87,6 @@ impl Reassembler {
 
             state: State::New,
             cookie: None,
-            handle_taken: false,
             stamp,
         })
     }
@@ -100,7 +110,7 @@ impl Reassembler {
     /// Returns `Ok(Some(_))` when a full message is reassembled.
     /// Returns `Ok(None)` on success when the message is incomplete.
     pub fn receive<'f, const N: usize>(
-        &mut self,
+        &'f mut self,
         packet: &[u8],
         message: &'f mut Vec<u8, N>,
         stamp: EventStamp,
@@ -178,7 +188,7 @@ impl Reassembler {
 
     /// Must be called in Done state
     pub fn message<'f, const N: usize>(
-        &self,
+        &'f mut self,
         message: &'f mut Vec<u8, N>,
     ) -> Result<MctpMessage<'f>> {
         let State::Done { typ, ic } = self.state else {
@@ -193,13 +203,19 @@ impl Reassembler {
             typ,
             ic,
             payload: message.as_slice(),
-            cookie: self.cookie,
+            reassembler: self,
+            retain: false,
         })
     }
 
     pub fn matches_packet(&self, packet: &[u8]) -> bool {
-        if self.is_done() {
-            return false;
+        match self.state {
+            State::Done { .. } | State::Unused => return false,
+            State::Bad => {
+                debug_assert!(false, "Using reassembler after failure");
+                return false;
+            }
+            State::New | State::Active { .. } => (),
         }
 
         let Ok(header) = Self::header(packet) else {
@@ -223,11 +239,6 @@ impl Reassembler {
     ) -> Option<u32> {
         let timeout = match self.state {
             State::Active { .. } => reassemble_timeout,
-            State::Done { .. } if self.handle_taken => {
-                // If a handle is outstanding the reassembler
-                // can't be cleaned up.
-                return Some(u32::MAX);
-            }
             State::Done { .. } => done_timeout,
             State::New | State::Bad => {
                 // Bad ones should have been cleaned up, New ones should
@@ -235,6 +246,7 @@ impl Reassembler {
                 debug_assert!(false, "Bad or new reassembler");
                 return None;
             }
+            State::Unused => return None,
         };
         self.stamp.check_timeout(now, timeout)
     }
@@ -271,32 +283,11 @@ impl Reassembler {
         matches!(self.state, State::Done { .. })
     }
 
-    pub fn handle_taken(&self) -> bool {
-        self.handle_taken
+    pub fn set_unused(&mut self) {
+        self.state = State::Unused
     }
 
-    /// Track whether an assember is in use or not
-    ///
-    /// Must only be called when in `Done` state, and only one handle
-    /// may be in use at a time.
-    pub(crate) fn take_handle(&mut self, i: usize) -> ReceiveHandle {
-        debug_assert!(!self.handle_taken);
-        debug_assert!(self.is_done());
-        self.handle_taken = true;
-        ReceiveHandle(i)
-    }
-
-    pub(crate) fn return_handle(&mut self, _r: ReceiveHandle) {
-        debug_assert!(self.handle_taken);
-        self.handle_taken = false;
-    }
-}
-
-impl Drop for Reassembler {
-    fn drop(&mut self) {
-        debug_assert!(
-            !self.handle_taken,
-            "Outstanding handle for dropped reassembler"
-        )
+    pub fn is_unused(&self) -> bool {
+        matches!(self.state, State::Unused)
     }
 }

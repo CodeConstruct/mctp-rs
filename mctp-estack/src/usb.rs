@@ -11,9 +11,7 @@
 
 #![allow(unused)]
 
-use crate::{
-    AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD,
-};
+use crate::{AppCookie, MctpMessage, SendOutput, Stack, MAX_PAYLOAD};
 use heapless::Vec;
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag};
 
@@ -77,7 +75,7 @@ impl MctpUsbHandler {
     pub fn receive<'f>(
         xfer: &[u8],
         mctp: &'f mut Stack,
-    ) -> Result<Option<(MctpMessage<'f>, ReceiveHandle)>> {
+    ) -> Result<Option<MctpMessage<'f>>> {
         // debug!("xfer: {xfer:02x?}");
         // TODO remainder in case of multiple MCTP per USB packet
         let (data, _rem) = Self::decode(xfer)?;

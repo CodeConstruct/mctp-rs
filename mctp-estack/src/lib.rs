@@ -64,11 +64,9 @@ pub(crate) use config::*;
 /// In milliseconds.
 const REASSEMBLY_EXPIRY_TIMEOUT: u32 = 6000;
 
-/// Timeout for [`get_deferred()`](Stack::get_deferred).
+/// Timeout for calling [`get_deferred()`](Stack::get_deferred).
 ///
-/// Reassembled messages will remain available for this length of time
-/// unless `finished_receive` etc is called.
-/// In milliseconds.
+/// See documentation for [`MctpMessage`].
 pub const DEFERRED_TIMEOUT: u32 = 6000;
 
 /// Timeout granularity.
@@ -134,17 +132,6 @@ pub struct AppCookie(pub usize);
 
 type Header = libmctp::base_packet::MCTPTransportHeader<[u8; HEADER_LEN]>;
 
-/// A handle to a received message.
-///
-/// Must be returned to the stack with [`finished_receive`](Stack::finished_receive)
-/// or [`fetch_message_with`](Stack::fetch_message_with)
-/// otherwise the reassembly slot will not be released for further messages.
-#[must_use]
-// This is an opaque index into `Stack.reassemblers`. Is deliberately not `Copy`,
-// so that it can't be held longer than the reassembler is valid.
-#[derive(Debug)]
-pub struct ReceiveHandle(usize);
-
 /// Low level MCTP stack.
 ///
 /// This is an IO-less MCTP stack, independent of any particular transport.
@@ -157,9 +144,9 @@ pub struct Stack {
 
     // The buffer is kept outside of the Reassembler, in case it is borrowed
     // from other storage locations in future.
-    // This is [Option<>] rather than Vec so that indices remain stable
-    // for the ReceiveHandle. Could use a Map instead?
-    reassemblers: [Option<(Reassembler, Vec<u8, MAX_PAYLOAD>)>; NUM_RECEIVE],
+    //
+    // Unused reassemblers set Reassembler::is_unused()
+    reassemblers: [(Reassembler, Vec<u8, MAX_PAYLOAD>); NUM_RECEIVE],
 
     /// monotonic time and counter.
     now: EventStamp,
@@ -192,13 +179,16 @@ impl Stack {
             counter: 0,
         };
         assert!(mtu >= HEADER_LEN + 1);
+        let reassemblers =
+            [(); NUM_RECEIVE].map(|_| (Reassembler::new_unused(), Vec::new()));
+
         Self {
             own_eid,
             now,
             next_timeout: 0,
             mtu,
             flows: Default::default(),
-            reassemblers: Default::default(),
+            reassemblers,
             next_tag: 0,
             next_seq: 0,
         }
@@ -248,8 +238,8 @@ impl Stack {
         let mut any_expired = false;
 
         // Check reassembler expiry for incomplete packets
-        for r in self.reassemblers.iter_mut() {
-            if let Some((re, _buf)) = r {
+        for (re, _buf) in self.reassemblers.iter_mut() {
+            if !re.is_unused() {
                 match re.check_expired(
                     &self.now,
                     REASSEMBLY_EXPIRY_TIMEOUT,
@@ -258,7 +248,7 @@ impl Stack {
                     None => {
                         trace!("Expired");
                         any_expired = true;
-                        *r = None;
+                        re.set_unused();
                     }
                     // Not expired, update the timeout
                     Some(t) => timeout = timeout.min(t),
@@ -353,116 +343,60 @@ impl Stack {
 
     /// Receive a packet.
     ///
-    /// Returns `Ok(Some(_))` when a full message is reassembled.
+    /// Returns `Ok(Some(MctpMessage))` when a full message is reassembled.
     /// Returns `Ok(None)` on success when the message is incomplete.
-    /// Callers must call [`finished_receive`](Stack::finished_receive)
-    /// or [`fetch_message_with`](Stack::fetch_message_with)
-    /// for any returned [`ReceiveHandle`].
     pub fn receive(
         &mut self,
         packet: &[u8],
-    ) -> Result<Option<(MctpMessage<'_>, ReceiveHandle)>> {
+    ) -> Result<Option<MctpMessage<'_>>> {
         // Get or insert a reassembler for this packet
         let idx = self.get_reassembler(packet)?;
-        let (re, buf) = if let Some(r) = &mut self.reassemblers[idx] {
-            r
-        } else {
+        let (re, buf) = &mut self.reassemblers[idx];
+        if re.is_unused() {
             // Create a new one
-            let mut re =
+            let mut newre =
                 Reassembler::new(self.own_eid, packet, self.now.increment())?;
+            buf.clear();
 
-            if !re.tag.is_owner() {
+            if !newre.tag.is_owner() {
                 // Only allow it if we had an existing flow
-                if let Some(f) = self.lookup_flow(re.peer, re.tag.tag()) {
-                    re.set_cookie(f.cookie);
+                if let Some(f) = self.lookup_flow(newre.peer, newre.tag.tag()) {
+                    newre.set_cookie(f.cookie);
                 } else {
                     return Err(Error::Unreachable);
                 }
             }
-            self.reassemblers[idx].insert((re, Vec::new()))
+            self.reassemblers[idx].0 = newre;
         };
+
+        // TODO polonius get-or-insert above
+        let (re, buf) = &mut self.reassemblers[idx];
 
         // Feed the packet to the reassembler
         match re.receive(packet, buf, self.now.increment()) {
             // Received a complete message
-            Ok(Some(_msg)) => {
+            Ok(Some(mut msg)) => {
                 // Have received a "response", flow is finished.
                 // TODO preallocated tags won't remove the flow.
+                let re = &mut msg.reassembler;
                 if !re.tag.is_owner() {
-                    let (peer, tv) = (re.peer, re.tag.tag());
-                    self.remove_flow(peer, tv);
+                    trace!("remove flow");
+                    let r = self.flows.remove(&(re.peer, re.tag.tag()));
+                    debug_assert!(r.is_some(), "non-existent remove_flow");
                 }
 
-                // Required to reborrow `re` and `buf`. Otherwise
-                // we hit lifetime problems setting `= None` in the Err case.
-                // These two lines can be removed once Rust "polonius" borrow
-                // checker is added.
-                let (re, buf) = self.reassemblers[idx].as_mut().unwrap();
-                let msg = re.message(buf)?;
-
-                let handle = re.take_handle(idx);
-                Ok(Some((msg, handle)))
+                Ok(Some(msg))
             }
             // Message isn't complete, no error
             Ok(None) => Ok(None),
             // Error
-            Err(e) => {
-                // Something went wrong, release the reassembler.
-                self.reassemblers[idx] = None;
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
-    /// Retrieves a MCTP message for a receive handle.
+    /// Retrieves a message previously retained.
     ///
-    /// The message is provided to a closure.
-    /// This allows using a closure that takes ownership of non-copyable objects.
-    pub fn fetch_message_with<F>(&mut self, handle: ReceiveHandle, f: F)
-    where
-        F: FnOnce(MctpMessage),
-    {
-        let m = self.fetch_message(&handle);
-        f(m);
-
-        // Always call finished_receive() regardless of errors
-        self.finished_receive(handle);
-    }
-
-    /// Provides a message previously returned from [`receive`](Self::receive)
-    pub fn fetch_message(&mut self, handle: &ReceiveHandle) -> MctpMessage<'_> {
-        let Some(Some((re, buf))) = self.reassemblers.get_mut(handle.0) else {
-            // ReceiveHandle can only be constructed when
-            // a completed message exists, so this should be impossible.
-            unreachable!("Bad ReceiveHandle");
-        };
-
-        let Ok(msg) = re.message(buf) else {
-            unreachable!("Bad ReceiveHandle");
-        };
-        msg
-    }
-
-    /// Returns a handle to the `Stack` and complete the message
-    pub fn finished_receive(&mut self, handle: ReceiveHandle) {
-        if let Some(r) = self.reassemblers.get_mut(handle.0) {
-            if let Some((re, _buf)) = r {
-                re.return_handle(handle);
-                *r = None;
-                return;
-            }
-        }
-        unreachable!("Bad ReceiveHandle");
-    }
-
-    /// Returns a handle to the `Stack`, the message will be kept (until timeouts)
-    pub fn return_handle(&mut self, handle: ReceiveHandle) {
-        // OK unwrap: handle can't be invalid
-        let (re, _buf) = self.reassemblers[handle.0].as_mut().unwrap();
-        re.return_handle(handle);
-    }
-
-    /// Retrieves a message deferred from a previous [`receive`](Self::receive) callback.
+    /// This will return messages from a previous [`MctpMessage::retain()`].
     ///
     /// Messages are selected by `(source_eid, tag)`.
     /// If multiple match the earliest is returned.
@@ -474,15 +408,24 @@ impl Stack {
         &mut self,
         source: Eid,
         tag: Tag,
-    ) -> Option<ReceiveHandle> {
+    ) -> Option<MctpMessage> {
         // Find the earliest matching entry
         self.done_reassemblers()
-            .filter(|(_i, re)| re.tag == tag && re.peer == source)
-            .min_by_key(|(_i, re)| re.stamp)
-            .map(|(i, re)| re.take_handle(i))
+            .filter(|(re, _buf)| re.tag == tag && re.peer == source)
+            .min_by_key(|(re, _buf)| re.stamp)
+            .map(|(re, buf)| re.message(buf))
+            .transpose()
+            .unwrap_or_else(|_| {
+                debug_assert!(false, "Done reassembler failed");
+                None
+            })
     }
 
-    /// Retrieves a message deferred from a previous [`receive`](Self::receive) callback.
+    /// Retrieves a message previously retained, matching by cookie.
+    ///
+    /// This will return messages from a previous [`MctpMessage::retain()`].
+    /// The cookie can either have been set by [`MctpMessage::set_cookie()`],
+    /// or will be set on a matching response from a [`Stack::start_send()`].
     ///
     /// If multiple match the earliest is returned.
     /// Multiple cookies to match may be provided.
@@ -493,12 +436,19 @@ impl Stack {
     pub fn get_deferred_bycookie(
         &mut self,
         cookies: &[AppCookie],
-    ) -> Option<ReceiveHandle> {
+    ) -> Option<MctpMessage> {
         // Find the earliest matching entry
         self.done_reassemblers()
-            .filter(|(_i, re)| re.cookie.is_some_and(|c| cookies.contains(&c)))
-            .min_by_key(|(_i, re)| re.stamp)
-            .map(|(i, re)| re.take_handle(i))
+            .filter(|(re, _buf)| {
+                re.cookie.is_some_and(|c| cookies.contains(&c))
+            })
+            .min_by_key(|(re, _buf)| re.stamp)
+            .map(|(re, buf)| re.message(buf))
+            .transpose()
+            .unwrap_or_else(|_| {
+                debug_assert!(false, "Done reassembler failed");
+                None
+            })
     }
 
     /// Returns an iterator over completed reassemblers.
@@ -506,25 +456,10 @@ impl Stack {
     /// The Item is (enumerate_index, reassembler)
     fn done_reassemblers(
         &mut self,
-    ) -> impl Iterator<Item = (usize, &mut Reassembler)> {
+    ) -> impl Iterator<Item = &mut (Reassembler, Vec<u8, MAX_PAYLOAD>)> {
         self.reassemblers
             .iter_mut()
-            .enumerate()
-            .filter_map(|(i, r)| {
-                // re must be Some and is_done
-                r.as_mut()
-                    .and_then(|(re, _buf)| re.is_done().then_some((i, re)))
-            })
-    }
-
-    pub fn set_cookie(
-        &mut self,
-        handle: &ReceiveHandle,
-        cookie: Option<AppCookie>,
-    ) {
-        // OK unwrap: handle can't be invalid
-        let (re, _buf) = self.reassemblers[handle.0].as_mut().unwrap();
-        re.set_cookie(cookie)
+            .filter(|(re, _buf)| re.is_done())
     }
 
     /// Sets the local Endpoint ID.
@@ -547,16 +482,19 @@ impl Stack {
     /// Returns an index in to the `reassemblers` array
     fn get_reassembler(&mut self, packet: &[u8]) -> Result<usize> {
         // Look for an existing match
-        let pos = self.reassemblers.iter().position(|r| {
-            r.as_ref()
-                .is_some_and(|(re, _buf)| re.matches_packet(packet))
-        });
+        let pos = self
+            .reassemblers
+            .iter()
+            .position(|(re, _buf)| re.matches_packet(packet));
         if let Some(pos) = pos {
             return Ok(pos);
         }
 
         // Find a spare slot
-        let pos = self.reassemblers.iter().position(|r| r.is_none());
+        let pos = self
+            .reassemblers
+            .iter()
+            .position(|(re, _buf)| re.is_unused());
         if let Some(pos) = pos {
             return Ok(pos);
         }
@@ -660,28 +598,14 @@ impl Stack {
         self.flows.get(&(peer, tv))
     }
 
-    fn remove_flow(&mut self, peer: Eid, tv: TagValue) {
-        trace!("remove flow");
-        let r = self.flows.remove(&(peer, tv));
-
-        debug_assert!(r.is_some(), "non-existent remove_flow");
-    }
-
     pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) -> Result<()> {
         trace!("cancel flow {}", source);
         let tag = Tag::Unowned(tv);
         let mut removed = false;
-        for r in self.reassemblers.iter_mut() {
-            if let Some((re, _buf)) = r.as_mut() {
-                if re.tag == tag && re.peer == source {
-                    if re.handle_taken() {
-                        trace!("Outstanding handle");
-                        return Err(Error::BadArgument);
-                    } else {
-                        *r = None;
-                        removed = true;
-                    }
-                }
+        for (re, _buf) in self.reassemblers.iter_mut() {
+            if !re.is_unused() && re.tag == tag && re.peer == source {
+                re.set_unused();
+                removed = true;
             }
         }
 
@@ -694,7 +618,17 @@ impl Stack {
     }
 }
 
-// For received reassembled messages
+/// A received MCTP message.
+///
+/// This is a complete message received by the MCTP stack.
+/// By default when it is dropped the MCTP stack will discard the internal message buffer.
+///
+/// If the the message is going to be retrieved again using
+/// [`get_deferred()`](Stack::get_deferred) or
+/// [`get_deferred_bycookie()`](Stack::get_deferred_bycookie), the caller must
+/// call [`retain()`](Self::retain). In that case the MCTP stack will keep the message
+/// buffer available until [`DEFERRED_TIMEOUT`] (measured from when the final packet
+/// of the message was received).
 pub struct MctpMessage<'a> {
     pub source: Eid,
     pub dest: Eid,
@@ -704,9 +638,48 @@ pub struct MctpMessage<'a> {
     pub ic: MsgIC,
     pub payload: &'a [u8],
 
-    /// Set for response messages when the request had `cookie` set in the [`Stack::start_send`] call.
+    /// Cookie is set for response messages when the request had `cookie` set in the [`Stack::start_send`] call.
     /// "Response" message refers having `TO` bit unset.
-    pub cookie: Option<AppCookie>,
+    reassembler: &'a mut Reassembler,
+
+    // By default when a MctpMessage is dropped the reassembler will be
+    // marked as Done.
+    retain: bool,
+}
+
+impl<'a> MctpMessage<'a> {
+    /// Retrieve the message's cookie.
+    ///
+    /// For response messages with `tag.is_owner() == false` this will be
+    /// set to the `cookie` argument of [`start_send()`](Stack::start_send).
+    pub fn cookie(&self) -> Option<AppCookie> {
+        self.reassembler.cookie
+    }
+
+    /// Retrieve the message's cookie.
+    ///
+    /// This can be used to set a cookie to be used later with
+    /// [`get_deferred_bycookie()`](Stack::get_deferred_bycookie).
+    pub fn set_cookie(&mut self, cookie: Option<AppCookie>) {
+        self.reassembler.set_cookie(cookie)
+    }
+
+    /// Retain the message in the MCTP stack.
+    ///
+    /// This must be called for every instance of a `MctpMessage` if
+    /// it is going to be fetch with `get_deferred{_bycookie}()` - otherwise the
+    /// message will be released by the MCTP stack.
+    pub fn retain(&mut self) {
+        self.retain = true;
+    }
+}
+
+impl<'a> Drop for MctpMessage<'a> {
+    fn drop(&mut self) {
+        if !self.retain {
+            self.reassembler.set_unused()
+        }
+    }
 }
 
 impl core::fmt::Debug for MctpMessage<'_> {
@@ -717,8 +690,8 @@ impl core::fmt::Debug for MctpMessage<'_> {
             .field("tag", &self.tag)
             .field("typ", &self.typ)
             .field("ic", &self.ic)
-            .field("cookie", &self.cookie)
             .field("payload length", &self.payload.len())
+            .field("re.cookie", &self.cookie())
             .finish_non_exhaustive()
     }
 }

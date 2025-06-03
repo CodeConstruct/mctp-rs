@@ -16,8 +16,8 @@ use smol::Timer;
 
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 use mctp_estack::{
-    fragment::SendOutput, serial::MctpSerialHandler, MctpMessage,
-    ReceiveHandle, Stack,
+    fragment::SendOutput, serial::MctpSerialHandler, AppCookie, MctpMessage,
+    Stack,
 };
 
 struct Inner<S: Read + Write> {
@@ -88,10 +88,7 @@ impl<S: Read + Write> Inner<S> {
     /// Return a whole MCTP message reassembled
     ///
     /// Deadline is milliseconds, relative to `self.now()`
-    fn receive(
-        &mut self,
-        deadline: Option<u64>,
-    ) -> Result<(MctpMessage<'_>, ReceiveHandle)> {
+    fn receive(&mut self, deadline: Option<u64>) -> Result<MctpMessage<'_>> {
         let now = self.now();
 
         let deadline = if let Some(d) = deadline {
@@ -102,6 +99,8 @@ impl<S: Read + Write> Inner<S> {
         } else {
             None
         };
+
+        const LIFETIME_COOKIE: AppCookie = AppCookie(0x123123);
 
         loop {
             let _ = self.mctp.update(self.now());
@@ -118,20 +117,26 @@ impl<S: Read + Write> Inner<S> {
 
             let pkt = smol::block_on(r)?;
 
-            let r = self.mctp.receive(pkt);
+            let r = self.mctp.receive(pkt)?;
 
-            match r {
-                Ok(Some((_msg, handle))) => {
-                    // Tricks here for loops+lifetimes.
-                    // Could return (msg, handle) directly once Rust polonius
-                    // merged.
-                    let msg = self.mctp.fetch_message(&handle);
-                    break Ok((msg, handle));
-                }
-                Ok(None) => (),
-                Err(e) => break Err(e),
+            if let Some(mut msg) = r {
+                // Tricks here for loops+lifetimes.
+                // Could return `msg` directly once Rust polonius merged.
+                assert!(
+                    msg.cookie().is_none(),
+                    "standalone isn't setting cookies on send"
+                );
+                msg.set_cookie(Some(LIFETIME_COOKIE));
+                msg.retain();
+                break;
             }
         }
+
+        // loop only exits after receiving a message
+        Ok(self
+            .mctp
+            .get_deferred_bycookie(&[LIFETIME_COOKIE])
+            .expect("cookie was just set"))
     }
 }
 
@@ -194,12 +199,13 @@ impl<S: Read + Write> mctp::ReqChannel for MctpSerialReq<S> {
             .map(|t| t.as_millis() as u64 + self.inner.now());
 
         loop {
-            let (msg, handle) = match self.inner.receive(deadline) {
+            let msg = match self.inner.receive(deadline) {
                 Ok(r) => r,
                 Err(Error::TimedOut) => {
-                    if let Err(e) = self.inner.mctp.cancel_flow(self.eid, tv) {
-                        debug!("Error cancelling flow: {e:?}");
-                    }
+                    // TODO
+                    // if let Err(e) = self.inner.mctp.cancel_flow(self.eid, tv) {
+                    //     debug!("Error cancelling flow: {e:?}");
+                    // }
                     return Err(Error::TimedOut);
                 }
                 Err(e) => {
@@ -212,11 +218,9 @@ impl<S: Read + Write> mctp::ReqChannel for MctpSerialReq<S> {
                 let b =
                     buf.get_mut(..msg.payload.len()).ok_or(Error::NoSpace)?;
                 b.copy_from_slice(msg.payload);
-                self.inner.mctp.finished_receive(handle);
                 return Ok((typ, ic, b));
             } else {
                 warn!("Dropped unexpected MCTP message {msg:?}");
-                self.inner.mctp.finished_receive(handle);
             }
         }
     }
@@ -288,7 +292,7 @@ impl<S: Read + Write> mctp::Listener for MctpSerialListener<S> {
     ) -> Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)> {
         loop {
             // Receive a whole message
-            let (msg, handle) = self.inner.receive(None)?;
+            let msg = self.inner.receive(None)?;
 
             // Return a matching packet
             if msg.typ == self.typ && msg.tag.is_owner() {
@@ -299,7 +303,7 @@ impl<S: Read + Write> mctp::Listener for MctpSerialListener<S> {
                     buf.get_mut(..msg.payload.len()).ok_or(Error::NoSpace)?;
                 b.copy_from_slice(msg.payload);
                 let eid = msg.source;
-                self.inner.mctp.finished_receive(handle);
+                drop(msg);
                 let resp = MctpSerialResp {
                     eid,
                     tv: tag.tag(),
@@ -309,7 +313,6 @@ impl<S: Read + Write> mctp::Listener for MctpSerialListener<S> {
                 return Ok((typ, ic, b, resp));
             } else {
                 trace!("Discarding unmatched message {msg:?}");
-                self.inner.mctp.finished_receive(handle);
             }
         }
     }

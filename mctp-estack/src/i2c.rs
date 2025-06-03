@@ -9,8 +9,7 @@
 use crate::fmt::{debug, error, info, trace, warn};
 
 use crate::{
-    AppCookie, Fragmenter, MctpMessage, MsgIC, ReceiveHandle, SendOutput,
-    Stack, MAX_PAYLOAD,
+    AppCookie, Fragmenter, MctpMessage, MsgIC, SendOutput, Stack, MAX_PAYLOAD,
 };
 use mctp::{Eid, Error, MsgType, Result, Tag};
 
@@ -85,14 +84,14 @@ impl MctpI2cEncap {
         &self,
         packet: &[u8],
         mctp: &'f mut Stack,
-    ) -> Result<Option<(MctpMessage<'f>, u8, ReceiveHandle)>> {
+    ) -> Result<Option<(MctpMessage<'f>, u8)>> {
         let (mctp_packet, i2c_src) = self.decode(packet, false)?;
 
         // Pass to MCTP stack
         let m = mctp.receive(mctp_packet)?;
 
         // Return a (message, i2c_source) tuple on completion
-        Ok(m.map(|(msg, handle)| (msg, i2c_src, handle)))
+        Ok(m.map(|msg| (msg, i2c_src)))
     }
 
     /// `out` must be sized to hold 8+mctp_mtu, to allow for MCTP and I2C headers
@@ -218,7 +217,7 @@ impl MctpI2cHandler {
         &mut self,
         packet: &[u8],
         mctp: &'f mut Stack,
-    ) -> Result<Option<(MctpMessage<'f>, u8, ReceiveHandle)>> {
+    ) -> Result<Option<(MctpMessage<'f>, u8)>> {
         self.encap.receive_done_pec(packet, mctp)
     }
 
