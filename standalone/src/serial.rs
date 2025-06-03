@@ -55,29 +55,32 @@ impl<S: Read + Write> Inner<S> {
     ) -> Result<Tag> {
         let _ = self.mctp.update(self.now());
         let cookie = None;
-        let r = self.mctpserial.send_fill(
+        let mut fragmenter = self.mctp.start_send(
             eid,
             typ,
             tag,
+            true,
             integrity_check,
+            Some(mctp_estack::serial::MTU_MAX),
             cookie,
-            &mut self.serial,
-            &mut self.mctp,
-            |v| {
-                for b in bufs {
-                    v.extend_from_slice(b).ok()?
+        )?;
+
+        let mut tx_msg = Vec::new();
+        for buf in bufs {
+            tx_msg.extend_from_slice(buf);
+        }
+
+        loop {
+            let mut tx_pkt = [0u8; mctp_estack::serial::MTU_MAX];
+            let r = fragmenter.fragment(&tx_msg, &mut tx_pkt);
+            match r {
+                SendOutput::Packet(p) => {
+                    let fut = self.mctpserial.send_async(p, &mut self.serial);
+                    smol::block_on(fut)?;
                 }
-                trace!("v len {}", v.len());
-                Some(())
-            },
-        );
-
-        let r = smol::block_on(r);
-
-        match r {
-            SendOutput::Packet(_) => unreachable!(),
-            SendOutput::Complete { tag, .. } => Ok(tag),
-            SendOutput::Error { err, .. } => Err(err),
+                SendOutput::Complete { tag, .. } => break Ok(tag),
+                SendOutput::Error { err, .. } => break Err(err),
+            };
         }
     }
 
@@ -102,26 +105,30 @@ impl<S: Read + Write> Inner<S> {
         loop {
             let _ = self.mctp.update(self.now());
 
-            let r = self
-                .mctpserial
-                .receive_async(&mut self.serial, &mut self.mctp)
-                .or(async {
-                    if let Some(deadline) = deadline {
-                        Timer::at(deadline)
-                    } else {
-                        Timer::never()
-                    }
-                    .await;
-                    Err(mctp::Error::TimedOut)
-                });
+            let r = self.mctpserial.recv_async(&mut self.serial).or(async {
+                if let Some(deadline) = deadline {
+                    Timer::at(deadline)
+                } else {
+                    Timer::never()
+                }
+                .await;
+                Err(mctp::Error::TimedOut)
+            });
 
-            let r = smol::block_on(r)?;
+            let pkt = smol::block_on(r)?;
 
-            if let Some((_msg, handle)) = r {
-                // Tricks here for loops+lifetimes.
-                // Could return (msg, handle) directly once Rust polonius merged.
-                let msg = self.mctp.fetch_message(&handle);
-                return Ok((msg, handle));
+            let r = self.mctp.receive(pkt);
+
+            match r {
+                Ok(Some((_msg, handle))) => {
+                    // Tricks here for loops+lifetimes.
+                    // Could return (msg, handle) directly once Rust polonius
+                    // merged.
+                    let msg = self.mctp.fetch_message(&handle);
+                    break Ok((msg, handle));
+                }
+                Ok(None) => (),
+                Err(e) => break Err(e),
             }
         }
     }

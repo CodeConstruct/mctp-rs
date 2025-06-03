@@ -7,11 +7,7 @@
 
 #[allow(unused)]
 use crate::fmt::{debug, error, info, trace, warn};
-
-use crate::{
-    AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD,
-};
-use mctp::{Eid, Error, MsgType, Result, Tag};
+use mctp::{Error, Result};
 
 use crc::Crc;
 use heapless::Vec;
@@ -21,7 +17,7 @@ use embedded_io_async::{Read, Write};
 const MCTP_SERIAL_REVISION: u8 = 0x01;
 
 // Limited by u8 bytecount field, minus MCTP headers
-const MCTP_SERIAL_MAXMTU: usize = 0xff - 4;
+pub const MTU_MAX: usize = 0xff - 4;
 
 // Received frame after unescaping. Bytes 1-N+1 in Figure 1 (serial protocol
 // revision to frame check seq lsb)
@@ -32,9 +28,6 @@ const FRAMING_FLAG: u8 = 0x7e;
 const FRAMING_ESCAPE: u8 = 0x7d;
 const FLAG_ESCAPED: u8 = 0x5e;
 const ESCAPE_ESCAPED: u8 = 0x5d;
-
-// 6 serial header/footer bytes, 0xff MCTP packet bytes
-const TXFRAGBUF: usize = 6 + 0xff;
 
 // Rx byte position in DSP0253 Table 1
 // Indicates the expected position of the next read byte.
@@ -57,9 +50,6 @@ pub struct MctpSerialHandler {
     rxbuf: Vec<u8, MAX_RX>,
     // Last-seen byte count field
     rxcount: usize,
-
-    send_message: Vec<u8, MAX_PAYLOAD>,
-    send_fragment: [u8; TXFRAGBUF],
 }
 
 // https://www.rfc-editor.org/rfc/rfc1662
@@ -72,29 +62,13 @@ impl MctpSerialHandler {
             rxpos: Pos::FrameSearch,
             rxcount: 0,
             rxbuf: Vec::new(),
-
-            send_message: Vec::new(),
-            send_fragment: [0u8; TXFRAGBUF],
         }
-    }
-
-    /// Receive with a timeout.
-    pub async fn receive_async<'f>(
-        &mut self,
-        input: &mut impl Read,
-        mctp: &'f mut Stack,
-    ) -> Result<Option<(MctpMessage<'f>, ReceiveHandle)>> {
-        let packet = self.read_frame_async(input).await?;
-        mctp.receive(packet)
     }
 
     /// Read a frame.
     ///
     /// This is async cancel-safe.
-    async fn read_frame_async(
-        &mut self,
-        input: &mut impl Read,
-    ) -> Result<&[u8]> {
+    pub async fn recv_async(&mut self, input: &mut impl Read) -> Result<&[u8]> {
         // TODO: This reads one byte a time, might need a buffering wrapper
         // for performance. Will require more thought about cancel-safety
 
@@ -211,65 +185,14 @@ impl MctpSerialHandler {
         None
     }
 
-    // Returns SendOutput::Complete or SendOutput::Error
-    pub async fn send_fill<F>(
+    pub async fn send_async(
         &mut self,
-        eid: Eid,
-        typ: MsgType,
-        tag: Option<Tag>,
-        ic: bool,
-        cookie: Option<AppCookie>,
+        pkt: &[u8],
         output: &mut impl Write,
-        mctp: &mut Stack,
-        fill_msg: F,
-    ) -> SendOutput
-    where
-        F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
-    {
-        // Fetch the message from input
-        self.send_message.clear();
-        if fill_msg(&mut self.send_message).is_none() {
-            return SendOutput::Error {
-                err: Error::Other,
-                cookie: None,
-            };
-        }
-
-        let mut fragmenter = match mctp.start_send(
-            eid,
-            typ,
-            tag,
-            true,
-            ic,
-            Some(MCTP_SERIAL_MAXMTU),
-            cookie,
-        ) {
-            Ok(f) => f,
-            Err(err) => return SendOutput::Error { err, cookie: None },
-        };
-
-        loop {
-            let r = fragmenter
-                .fragment(&self.send_message, &mut self.send_fragment);
-            match r {
-                SendOutput::Packet(p) => {
-                    trace!(
-                        "packet len {} msg {}",
-                        p.len(),
-                        self.send_message.len()
-                    );
-                    // Write to serial
-                    if let Err(_e) = Self::frame_to_serial(p, output).await {
-                        trace!("Serial write error");
-                        return SendOutput::Error {
-                            err: Error::TxFailure,
-                            cookie: None,
-                        };
-                    }
-                }
-                _ => return r.unborrowed().unwrap(),
-            }
-        }
+    ) -> Result<()> {
+        Self::frame_to_serial(pkt, output)
+            .await
+            .map_err(|_e| Error::TxFailure)
     }
 
     async fn frame_to_serial<W>(
@@ -354,7 +277,7 @@ mod tests {
 
         let mut h = MctpSerialHandler::new();
         let mut s = FromFutures::new(esc.as_slice());
-        let packet = h.read_frame_async(&mut s).await.unwrap();
+        let packet = h.recv_async(&mut s).await.unwrap();
         debug_assert_eq!(payload, packet);
     }
 
