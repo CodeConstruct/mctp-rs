@@ -3,20 +3,22 @@
  * Copyright (c) 2024-2025 Code Construct
  */
 
-//! MCTP Stack
+//! # MCTP Stack
 //!
 //! This crate provides a MCTP stack that can be embedded in other programs
-//! or devices. A [`Stack`] handles MCTP message formatting and parsing, independent
-//! of any particular MCTP transport binding.
+//! or devices.
 //!
 //! A [`Router`] object lets programs use a [`Stack`] with
-//! MCTP transport binding links. Each "port" handles transmitting and receiving
+//! MCTP transport binding links. Each *Port* handles transmitting and receiving
 //! packets independently. Messages destined for the stack's own EID will
 //! be passed to applications.
 //!
 //! Applications can create [`router::RouterAsyncListener`] and [`router::RouterAsyncReqChannel`]
 //! instances to communicate over MCTP. Those implement the standard [`mctp` crate](mctp)
 //! async traits.
+//!
+//! The IO-less [`Stack`] handles MCTP message formatting and parsing, independent
+//! of any particular MCTP transport binding.
 //!
 //! ## Configuration
 //!
@@ -29,6 +31,8 @@
 #![allow(clippy::too_many_arguments)]
 
 /// Re-exported so that callers can use the same `heapless` version.
+///
+/// `heapless::Vec` is currently an argument of `send_fill()` in transports.
 ///
 /// TODO: will be replaced with something else, maybe `heapless::VecView` once
 /// released.
@@ -141,6 +145,9 @@ type Header = libmctp::base_packet::MCTPTransportHeader<[u8; HEADER_LEN]>;
 #[derive(Debug)]
 pub struct ReceiveHandle(usize);
 
+/// Low level MCTP stack.
+///
+/// This is an IO-less MCTP stack, independent of any particular transport.
 #[derive(Debug)]
 pub struct Stack {
     own_eid: Eid,

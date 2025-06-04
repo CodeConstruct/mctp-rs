@@ -10,7 +10,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-//! Management Component Transport Protocol (MCTP)
+//! # Management Component Transport Protocol (MCTP)
 //!
 //! This crate provides common types and traits for MCTP.
 //! Transport implementations can implement [`ReqChannel`] and [`Listener`] to
