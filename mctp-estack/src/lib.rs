@@ -45,6 +45,7 @@ mod reassemble;
 pub mod router;
 pub mod serial;
 pub mod usb;
+#[macro_use]
 mod util;
 
 pub use fragment::{Fragmenter, SendOutput};
@@ -80,8 +81,6 @@ pub(crate) const HEADER_LEN: usize = 4;
 /// during the build. Those variables can be set in the `[env]`
 /// section of `.cargo/config.toml`.
 pub mod config {
-    use crate::get_build_var;
-
     /// Maximum size of a MCTP message payload in bytes, default 1032
     ///
     /// This does not include the MCTP type byte.

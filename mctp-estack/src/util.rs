@@ -1,7 +1,6 @@
 /// Takes a `usize` from a build-time environment variable.
 ///
 /// If unset, the default is used. Can be used in a const context.
-#[macro_export]
 macro_rules! get_build_var {
     ($name:literal, $default:expr) => {{
         match option_env!($name) {
