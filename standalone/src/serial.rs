@@ -16,7 +16,8 @@ use smol::Timer;
 
 use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
 use mctp_estack::{
-    serial::MctpSerialHandler, MctpMessage, ReceiveHandle, SendOutput, Stack,
+    fragment::SendOutput, serial::MctpSerialHandler, MctpMessage,
+    ReceiveHandle, Stack,
 };
 
 struct Inner<S: Read + Write> {

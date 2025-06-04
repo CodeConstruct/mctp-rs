@@ -39,7 +39,7 @@ use heapless::FnvIndexMap;
 use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
 
 pub mod control;
-mod fragment;
+pub mod fragment;
 pub mod i2c;
 mod reassemble;
 pub mod router;
@@ -48,7 +48,7 @@ pub mod usb;
 #[macro_use]
 mod util;
 
-pub use fragment::{Fragmenter, SendOutput};
+use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
 pub use router::Router;
 
