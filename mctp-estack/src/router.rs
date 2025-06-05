@@ -770,7 +770,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     async fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, MsgIC)> {
+    ) -> Result<(MsgType, MsgIC, &'f mut [u8])> {
         let Some(Tag::Owned(tv)) = self.sent_tag else {
             debug!("recv without send");
             return Err(Error::BadArgument);
@@ -782,8 +782,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
             .await?;
         debug_assert_eq!(tag, recv_tag);
         debug_assert_eq!(eid, self.eid);
-        Ok((buf, typ, ic))
-        // todo!()
+        Ok((typ, ic, buf))
     }
 
     fn remote_eid(&self) -> Eid {
@@ -857,7 +856,7 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
     async fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> mctp::Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)>
+    ) -> mctp::Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)>
     {
         let (msg, eid, typ, tag, ic) = self
             .router
@@ -875,7 +874,7 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
             router: self.router,
             typ,
         };
-        Ok((msg, resp, typ, ic))
+        Ok((typ, ic, msg, resp))
     }
 }
 

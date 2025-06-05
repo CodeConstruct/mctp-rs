@@ -348,7 +348,7 @@ where
 
     loop {
         // we should be in update mode, handle incoming data requests
-        let (mut req_ep, fw_req) = pldm::pldm_rx_req(listener)?;
+        let (fw_req, mut req_ep) = pldm::pldm_rx_req(listener)?;
 
         if fw_req.typ != PLDM_TYPE_FW {
             return Err(PldmUpdateError::new_proto(format!(
@@ -452,7 +452,7 @@ where
     }
 
     /* Verify results.. */
-    let (mut req_ep, fw_req) = pldm::pldm_rx_req(listener)?;
+    let (fw_req, mut req_ep) = pldm::pldm_rx_req(listener)?;
     match fw_req.cmd {
         0x17 => {
             let res = fw_req.data[0];
@@ -474,7 +474,7 @@ where
     drop(req_ep);
 
     /* Apply */
-    let (mut req_ep, fw_req) = pldm::pldm_rx_req(listener)?;
+    let (fw_req, mut req_ep) = pldm::pldm_rx_req(listener)?;
     match fw_req.cmd {
         0x18 => {
             let res = fw_req.data[0];

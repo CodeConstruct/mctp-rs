@@ -265,7 +265,7 @@ pub trait ReqChannel {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, MsgIC)>;
+    ) -> Result<(MsgType, MsgIC, &'f mut [u8])>;
 
     /// Return the remote Endpoint ID
     fn remote_eid(&self) -> Eid;
@@ -292,7 +292,7 @@ pub trait AsyncReqChannel {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> impl Future<Output = Result<(&'f mut [u8], MsgType, MsgIC)>>;
+    ) -> impl Future<Output = Result<(MsgType, MsgIC, &'f mut [u8])>>;
 
     /// Return the remote Endpoint ID
     fn remote_eid(&self) -> Eid;
@@ -410,7 +410,7 @@ pub trait Listener {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)>;
+    ) -> Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)>;
 }
 
 #[allow(missing_docs)]
@@ -431,7 +431,7 @@ pub trait AsyncListener {
         &mut self,
         buf: &'f mut [u8],
     ) -> impl Future<
-        Output = Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)>,
+        Output = Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)>,
     >;
 }
 

@@ -434,13 +434,13 @@ pub fn pldm_xfer_buf<'buf>(
 #[cfg(feature = "alloc")]
 pub fn pldm_rx_req<'lis, L>(
     listener: &'lis mut L,
-) -> Result<(L::RespChannel<'lis>, PldmRequest<'static>)>
+) -> Result<(PldmRequest<'static>, L::RespChannel<'lis>)>
 where
     L: mctp::Listener,
 {
     let mut rx_buf = [0u8; PLDM_MAX_MSGSIZE]; // todo: set size? peek?
-    let (ep, req) = pldm_rx_req_borrowed(listener, &mut rx_buf)?;
-    Ok((ep, req.make_owned()))
+    let (req, ep) = pldm_rx_req_borrowed(listener, &mut rx_buf)?;
+    Ok((req.make_owned(), ep))
 }
 
 /// Receive an incoming PLDM request in a borrowed buffer.
@@ -454,11 +454,11 @@ where
 pub fn pldm_rx_req_borrowed<'lis, 'buf, L>(
     listener: &'lis mut L,
     rx_buf: &'buf mut [u8],
-) -> Result<(L::RespChannel<'lis>, PldmRequest<'buf>)>
+) -> Result<(PldmRequest<'buf>, L::RespChannel<'lis>)>
 where
     L: mctp::Listener,
 {
-    let (rx_buf, ep, _typ, ic) = listener.recv(rx_buf)?;
+    let (typ, ic, rx_buf, ep) = listener.recv(rx_buf)?;
     if ic.0 {
         return Err(proto_error!("IC bit set"));
     }
@@ -468,7 +468,7 @@ where
     }
     let req = PldmRequest::from_buf_borrowed(rx_buf)?;
 
-    Ok((ep, req))
+    Ok((req, ep))
 }
 
 /// Receive an incoming PLDM response in a borrowed buffer.
@@ -476,7 +476,7 @@ pub fn pldm_rx_resp_borrowed<'buf>(
     ep: &mut impl mctp::ReqChannel,
     rx_buf: &'buf mut [u8],
 ) -> Result<PldmResponse<'buf>> {
-    let (rx_buf, _eid, ic) = ep.recv(rx_buf)?;
+    let (_typ, ic, rx_buf) = ep.recv(rx_buf)?;
     if ic.0 {
         return Err(proto_error!("IC bit set"));
     }

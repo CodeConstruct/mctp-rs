@@ -184,7 +184,7 @@ impl<S: Read + Write> mctp::ReqChannel for MctpSerialReq<S> {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, MsgIC)> {
+    ) -> Result<(MsgType, MsgIC, &'f mut [u8])> {
         let tv = self.sent_tv.ok_or(Error::BadArgument)?;
         let match_tag = Tag::Unowned(tv);
 
@@ -213,7 +213,7 @@ impl<S: Read + Write> mctp::ReqChannel for MctpSerialReq<S> {
                     buf.get_mut(..msg.payload.len()).ok_or(Error::NoSpace)?;
                 b.copy_from_slice(msg.payload);
                 self.inner.mctp.finished_receive(handle);
-                return Ok((b, typ, ic));
+                return Ok((typ, ic, b));
             } else {
                 warn!("Dropped unexpected MCTP message {msg:?}");
                 self.inner.mctp.finished_receive(handle);
@@ -285,7 +285,7 @@ impl<S: Read + Write> mctp::Listener for MctpSerialListener<S> {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)> {
+    ) -> Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)> {
         loop {
             // Receive a whole message
             let (msg, handle) = self.inner.receive(None)?;
@@ -306,7 +306,7 @@ impl<S: Read + Write> mctp::Listener for MctpSerialListener<S> {
                     inner: &mut self.inner,
                     typ,
                 };
-                return Ok((b, resp, typ, ic));
+                return Ok((typ, ic, b, resp));
             } else {
                 trace!("Discarding unmatched message {msg:?}");
                 self.inner.mctp.finished_receive(handle);
