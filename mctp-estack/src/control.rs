@@ -230,9 +230,13 @@ pub fn mctp_control_rx_req<'f, 'l, L>(
 where
     L: Listener,
 {
-    let (buf, ch, _typ, ic) = listener.recv(buf)?;
+    let (buf, ch, typ, ic) = listener.recv(buf)?;
     if ic.0 {
         return Err(Error::InvalidInput);
+    }
+    if typ != mctp::MCTP_TYPE_CONTROL {
+        // Listener was bound to the wrong type?
+        return Err(Error::BadArgument);
     }
 
     let msg = MctpControlMsg::from_buf(buf).map_err(|_| Error::InvalidInput)?;
