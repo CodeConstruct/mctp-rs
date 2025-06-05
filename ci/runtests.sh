@@ -33,6 +33,14 @@ cargo build --target thumbv7em-none-eabihf --features defmt --no-default-feature
 cargo build --features log
 )
 
+# not a workspace
+(
+cd mctp-usb-embassy
+cargo build --target thumbv7em-none-eabihf --features defmt --no-default-features
+cargo build --features log
+cargo doc
+)
+
 cargo doc --features mctp-estack/log
 
 echo success

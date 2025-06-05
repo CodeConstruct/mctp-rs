@@ -1,0 +1,26 @@
+[package]
+name = "mctp-usb-embassy"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+categories = ["network-programming", "embedded", "no-std"]
+repository = "https://github.com/CodeConstruct/mctp-rs"
+rust-version = "1.82"
+
+[dependencies]
+embassy-usb = { version = "0.4" }
+embassy-usb-driver = { version = "0.1" }
+embassy-futures = { version = "0.1" }
+
+log = { version = "0.4", optional = true }
+defmt = { version = "0.3", optional = true }
+
+mctp = { path = "../mctp", default-features = false }
+mctp-estack = { path = "../mctp-estack", default-features = false }
+heapless = "0.8"
+
+[features]
+default = ["log"]
+defmt = ["mctp-estack/defmt", "dep:defmt"]
+log = ["mctp-estack/log", "dep:log"]
+std = ["mctp/std"]
