@@ -462,6 +462,10 @@ where
     if ic.0 {
         return Err(proto_error!("IC bit set"));
     }
+    if typ != mctp::MCTP_TYPE_PLDM {
+        // Not a PLDM listener?
+        return Err(PldmError::InvalidArgument);
+    }
     let req = PldmRequest::from_buf_borrowed(rx_buf)?;
 
     Ok((ep, req))
