@@ -71,6 +71,11 @@ impl core::fmt::Display for MsgType {
     }
 }
 
+/// MCTP Message Integrity Check field.
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MsgIC(pub bool);
+
 /// MCTP Control Protocol
 pub const MCTP_TYPE_CONTROL: MsgType = MsgType(0x00);
 /// PLDM
@@ -239,7 +244,7 @@ pub trait ReqChannel {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()>;
 
@@ -250,7 +255,7 @@ pub trait ReqChannel {
     ///
     /// IC bit is unset.
     fn send(&mut self, typ: MsgType, buf: &[u8]) -> Result<()> {
-        self.send_vectored(typ, false, &[buf])
+        self.send_vectored(typ, MsgIC(false), &[buf])
     }
 
     /// Blocking receive
@@ -260,7 +265,7 @@ pub trait ReqChannel {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, bool)>;
+    ) -> Result<(&'f mut [u8], MsgType, MsgIC)>;
 
     /// Return the remote Endpoint ID
     fn remote_eid(&self) -> Eid;
@@ -272,7 +277,7 @@ pub trait AsyncReqChannel {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> impl Future<Output = Result<()>>;
 
@@ -281,13 +286,13 @@ pub trait AsyncReqChannel {
         typ: MsgType,
         buf: &[u8],
     ) -> impl Future<Output = Result<()>> {
-        async move { self.send_vectored(typ, false, &[buf]).await }
+        async move { self.send_vectored(typ, MsgIC(false), &[buf]).await }
     }
 
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> impl Future<Output = Result<(&'f mut [u8], MsgType, bool)>>;
+    ) -> impl Future<Output = Result<(&'f mut [u8], MsgType, MsgIC)>>;
 
     /// Return the remote Endpoint ID
     fn remote_eid(&self) -> Eid;
@@ -312,7 +317,7 @@ pub trait RespChannel {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()>;
 
@@ -323,7 +328,7 @@ pub trait RespChannel {
     ///
     /// IC bit is unset.
     fn send(&mut self, typ: MsgType, buf: &[u8]) -> Result<()> {
-        self.send_vectored(typ, false, &[buf])
+        self.send_vectored(typ, MsgIC(false), &[buf])
     }
 
     /// Return the remote Endpoint ID
@@ -353,7 +358,7 @@ pub trait AsyncRespChannel {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> impl Future<Output = Result<()>>;
 
@@ -368,7 +373,7 @@ pub trait AsyncRespChannel {
         typ: MsgType,
         buf: &[u8],
     ) -> impl Future<Output = Result<()>> {
-        async move { self.send_vectored(typ, false, &[buf]).await }
+        async move { self.send_vectored(typ, MsgIC(false), &[buf]).await }
     }
 
     /// Return the remote Endpoint ID
@@ -392,14 +397,14 @@ pub trait Listener {
     /// Blocking receive
     ///
     /// This receives a single MCTP message matched by the `Listener`.
-    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `bool`.
+    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `MsgIC`.
     ///
     /// The returned `RespChannel` should be used to send responses to the
     /// request.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, bool)>;
+    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)>;
 }
 
 #[allow(missing_docs)]
@@ -413,14 +418,14 @@ pub trait AsyncListener {
     /// Blocking receive
     ///
     /// This receives a single MCTP message matched by the `Listener`.
-    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `bool`.
+    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `MsgIC`.
     ///
     /// The returned `RespChannel` should be used to send responses.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
     ) -> impl Future<
-        Output = Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, bool)>,
+        Output = Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)>,
     >;
 }
 
@@ -429,17 +434,17 @@ const MCTP_IC_MASK: u8 = 0x80;
 /// Encode message type and IC bit
 ///
 /// For transport implementations.
-pub fn encode_type_ic(typ: MsgType, ic: bool) -> u8 {
-    let ic_val = if ic { MCTP_IC_MASK } else { 0 };
+pub fn encode_type_ic(typ: MsgType, ic: MsgIC) -> u8 {
+    let ic_val = if ic.0 { MCTP_IC_MASK } else { 0 };
     typ.0 & !MCTP_IC_MASK | ic_val
 }
 
 /// Decode message type and IC bit
 ///
 /// For transport implementations.
-pub fn decode_type_ic(ic_typ: u8) -> (MsgType, bool) {
+pub fn decode_type_ic(ic_typ: u8) -> (MsgType, MsgIC) {
     (
         MsgType(ic_typ & !MCTP_IC_MASK),
-        (ic_typ & MCTP_IC_MASK) != 0,
+        MsgIC((ic_typ & MCTP_IC_MASK) != 0),
     )
 }

@@ -8,7 +8,7 @@
 #[allow(unused)]
 use crate::fmt::{debug, error, info, trace, warn};
 
-use mctp::{Eid, Error, MsgType, Result, Tag, MCTP_HEADER_VERSION_1};
+use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, MCTP_HEADER_VERSION_1};
 
 use crate::{AppCookie, Header, HEADER_LEN, MAX_MTU};
 
@@ -18,7 +18,7 @@ pub struct Fragmenter {
     dest: Eid,
     typ: MsgType,
     tag: Tag,
-    ic: bool,
+    ic: MsgIC,
     seq: u8,
     mtu: usize,
 
@@ -38,7 +38,7 @@ impl Fragmenter {
         tag: Tag,
         mtu: usize,
         cookie: Option<AppCookie>,
-        ic: bool,
+        ic: MsgIC,
         initial_seq: u8,
     ) -> Result<Self> {
         if tag.tag().0 > mctp::MCTP_TAG_MAX {

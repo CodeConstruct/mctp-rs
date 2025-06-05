@@ -9,8 +9,8 @@
 use crate::fmt::{debug, error, info, trace, warn};
 
 use crate::{
-    AppCookie, Fragmenter, MctpMessage, ReceiveHandle, SendOutput, Stack,
-    MAX_PAYLOAD,
+    AppCookie, Fragmenter, MctpMessage, MsgIC, ReceiveHandle, SendOutput,
+    Stack, MAX_PAYLOAD,
 };
 use mctp::{Eid, Error, MsgType, Result, Tag};
 
@@ -289,7 +289,7 @@ impl MctpI2cHandler {
         eid: Eid,
         typ: MsgType,
         tag: Option<Tag>,
-        ic: bool,
+        ic: MsgIC,
         i2c_dest: u8,
         cookie: Option<AppCookie>,
         mctp: &mut Stack,

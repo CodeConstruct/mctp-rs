@@ -16,12 +16,12 @@ enum State {
     New,
     Active {
         typ: MsgType,
-        ic: bool,
+        ic: MsgIC,
         next_seq: u8,
     },
     Done {
         typ: MsgType,
-        ic: bool,
+        ic: MsgIC,
     },
     /// An error must be returned whenver Bad state is set,
     /// and the caller will dispose of the Reassembler.

@@ -18,7 +18,7 @@ use crate::{
     AppCookie, Fragmenter, ReceiveHandle, SendOutput, Stack, MAX_MTU,
     MAX_PAYLOAD,
 };
-use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
+use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
 use embassy_sync::waitqueue::{MultiWakerRegistration, WakerRegistration};
 use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
@@ -516,7 +516,7 @@ impl<'r> Router<'r> {
         cookie: Option<AppCookie>,
         tag_eid: Option<(Tag, Eid)>,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Eid, MsgType, Tag, bool)> {
+    ) -> Result<(&'f mut [u8], Eid, MsgType, Tag, MsgIC)> {
         // Allow single use inside poll_fn
         let mut buf = Some(buf);
 
@@ -605,7 +605,7 @@ impl<'r> Router<'r> {
         typ: MsgType,
         tag: Option<Tag>,
         tag_expires: bool,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         buf: &[&[u8]],
         cookie: Option<AppCookie>,
     ) -> Result<Tag> {
@@ -745,7 +745,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     async fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
         // For the first call, we pass a None tag, get an Owned one allocated.
@@ -770,7 +770,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     async fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, bool)> {
+    ) -> Result<(&'f mut [u8], MsgType, MsgIC)> {
         let Some(Tag::Owned(tv)) = self.sent_tag else {
             debug!("recv without send");
             return Err(Error::BadArgument);
@@ -812,7 +812,7 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
     async fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
         let tag = Some(Tag::Unowned(self.tv));
@@ -857,7 +857,7 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
     async fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> mctp::Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, bool)>
+    ) -> mctp::Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)>
     {
         let (msg, eid, typ, tag, ic) = self
             .router

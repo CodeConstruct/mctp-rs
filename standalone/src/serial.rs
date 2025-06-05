@@ -14,7 +14,7 @@ use embedded_io_async::{Read, Write};
 use smol::future::FutureExt;
 use smol::Timer;
 
-use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
+use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 use mctp_estack::{
     fragment::SendOutput, serial::MctpSerialHandler, MctpMessage,
     ReceiveHandle, Stack,
@@ -51,7 +51,7 @@ impl<S: Read + Write> Inner<S> {
         eid: Eid,
         typ: MsgType,
         tag: Option<Tag>,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<Tag> {
         let _ = self.mctp.update(self.now());
@@ -166,7 +166,7 @@ impl<S: Read + Write> mctp::ReqChannel for MctpSerialReq<S> {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
         let req_tag = None;
@@ -184,7 +184,7 @@ impl<S: Read + Write> mctp::ReqChannel for MctpSerialReq<S> {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, bool)> {
+    ) -> Result<(&'f mut [u8], MsgType, MsgIC)> {
         let tv = self.sent_tv.ok_or(Error::BadArgument)?;
         let match_tag = Tag::Unowned(tv);
 
@@ -239,7 +239,7 @@ impl<S: Read + Write> mctp::RespChannel for MctpSerialResp<'_, S> {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        integrity_check: bool,
+        integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
         let tag = Some(Tag::Unowned(self.tv));
@@ -280,7 +280,7 @@ impl<S: Read + Write> mctp::Listener for MctpSerialListener<S> {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, bool)> {
+    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, MsgIC)> {
         loop {
             // Receive a whole message
             let (msg, handle) = self.inner.receive(None)?;

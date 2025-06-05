@@ -46,7 +46,7 @@ use std::os::unix::io::RawFd;
 use std::time::Duration;
 
 use mctp::{
-    Eid, MsgType, Result, Tag, TagValue, MCTP_ADDR_ANY, MCTP_TAG_OWNER,
+    Eid, MsgIC, MsgType, Result, Tag, TagValue, MCTP_ADDR_ANY, MCTP_TAG_OWNER,
 };
 
 /* until we have these in libc... */
@@ -340,7 +340,7 @@ impl mctp::ReqChannel for MctpLinuxReq {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        ic: bool,
+        ic: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
         let typ_ic = mctp::encode_type_ic(typ, ic);
@@ -363,7 +363,7 @@ impl mctp::ReqChannel for MctpLinuxReq {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, bool)> {
+    ) -> Result<(&'f mut [u8], MsgType, MsgIC)> {
         if !self.sent {
             return Err(mctp::Error::BadArgument);
         }
@@ -429,7 +429,7 @@ impl mctp::Listener for MctpLinuxListener {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MctpLinuxResp<'_>, MsgType, bool)> {
+    ) -> Result<(&'f mut [u8], MctpLinuxResp<'_>, MsgType, MsgIC)> {
         let (sz, addr) = self.sock.recvfrom(buf)?;
         let src = Eid(addr.0.smctp_addr);
         let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
@@ -469,7 +469,7 @@ impl mctp::RespChannel for MctpLinuxResp<'_> {
     fn send_vectored(
         &mut self,
         typ: MsgType,
-        ic: bool,
+        ic: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
         let typ_ic = mctp::encode_type_ic(typ, ic);

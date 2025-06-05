@@ -15,6 +15,8 @@
 
 use core::fmt::{self, Debug};
 
+use mctp::MsgIC;
+
 pub mod util;
 use util::*;
 
@@ -457,7 +459,7 @@ where
     L: mctp::Listener,
 {
     let (rx_buf, ep, _typ, ic) = listener.recv(rx_buf)?;
-    if ic {
+    if ic.0 {
         return Err(proto_error!("IC bit set"));
     }
     let req = PldmRequest::from_buf_borrowed(rx_buf)?;
@@ -471,7 +473,7 @@ pub fn pldm_rx_resp_borrowed<'buf>(
     rx_buf: &'buf mut [u8],
 ) -> Result<PldmResponse<'buf>> {
     let (rx_buf, _eid, ic) = ep.recv(rx_buf)?;
-    if ic {
+    if ic.0 {
         return Err(proto_error!("IC bit set"));
     }
     PldmResponse::from_buf_borrowed(rx_buf)
@@ -486,7 +488,7 @@ pub fn pldm_tx_resp(
 ) -> Result<()> {
     let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
     let txs = &[&tx_buf, resp.data.as_ref()];
-    ep.send_vectored(mctp::MCTP_TYPE_PLDM, false, txs)?;
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, MsgIC(false), txs)?;
     Ok(())
 }
 
@@ -505,6 +507,6 @@ pub fn pldm_tx_req(
     let tx_buf = [1 << 7 | req.iid, req.typ & 0x3f, req.cmd];
 
     let txs = &[&tx_buf, req.data.as_ref()];
-    ep.send_vectored(mctp::MCTP_TYPE_PLDM, false, txs)?;
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, MsgIC(false), txs)?;
     Ok(())
 }

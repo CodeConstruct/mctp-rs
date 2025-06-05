@@ -10,7 +10,7 @@
 use crate::fmt::*;
 use crate::Router;
 use libmctp::control_packet::CompletionCode;
-use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgType};
+use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgIC, MsgType};
 use uuid::Uuid;
 
 pub use libmctp::control_packet::CommandCode;
@@ -231,7 +231,7 @@ where
     L: Listener,
 {
     let (buf, ch, _typ, ic) = listener.recv(buf)?;
-    if ic {
+    if ic.0 {
         return Err(Error::InvalidInput);
     }
 
@@ -274,7 +274,11 @@ impl<'a> MctpControl<'a> {
         }?;
 
         resp_chan
-            .send_vectored(mctp::MCTP_TYPE_CONTROL, false, &resp.slices())
+            .send_vectored(
+                mctp::MCTP_TYPE_CONTROL,
+                MsgIC(false),
+                &resp.slices(),
+            )
             .await
     }
 

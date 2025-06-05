@@ -15,7 +15,7 @@ use crate::{
     AppCookie, MctpMessage, ReceiveHandle, SendOutput, Stack, MAX_PAYLOAD,
 };
 use heapless::Vec;
-use mctp::{Eid, Error, MsgType, Result, Tag};
+use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag};
 
 #[cfg(feature = "defmt")]
 #[allow(unused)]
@@ -89,7 +89,7 @@ impl MctpUsbHandler {
         eid: Eid,
         typ: MsgType,
         tag: Option<Tag>,
-        ic: bool,
+        ic: MsgIC,
         cookie: Option<AppCookie>,
         xfer: &mut impl MctpUsbXfer,
         mctp: &mut Stack,

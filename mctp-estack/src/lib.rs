@@ -40,7 +40,7 @@ pub use heapless::Vec;
 
 use heapless::FnvIndexMap;
 
-use mctp::{Eid, Error, MsgType, Result, Tag, TagValue};
+use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
 pub mod control;
 pub mod fragment;
@@ -312,7 +312,7 @@ impl Stack {
         typ: MsgType,
         tag: Option<Tag>,
         tag_expires: bool,
-        ic: bool,
+        ic: MsgIC,
         mtu: Option<usize>,
         cookie: Option<AppCookie>,
     ) -> Result<Fragmenter> {
@@ -708,7 +708,7 @@ pub struct MctpMessage<'a> {
     pub tag: Tag,
 
     pub typ: MsgType,
-    pub ic: bool,
+    pub ic: MsgIC,
     pub payload: &'a [u8],
 
     /// Set for response messages when the request had `cookie` set in the [`Stack::start_send`] call.
