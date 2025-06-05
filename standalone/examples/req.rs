@@ -39,7 +39,8 @@ struct Args {
     serial: String,
 }
 
-const REQ_MSG_TYPE: MsgType = MsgType(1);
+const REQ_MSG_TYPE: MsgType = mctp::MCTP_TYPE_VENDOR_PCIE;
+const VENDOR_SUBTYPE_ECHO: [u8; 3] = [0xcc, 0xde, 0xf0];
 
 fn main() -> Result<()> {
     let args: Args = argh::from_env();
@@ -80,7 +81,7 @@ fn main() -> Result<()> {
         let l = (l as usize) % 24;
         let payload = &payload[..l];
 
-        if let Err(e) = req(&mut ch, REQ_MSG_TYPE, &payload, args.fatal) {
+        if let Err(e) = req(&mut ch, payload, args.fatal) {
             warn!("Error {e:?}");
             if args.fatal {
                 bail!("Response error.")
@@ -89,13 +90,14 @@ fn main() -> Result<()> {
     }
 }
 
-fn req(
-    ch: &mut impl ReqChannel,
-    typ: MsgType,
-    payload: &[u8],
-    fatal: bool,
-) -> Result<()> {
-    ch.send(typ, &payload).context("Error sending")?;
+fn req(ch: &mut impl ReqChannel, payload: &[u8], fatal: bool) -> Result<()> {
+    let typ = REQ_MSG_TYPE;
+    // Vendor prefix
+    let mut p = Vec::from(VENDOR_SUBTYPE_ECHO);
+    p.extend_from_slice(payload);
+    let payload = &p;
+
+    ch.send(typ, payload).context("Error sending")?;
 
     info!("Sent OK");
 
@@ -130,12 +132,12 @@ fn serial_corner_cases(ch: &mut impl ReqChannel) -> Result<()> {
         }
 
         // Unmodified
-        req(ch, REQ_MSG_TYPE, &b, true)?;
+        req(ch, &b, true)?;
 
         let mut addescape = |n| {
             if let Some(c) = b.get_mut(n) {
                 *c = ESCAPE;
-                req(ch, REQ_MSG_TYPE, &b, true)?;
+                req(ch, &b, true)?;
             }
             anyhow::Result::<_>::Ok(())
         };
