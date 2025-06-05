@@ -231,6 +231,7 @@ pub struct MctpSerialResp<'a, S: Read + Write> {
     eid: Eid,
     tv: TagValue,
     inner: &'a mut Inner<S>,
+    typ: MsgType,
 }
 
 impl<S: Read + Write> mctp::RespChannel for MctpSerialResp<'_, S> {
@@ -238,13 +239,17 @@ impl<S: Read + Write> mctp::RespChannel for MctpSerialResp<'_, S> {
 
     fn send_vectored(
         &mut self,
-        typ: MsgType,
         integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
         let tag = Some(Tag::Unowned(self.tv));
-        self.inner
-            .send_vectored(self.eid, typ, tag, integrity_check, bufs)?;
+        self.inner.send_vectored(
+            self.eid,
+            self.typ,
+            tag,
+            integrity_check,
+            bufs,
+        )?;
         Ok(())
     }
 
@@ -299,6 +304,7 @@ impl<S: Read + Write> mctp::Listener for MctpSerialListener<S> {
                     eid,
                     tv: tag.tag(),
                     inner: &mut self.inner,
+                    typ,
                 };
                 return Ok((b, resp, typ, ic));
             } else {

@@ -313,10 +313,12 @@ pub trait RespChannel {
     /// protocol headers to a payload without needing extra
     /// buffer allocations.
     ///
+    /// The sent message type will match that received by the
+    /// corresponding `Listener`.
+    ///
     /// The `integrity_check` argument is the MCTP header IC bit.
     fn send_vectored(
         &mut self,
-        typ: MsgType,
         integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()>;
@@ -326,9 +328,12 @@ pub trait RespChannel {
     /// Transport implementations will typically use the trait provided method
     /// that calls [`send_vectored`](Self::send_vectored).
     ///
+    /// The sent message type will match that received by the
+    /// corresponding `Listener`.
+    ///
     /// IC bit is unset.
-    fn send(&mut self, typ: MsgType, buf: &[u8]) -> Result<()> {
-        self.send_vectored(typ, MsgIC(false), &[buf])
+    fn send(&mut self, buf: &[u8]) -> Result<()> {
+        self.send_vectored(MsgIC(false), &[buf])
     }
 
     /// Return the remote Endpoint ID
@@ -354,10 +359,12 @@ pub trait AsyncRespChannel {
     /// protocol headers to a payload without needing extra
     /// buffer allocations.
     ///
+    /// The sent message type will match that received by the
+    /// corresponding `AsyncListener`.
+    ///
     /// The `integrity_check` argument is the MCTP header IC bit.
     fn send_vectored(
         &mut self,
-        typ: MsgType,
         integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> impl Future<Output = Result<()>>;
@@ -367,13 +374,12 @@ pub trait AsyncRespChannel {
     /// Transport implementations will typically use the trait provided method
     /// that calls [`send_vectored`](Self::send_vectored).
     ///
+    /// The sent message type will match that received by the
+    /// corresponding `AsyncListener`.
+    ///
     /// IC bit is unset.
-    fn send(
-        &mut self,
-        typ: MsgType,
-        buf: &[u8],
-    ) -> impl Future<Output = Result<()>> {
-        async move { self.send_vectored(typ, MsgIC(false), &[buf]).await }
+    fn send(&mut self, buf: &[u8]) -> impl Future<Output = Result<()>> {
+        async move { self.send_vectored(MsgIC(false), &[buf]).await }
     }
 
     /// Return the remote Endpoint ID

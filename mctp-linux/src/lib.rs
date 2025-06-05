@@ -446,6 +446,7 @@ impl mctp::Listener for MctpLinuxListener {
             eid: src,
             tv: tag.tag(),
             listener: self,
+            typ,
         };
         Ok((&mut buf[..sz], ep, typ, ic))
     }
@@ -457,6 +458,7 @@ pub struct MctpLinuxResp<'a> {
     // An unowned tag
     tv: TagValue,
     listener: &'a MctpLinuxListener,
+    typ: MsgType,
 }
 
 impl mctp::RespChannel for MctpLinuxResp<'_> {
@@ -466,13 +468,8 @@ impl mctp::RespChannel for MctpLinuxResp<'_> {
     ///
     /// Linux MCTP can also send a preallocated owned tag, but that is not
     /// yet supported in `MctpLinuxReq`.
-    fn send_vectored(
-        &mut self,
-        typ: MsgType,
-        ic: MsgIC,
-        bufs: &[&[u8]],
-    ) -> Result<()> {
-        let typ_ic = mctp::encode_type_ic(typ, ic);
+    fn send_vectored(&mut self, ic: MsgIC, bufs: &[&[u8]]) -> Result<()> {
+        let typ_ic = mctp::encode_type_ic(self.typ, ic);
         let tag = tag_to_smctp(&Tag::Unowned(self.tv));
         let addr =
             MctpSockAddr::new(self.eid.0, self.listener.net, typ_ic, tag);

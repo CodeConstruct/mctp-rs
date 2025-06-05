@@ -68,7 +68,7 @@ fn main() -> Result<()> {
         match r {
             Ok((buf, mut resp, _typ, _ic)) => {
                 info!("Received OK {buf:02x?}");
-                let r = resp.send(typ, buf);
+                let r = resp.send(buf);
                 if let Err(e) = r {
                     warn!("send error {e:?}");
                 }

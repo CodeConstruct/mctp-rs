@@ -273,13 +273,7 @@ impl<'a> MctpControl<'a> {
             Ok(r) => Ok(r),
         }?;
 
-        resp_chan
-            .send_vectored(
-                mctp::MCTP_TYPE_CONTROL,
-                MsgIC(false),
-                &resp.slices(),
-            )
-            .await
+        resp_chan.send_vectored(MsgIC(false), &resp.slices()).await
     }
 
     pub fn set_message_types(&mut self, types: &[MsgType]) -> mctp::Result<()> {

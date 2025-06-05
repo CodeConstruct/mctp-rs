@@ -798,6 +798,7 @@ pub struct RouterAsyncRespChannel<'r> {
     eid: Eid,
     tv: TagValue,
     router: &'r Router<'r>,
+    typ: MsgType,
 }
 
 impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
@@ -811,7 +812,6 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
     /// See description of `RouterAsyncReqChannel::send_vectored()`.
     async fn send_vectored(
         &mut self,
-        typ: MsgType,
         integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
@@ -819,7 +819,7 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
         self.router
             .app_send_message(
                 self.eid,
-                typ,
+                self.typ,
                 tag,
                 false,
                 integrity_check,
@@ -873,6 +873,7 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
             eid,
             tv,
             router: self.router,
+            typ,
         };
         Ok((msg, resp, typ, ic))
     }

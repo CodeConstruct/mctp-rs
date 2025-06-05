@@ -488,7 +488,7 @@ pub fn pldm_tx_resp(
 ) -> Result<()> {
     let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
     let txs = &[&tx_buf, resp.data.as_ref()];
-    ep.send_vectored(mctp::MCTP_TYPE_PLDM, MsgIC(false), txs)?;
+    ep.send_vectored(MsgIC(false), txs)?;
     Ok(())
 }
 
