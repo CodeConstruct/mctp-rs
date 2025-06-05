@@ -62,6 +62,7 @@ pub const MCTP_TAG_OWNER: u8 = 0x08;
 ///
 /// Defined values are in DSP0239
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MsgType(pub u8);
 
 impl core::fmt::Display for MsgType {
