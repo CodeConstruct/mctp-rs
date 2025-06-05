@@ -1,5 +1,6 @@
 [workspace]
-members = [ "mctp", "mctp-linux", "mctp-estack", "pldm", "pldm-fw", "pldm-fw-cli", "standalone"]
+members = [ "pldm-fw-cli", "standalone" ]
+exclude = [ "mctp-usb-embassy" ]
 resolver = "2"
 
 [workspace.dependencies]
