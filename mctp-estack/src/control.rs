@@ -230,7 +230,7 @@ pub fn mctp_control_rx_req<'f, 'l, L>(
 where
     L: Listener,
 {
-    let (buf, ch, _tag, _typ, ic) = listener.recv(buf)?;
+    let (buf, ch, _typ, ic) = listener.recv(buf)?;
     if ic {
         return Err(Error::InvalidInput);
     }

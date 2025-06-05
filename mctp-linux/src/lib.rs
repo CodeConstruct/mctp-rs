@@ -363,19 +363,18 @@ impl mctp::ReqChannel for MctpLinuxReq {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, Tag, bool)> {
+    ) -> Result<(&'f mut [u8], MsgType, bool)> {
         if !self.sent {
             return Err(mctp::Error::BadArgument);
         }
         let (sz, addr) = self.sock.recvfrom(buf)?;
         let src = Eid(addr.0.smctp_addr);
         let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
-        let tag = tag_from_smctp(addr.0.smctp_tag);
         if src != self.eid {
             // Kernel gave us a message from a different sender?
             return Err(mctp::Error::Other);
         }
-        Ok((&mut buf[..sz], typ, tag, ic))
+        Ok((&mut buf[..sz], typ, ic))
     }
 
     fn remote_eid(&self) -> Eid {
@@ -430,7 +429,7 @@ impl mctp::Listener for MctpLinuxListener {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MctpLinuxResp<'_>, Tag, MsgType, bool)> {
+    ) -> Result<(&'f mut [u8], MctpLinuxResp<'_>, MsgType, bool)> {
         let (sz, addr) = self.sock.recvfrom(buf)?;
         let src = Eid(addr.0.smctp_addr);
         let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
@@ -448,7 +447,7 @@ impl mctp::Listener for MctpLinuxListener {
             tv: tag.tag(),
             listener: self,
         };
-        Ok((&mut buf[..sz], ep, tag, typ, ic))
+        Ok((&mut buf[..sz], ep, typ, ic))
     }
 }
 

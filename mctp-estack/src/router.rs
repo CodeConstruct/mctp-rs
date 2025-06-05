@@ -770,7 +770,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     async fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, Tag, bool)> {
+    ) -> Result<(&'f mut [u8], MsgType, bool)> {
         let Some(Tag::Owned(tv)) = self.sent_tag else {
             debug!("recv without send");
             return Err(Error::BadArgument);
@@ -782,7 +782,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
             .await?;
         debug_assert_eq!(tag, recv_tag);
         debug_assert_eq!(eid, self.eid);
-        Ok((buf, typ, tag, ic))
+        Ok((buf, typ, ic))
         // todo!()
     }
 
@@ -857,7 +857,7 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
     async fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> mctp::Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>
+    ) -> mctp::Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, bool)>
     {
         let (msg, eid, typ, tag, ic) = self
             .router
@@ -874,7 +874,7 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
             tv,
             router: self.router,
         };
-        Ok((msg, resp, tag, typ, ic))
+        Ok((msg, resp, typ, ic))
     }
 }
 

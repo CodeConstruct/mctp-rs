@@ -100,7 +100,7 @@ fn req(
     info!("Sent OK");
 
     let mut buf = [0u8; 2000];
-    let (rep, rep_typ, _tag, _ic) = ch.recv(&mut buf)?;
+    let (rep, rep_typ, _ic) = ch.recv(&mut buf)?;
 
     info!("Reply {rep:02x?}");
 

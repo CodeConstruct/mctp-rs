@@ -214,10 +214,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// with a remote endpoint. A `mctp::ReqChannel` instance represents an endpoint/tag pair,
 /// so may be used for request-response messaging.
 ///
-/// A `send` on a `ReqChannel` instance will associate the instance with the given
+/// A `send` on a `ReqChannel` instance will associate the instance with a
 /// tag, and `recv` is expected to be limited to responses matching that
 /// sent tag. When multiple tags are being used simultaneously, separate `ReqChannel`
-/// instances should be used.
+/// instances should be used. Tags will be allocated internally as trait implementation
+/// detail, not exposed through the trait API.
 ///
 /// A `ReqChannel` may be re-used to send a new allocated tag if no further
 /// messages for a previous tag are expected to be received.
@@ -254,12 +255,12 @@ pub trait ReqChannel {
 
     /// Blocking receive
     ///
-    /// Returns a filled slice of `buf`, MCTP message type, tag, and IC bit.
+    /// Returns a filled slice of `buf`, MCTP message type, and IC bit.
     /// Will fail if used without a prior call to `send` or `send_vectored`.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], MsgType, Tag, bool)>;
+    ) -> Result<(&'f mut [u8], MsgType, bool)>;
 
     /// Return the remote Endpoint ID
     fn remote_eid(&self) -> Eid;
@@ -286,7 +287,7 @@ pub trait AsyncReqChannel {
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> impl Future<Output = Result<(&'f mut [u8], MsgType, Tag, bool)>>;
+    ) -> impl Future<Output = Result<(&'f mut [u8], MsgType, bool)>>;
 
     /// Return the remote Endpoint ID
     fn remote_eid(&self) -> Eid;
@@ -388,18 +389,17 @@ pub trait Listener {
     where
         Self: 'a;
 
-    #[allow(clippy::type_complexity)]
     /// Blocking receive
     ///
     /// This receives a single MCTP message matched by the `Listener`.
-    /// Returns a filled slice of `buf`, `RespChannel`, tag, and IC bit `bool`.
+    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `bool`.
     ///
     /// The returned `RespChannel` should be used to send responses to the
     /// request.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
-    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, Tag, MsgType, bool)>;
+    ) -> Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, bool)>;
 }
 
 #[allow(missing_docs)]
@@ -410,25 +410,17 @@ pub trait AsyncListener {
     where
         Self: 'a;
 
-    #[allow(clippy::type_complexity)]
     /// Blocking receive
     ///
     /// This receives a single MCTP message matched by the `Listener`.
-    /// Returns a filled slice of `buf`, `RespChannel`, tag, and IC bit `bool`.
+    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `bool`.
     ///
-    /// The returned `RespChannel` should be used to send responses to the
-    /// request.
+    /// The returned `RespChannel` should be used to send responses.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
     ) -> impl Future<
-        Output = Result<(
-            &'f mut [u8],
-            Self::RespChannel<'_>,
-            Tag,
-            MsgType,
-            bool,
-        )>,
+        Output = Result<(&'f mut [u8], Self::RespChannel<'_>, MsgType, bool)>,
     >;
 }
 

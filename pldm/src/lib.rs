@@ -456,7 +456,7 @@ pub fn pldm_rx_req_borrowed<'lis, 'buf, L>(
 where
     L: mctp::Listener,
 {
-    let (rx_buf, ep, _tag, _typ, ic) = listener.recv(rx_buf)?;
+    let (rx_buf, ep, _typ, ic) = listener.recv(rx_buf)?;
     if ic {
         return Err(proto_error!("IC bit set"));
     }
@@ -470,7 +470,7 @@ pub fn pldm_rx_resp_borrowed<'buf>(
     ep: &mut impl mctp::ReqChannel,
     rx_buf: &'buf mut [u8],
 ) -> Result<PldmResponse<'buf>> {
-    let (rx_buf, _eid, _tag, ic) = ep.recv(rx_buf)?;
+    let (rx_buf, _eid, ic) = ep.recv(rx_buf)?;
     if ic {
         return Err(proto_error!("IC bit set"));
     }
