@@ -674,14 +674,17 @@ impl<'r> Router<'r> {
     }
 
     /// Create a `AsyncReqChannel` instance.
-    pub fn req(&'r self, eid: Eid) -> RouterAsyncReqChannel<'r> {
+    pub fn req(&self, eid: Eid) -> RouterAsyncReqChannel<'_, 'r> {
         RouterAsyncReqChannel::new(eid, self)
     }
 
     /// Create a `AsyncListener` instance.
     ///
     /// Will receive incoming messages with the TO bit set for the given `typ`.
-    pub fn listener(&'r self, typ: MsgType) -> Result<RouterAsyncListener<'r>> {
+    pub fn listener(
+        &self,
+        typ: MsgType,
+    ) -> Result<RouterAsyncListener<'_, 'r>> {
         let cookie = self.app_bind(typ)?;
         Ok(RouterAsyncListener {
             cookie,
@@ -703,20 +706,20 @@ impl<'r> Router<'r> {
 }
 
 /// A request channel.
-pub struct RouterAsyncReqChannel<'r> {
+pub struct RouterAsyncReqChannel<'g, 'r> {
     /// Destination EID
     eid: Eid,
     /// Tag from the last `send()`.
     ///
     /// Cleared upon receiving a response, except in the case of !tag_expires.
     last_tag: Option<Tag>,
-    router: &'r Router<'r>,
+    router: &'g Router<'r>,
     tag_expires: bool,
     cookie: Option<AppCookie>,
 }
 
-impl<'r> RouterAsyncReqChannel<'r> {
-    fn new(eid: Eid, router: &'r Router<'r>) -> Self {
+impl<'g, 'r> RouterAsyncReqChannel<'g, 'r> {
+    fn new(eid: Eid, router: &'g Router<'r>) -> Self {
         RouterAsyncReqChannel {
             eid,
             last_tag: None,
@@ -756,7 +759,7 @@ impl<'r> RouterAsyncReqChannel<'r> {
     }
 }
 
-impl Drop for RouterAsyncReqChannel<'_> {
+impl Drop for RouterAsyncReqChannel<'_, '_> {
     fn drop(&mut self) {
         if !self.tag_expires && self.last_tag.is_some() {
             warn!("Didn't call async_drop()");
@@ -770,7 +773,7 @@ impl Drop for RouterAsyncReqChannel<'_> {
 /// A request channel
 ///
 /// Created with [`Router::req()`](Router::req).
-impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
+impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_, '_> {
     /// Send a message.
     ///
     /// This will async block until the message has been enqueued to the physical port.
@@ -862,16 +865,16 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
 /// A response channel.
 ///
 /// Returned by [`RouterAsyncListener::recv`](mctp::AsyncListener::recv).
-pub struct RouterAsyncRespChannel<'r> {
+pub struct RouterAsyncRespChannel<'g, 'r> {
     eid: Eid,
     tv: TagValue,
-    router: &'r Router<'r>,
+    router: &'g Router<'r>,
     typ: MsgType,
 }
 
-impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
+impl<'g, 'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'g, 'r> {
     type ReqChannel<'a>
-        = RouterAsyncReqChannel<'r>
+        = RouterAsyncReqChannel<'g, 'r>
     where
         Self: 'a;
 
@@ -902,7 +905,7 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
         self.eid
     }
 
-    fn req_channel(&self) -> mctp::Result<Self::ReqChannel<'_>> {
+    fn req_channel(&self) -> mctp::Result<Self::ReqChannel<'g>> {
         Ok(RouterAsyncReqChannel::new(self.eid, self.router))
     }
 }
@@ -910,15 +913,14 @@ impl<'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'r> {
 /// A listener.
 ///
 /// Created with [`Router::listener()`](Router::listener).
-pub struct RouterAsyncListener<'r> {
-    router: &'r Router<'r>,
+pub struct RouterAsyncListener<'g, 'r> {
+    router: &'g Router<'r>,
     cookie: AppCookie,
 }
 
-impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
-    // type RespChannel<'a> = RouterAsyncRespChannel<'a> where Self: 'a;
+impl<'g, 'r> mctp::AsyncListener for RouterAsyncListener<'g, 'r> {
     type RespChannel<'a>
-        = RouterAsyncRespChannel<'r>
+        = RouterAsyncRespChannel<'g, 'r>
     where
         Self: 'a;
 
@@ -945,7 +947,7 @@ impl<'r> mctp::AsyncListener for RouterAsyncListener<'r> {
     }
 }
 
-impl Drop for RouterAsyncListener<'_> {
+impl Drop for RouterAsyncListener<'_, '_> {
     fn drop(&mut self) {
         self.router.app_unbind(self.cookie)
     }
