@@ -8,8 +8,8 @@ A `Router` instance handles feeding MCTP packets to and from user
 provided MCTP transports, and handles sending receiving MCTP messages
 from applications using the `mctp` crate async traits.
 
-Applications using MCTP can create [`RouterAsyncListener`] and
-[`RouterAsyncReqChannel`] instances.
+Applications using MCTP can create `RouterAsyncListener` and
+`RouterAsyncReqChannel` instances.
 
 MCTP bridging between ports is supported by the `Router`.
 
