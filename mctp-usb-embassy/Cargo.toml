@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 categories = ["network-programming", "embedded", "no-std"]
 repository = "https://github.com/CodeConstruct/mctp-rs"
 rust-version = "1.82"
+description = "MCTP over USB transport for embassy-usb"
 
 [dependencies]
 embassy-usb = { version = "0.4" }
