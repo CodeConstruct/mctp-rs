@@ -13,10 +13,12 @@ export RUSTFLAGS="-D warnings"
 
 cargo fmt -- --check
 
+# Check everything first
+cargo check --all-targets
+
 # stable, std
 cargo build --release --features mctp-estack/log
 cargo test --features mctp-estack/log
-cargo check --all-targets
 
 # stable, no_std
 NOSTD_CRATES="mctp pldm pldm-fw"
