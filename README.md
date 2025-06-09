@@ -42,20 +42,20 @@ There's a small example MCTP requester in
 
 ```rust
     // Create a new endpoint using the linux socket support
-    let mut ep = MctpLinuxEp::new(EID, MCTP_NET_ANY)?;
+    let mut ep = MctpLinuxReq::new(EID, None)?;
 
     // for subsequent use of `ep`, we're just interacting with the
-    // mctp::Comm trait, which is independent of the socket support
+    // mctp::ReqChannel trait, which is independent of the socket support
 
     // Get Endpoint ID message: command 0x02, no data. Allow the MCTP stack
     // to allocate an owned tag.
     let tx_buf = vec![0x02u8];
-    ep.send(MCTP_TYPE_CONTROL, None, &tx_buf)?;
+    ep.send(MCTP_TYPE_CONTROL, &tx_buf)?;
 
     // Receive a response. We create a 16-byte vec to read into; ep.recv()
     // will return the sub-slice containing just the response data.
     let mut rx_buf = vec![0u8; 16];
-    let (rx_buf, eid, tag) = ep.recv(&mut rx_buf)?;
+    let (eid, ic, rx_buf) = ep.recv(&mut rx_buf)?;
 ```
 
 There are also some MCTP over serial examples in [standalone/examples](standalone/examples).

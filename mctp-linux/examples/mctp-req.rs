@@ -15,7 +15,7 @@ fn main() -> std::io::Result<()> {
     let mut ep = MctpLinuxReq::new(EID, None)?;
 
     // for subsequent use of `ep`, we're just interacting with the
-    // mctp::Comm trait, which is independent of the socket support
+    // mctp::ReqChannel trait, which is independent of the socket support
 
     // Get Endpoint ID message: command 0x02, no data. Allow the MCTP stack
     // to allocate an owned tag.
