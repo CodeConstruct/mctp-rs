@@ -7,7 +7,7 @@ primarily for use in embedded applications.
 Component Crates
 ----------------
 
- * [`mctp`](mctp) implements base type and trait definitions
+ * [`mctp`](mctp) implements base type and trait definitions.
 
  * [`mctp-linux`](mctp-linux) implements a transport implementation, using the
    Linux kernel MCTP sockets support for message send/receive
@@ -25,14 +25,31 @@ Component Crates
    `mctp` crate traits.
 
  * [`mctp-estack`](mctp-estack) is a MCTP stack suitable for embedded devices,
-   running `no_std` with fixed allocations.  It includes a MCTP over I2C transport
-   handler. The stack handles message fragmentation/reassembly and tag tracking.
-   At present routing is left for specific platform code to handle.
+   running `no_std` with fixed allocations. 
+   The stack handles message fragmentation/reassembly and tag tracking.
+   The crate's `Router` can be used by async MCTP applications to interface with
+   multiple transport ports, and handles MCTP bridging.
+   It includes built-in MCTP transport handling for I2C, USB, and serial.
+
+   `mctp-estack` includes a minimal MCTP control protocol implementation.
+
+ * [`mctp-usb-embassy`](mctp-usb-embassy) is a MCTP over USB transport for 
+   `embassy-usb`.
 
  * [`standalone`](standalone) is a `mctp` trait implementation that includes its
    own `mctp-estack` instance, allowing running a standalone MCTP-over-serial
    stack against a Linux TTY (or any other pipe device). This can be used
    for example with QEMU.
+
+API Documentation
+-----------------
+
+   [`mctp`](https://docs.rs/mctp/)
+   [`mctp-linux`](https://docs.rs/mctp-linux/)
+   [`pldm`](https://docs.rs/pldm/)
+   [`pldm-fw`](https://docs.rs/pldm-fw/)
+   [`mctp-estack`](https://docs.rs/mctp-estack/)
+   [`mctp-usb-embassy`](https://docs.rs/mctp-usb-embassy)
 
 Examples
 --------
@@ -55,7 +72,7 @@ There's a small example MCTP requester in
     // Receive a response. We create a 16-byte vec to read into; ep.recv()
     // will return the sub-slice containing just the response data.
     let mut rx_buf = vec![0u8; 16];
-    let (eid, ic, rx_buf) = ep.recv(&mut rx_buf)?;
+    let (typ, ic, rx_buf) = ep.recv(&mut rx_buf)?;
 ```
 
 There are also some MCTP over serial examples in [standalone/examples](standalone/examples).
