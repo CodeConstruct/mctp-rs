@@ -278,7 +278,10 @@ impl<'a> PortBuilder<'a> {
         }
     }
 
-    pub fn build(&mut self, mtu: usize) -> Result<(PortTop, PortBottom)> {
+    pub fn build(
+        &mut self,
+        mtu: usize,
+    ) -> Result<(PortTop<'_>, PortBottom<'_>)> {
         if mtu > MAX_MTU {
             debug!("port mtu {} > MAX_MTU {}", mtu, MAX_MTU);
             return Err(Error::BadArgument);

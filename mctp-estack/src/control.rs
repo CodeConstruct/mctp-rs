@@ -297,7 +297,7 @@ impl<'a> MctpControl<'a> {
     async fn handle_req(
         &mut self,
         req: &'_ MctpControlMsg<'_>,
-    ) -> ControlResult<MctpControlMsg> {
+    ) -> ControlResult<MctpControlMsg<'_>> {
         let cc = req.command_code().map_err(|cc| {
             debug!("Unsupported control command {}", cc);
             CompletionCode::ErrorUnsupportedCmd

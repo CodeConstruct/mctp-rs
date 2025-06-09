@@ -94,7 +94,7 @@ impl MctpUsbHandler {
         xfer: &mut impl MctpUsbXfer,
         mctp: &mut Stack,
         fill_msg: F,
-    ) -> SendOutput
+    ) -> SendOutput<'_>
     where
         F: FnOnce(&mut Vec<u8, MAX_PAYLOAD>) -> Option<()>,
     {

@@ -91,7 +91,7 @@ impl<S: Read + Write> Inner<S> {
     fn receive(
         &mut self,
         deadline: Option<u64>,
-    ) -> Result<(MctpMessage, ReceiveHandle)> {
+    ) -> Result<(MctpMessage<'_>, ReceiveHandle)> {
         let now = self.now();
 
         let deadline = if let Some(d) = deadline {

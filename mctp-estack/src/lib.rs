@@ -361,7 +361,7 @@ impl Stack {
     pub fn receive(
         &mut self,
         packet: &[u8],
-    ) -> Result<Option<(MctpMessage, ReceiveHandle)>> {
+    ) -> Result<Option<(MctpMessage<'_>, ReceiveHandle)>> {
         // Get or insert a reassembler for this packet
         let idx = self.get_reassembler(packet)?;
         let (re, buf) = if let Some(r) = &mut self.reassemblers[idx] {
@@ -430,7 +430,7 @@ impl Stack {
     }
 
     /// Provides a message previously returned from [`receive`](Self::receive)
-    pub fn fetch_message(&mut self, handle: &ReceiveHandle) -> MctpMessage {
+    pub fn fetch_message(&mut self, handle: &ReceiveHandle) -> MctpMessage<'_> {
         let Some(Some((re, buf))) = self.reassemblers.get_mut(handle.0) else {
             // ReceiveHandle can only be constructed when
             // a completed message exists, so this should be impossible.

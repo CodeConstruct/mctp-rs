@@ -153,7 +153,7 @@ pub fn query_device_identifiers(
 
 pub fn query_firmware_parameters(
     comm: &mut impl mctp::ReqChannel,
-) -> Result<FirmwareParameters> {
+) -> Result<FirmwareParameters<'_>> {
     let req = pldm::PldmRequest::new(PLDM_TYPE_FW, 0x02);
 
     let rsp = pldm::pldm_xfer(comm, req)?;
