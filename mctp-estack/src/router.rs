@@ -198,7 +198,8 @@ impl PortTop<'_> {
 
 /// The "consumer" side of a queue of packets to send out a MCTP interface,
 ///
-/// This is used by the interface implementation.
+/// An MCTP transport implementation will read packets to send with
+/// [`outbound()`](Self::outbound).
 pub struct PortBottom<'a> {
     /// packet queue
     packets: Receiver<'a, PortRawMutex, PktBuf>,
@@ -295,6 +296,25 @@ impl<'a> PortBuilder<'a> {
     }
 }
 
+/// An async MCTP stack with routing.
+///
+/// This interfaces between transport ports and MCTP using applications.
+///
+/// Applications can use [`req()`](Self::req) and [`listener()`](Self::listener)
+/// to obtain instances of the [`mctp`] async traits.
+///
+/// Device-provided input handlers feed input MCTP packets to
+/// [`inbound()`](Self::inbound).
+///
+/// For outbound packets each port has queue split into `PortTop` and `PortBottom`.
+/// `Router` will feed packets for a port into the top, and device output handlers
+/// will read from [`PortBottom`] and write out the specific MCTP transport.
+///
+/// [`update_time()`](Self::update_time) should be called periodically to
+/// handle timeouts.
+///
+/// Packets not destined for the local EID will be forwarded out a port
+/// determined by the user-provided [`PortLookup`] implementation.
 pub struct Router<'r> {
     inner: AsyncMutex<RouterInner<'r>>,
     ports: &'r [PortTop<'r>],
@@ -361,6 +381,8 @@ impl<'r> Router<'r> {
     }
 
     /// Provide an incoming packet to the router.
+    ///
+    /// This expects a single MCTP packet, with no transport binding header.
     ///
     /// Returns the packet's MCTP source EID for any valid packet,
     /// regardless of whether the packet is handled, forwarded, or dropped.
@@ -652,12 +674,12 @@ impl<'r> Router<'r> {
         }
     }
 
-    /// Create a `AsyncReqChannel` instance
+    /// Create a `AsyncReqChannel` instance.
     pub fn req(&'r self, eid: Eid) -> RouterAsyncReqChannel<'r> {
         RouterAsyncReqChannel::new(eid, self)
     }
 
-    /// Create a `AsyncListener` instance
+    /// Create a `AsyncListener` instance.
     ///
     /// Will receive incoming messages with the TO bit set for the given `typ`.
     pub fn listener(&'r self, typ: MsgType) -> Result<RouterAsyncListener<'r>> {

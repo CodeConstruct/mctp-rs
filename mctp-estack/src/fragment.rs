@@ -12,6 +12,9 @@ use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, MCTP_HEADER_VERSION_1};
 
 use crate::{AppCookie, Header, HEADER_LEN, MAX_MTU};
 
+/// Fragments a MCTP message.
+///
+/// This is constructed from [`Stack::start_send()`](crate::Stack::start_send)
 #[derive(Debug)]
 pub struct Fragmenter {
     src: Eid,
@@ -98,7 +101,8 @@ impl Fragmenter {
 
     /// Returns fragments for the MCTP payload
     ///
-    /// In `SendOutput::Packet(buf)`, `buffer` is borrowed as the returned fragment, filled with packet contents.
+    /// The same input message `payload` should be passed to each `fragment()` call.
+    /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with packet contents.
     pub fn fragment<'f>(
         &mut self,
         payload: &[u8],
