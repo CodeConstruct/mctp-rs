@@ -25,9 +25,9 @@ fn main() -> std::io::Result<()> {
     // Receive a response. We create a 16-byte vec to read into; ep.recv()
     // will return the sub-slice containing just the response data.
     let mut rx_buf = vec![0u8; 16];
-    let (eid, ic, rx_buf) = ep.recv(&mut rx_buf)?;
+    let (typ, ic, rx_buf) = ep.recv(&mut rx_buf)?;
 
-    println!("response from {}, ic {:?}: {:x?}", eid, ic, rx_buf);
+    println!("response type {}, ic {:?}: {:x?}", typ, ic, rx_buf);
 
     Ok(())
 }
