@@ -9,7 +9,7 @@ categories = ["network-programming", "embedded", "hardware-support", "no-std"]
 rust-version = "1.82"
 
 [dependencies]
-mctp = { path = "../mctp", default-features = false }
+mctp.workspace = true
 libmctp = { workspace = true }
 heapless = "0.8"
 log = { version = "0.4", optional = true }
