@@ -185,7 +185,7 @@ impl<'a> PldmRequest<'a> {
     ///
     /// Convert this request to a response, using the instance, type and command
     /// from the original request.
-    pub fn response(&self) -> PldmResponse {
+    pub fn response(&self) -> PldmResponse<'_> {
         PldmResponse {
             iid: self.iid,
             typ: self.typ,
