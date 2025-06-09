@@ -5,9 +5,24 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+//! # MCTP over USB transport for `embassy-usb`.
+//!
+//! Implements DMTF [DSP0283](https://www.dmtf.org/sites/default/files/standards/documents/DSP0283_1.0.1.pdf)
+//! standard for a MCTP transport over USB.
+//!
+//! A `MctpUsbClass` instance is created with a `embassy-usb` `Builder`.
+//!
+//! That can be used directly with a [`mctp_estack::Router`] by calling
+//! [`run()`](MctpUsbClass::run).
+//!
+//! A lower level interface can be used with [`Sender`] and [`Receiver`]
+//! to send and receive MCTP-over-USB packets.
+
 mod mctpusb;
 
 pub use mctpusb::{MctpUsbClass, Receiver, Sender};
 
-/// Maximum packet for DSP0283 1.0.
+/// Maximum USB packet size for DSP0283 1.0.
+///
+/// This can be used to size `embassy-usb` endpoint buffers.
 pub const MCTP_USB_MAX_PACKET: usize = 512;

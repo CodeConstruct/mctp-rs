@@ -2,10 +2,6 @@
 /*
  * Copyright (c) 2025 Code Construct
  */
-//! # MCTP over USB transport for `embassy-usb`.
-//!
-//! Implements DMTF [DSP0283](https://www.dmtf.org/sites/default/files/standards/documents/DSP0283_1.0.1.pdf)
-//! standard for a MCTP transport over USB.
 #[cfg(feature = "defmt")]
 #[allow(unused)]
 use defmt::{debug, error, info, trace, warn};
@@ -265,6 +261,8 @@ impl<'d, D: Driver<'d>> MctpUsbClass<'d, D> {
     }
 
     /// Split into `Sender` and `Receiver`
+    ///
+    /// This allows manually sending and receiving MCTP over USB packets.
     pub fn split(self) -> (Sender<'d, D>, Receiver<'d, D>) {
         (self.sender, self.receiver)
     }
