@@ -4,11 +4,12 @@ exclude = [ "mctp-usb-embassy" ]
 resolver = "2"
 
 [workspace.dependencies]
-mctp = { path = "mctp", version = "0.1.0", default-features = false }
-mctp-linux = { path = "mctp-linux", version = "0.1.0" }
-mctp-estack = { path = "mctp-estack", version = "0.1.0" }
-pldm = { path = "pldm", version = "0.1.0", default-features = false }
-pldm-fw = { path = "pldm-fw", version = "0.1.0", default-features = false }
+mctp = { version = "0.2", path = "mctp", default-features = false }
+mctp-linux = { version = "0.2", path = "mctp-linux" }
+mctp-estack = { version = "0.1", path = "mctp-estack" }
+pldm = { version = "0.2", path = "pldm", default-features = false }
+pldm-fw = { version = "0.2", path = "pldm-fw", default-features = false }
+
 libmctp = "0.2"
 
 embedded-io-async = "0.6"

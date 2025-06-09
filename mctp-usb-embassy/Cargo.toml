@@ -15,8 +15,8 @@ embassy-futures = { version = "0.1" }
 log = { version = "0.4", optional = true }
 defmt = { version = "0.3", optional = true }
 
-mctp = { path = "../mctp", default-features = false }
-mctp-estack = { path = "../mctp-estack", default-features = false }
+mctp = { version = "0.2", path = "../mctp", default-features = false }
+mctp-estack = { version = "0.1", path = "../mctp-estack", default-features = false }
 heapless = "0.8"
 
 [features]

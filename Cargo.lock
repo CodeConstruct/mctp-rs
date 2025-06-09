@@ -810,7 +810,7 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 
 [[package]]
 name = "mctp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "defmt",
 ]
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "mctp-linux"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "mctp",
@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "pldm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mctp",
  "num-traits",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "pldm-fw"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "crc",
@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "pldm-fw-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argh",
