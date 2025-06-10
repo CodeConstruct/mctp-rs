@@ -15,12 +15,12 @@ use core::pin::pin;
 use core::task::{Poll, Waker};
 
 use crate::{
-    AppCookie, Fragmenter, MctpHeader, MctpMessage, SendOutput, Stack, MAX_MTU,
-    MAX_PAYLOAD,
+    config, AppCookie, Fragmenter, MctpHeader, MctpMessage, SendOutput, Stack,
+    MAX_MTU, MAX_PAYLOAD,
 };
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
-use crate::zerocopy_channel::{Channel, Receiver, Sender};
+use crate::zerocopy_channel::{FixedChannel, Receiver};
 use embassy_sync::waitqueue::WakerRegistration;
 
 use heapless::{Entry, FnvIndexMap, Vec};
@@ -88,6 +88,12 @@ impl PktBuf {
     }
 }
 
+impl Default for PktBuf {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl core::ops::Deref for PktBuf {
     type Target = [u8];
 
@@ -99,15 +105,36 @@ impl core::ops::Deref for PktBuf {
 /// The "producer" side of a queue of packets to send out a MCTP port/interface.
 ///
 /// It will be used by `Routing` to enqueue packets to a port.
-pub struct PortTop<'a> {
+pub struct PortTop {
     /// Forwarded packet queue.
-    /// The outer mutex will not be held over an await.
-    packets: AsyncMutex<Sender<'a, PortRawMutex, PktBuf>>,
+    channel: FixedChannel<PortRawMutex, PktBuf, { config::PORT_TXQUEUE }>,
+    send_mutex: AsyncMutex<()>,
 
     mtu: usize,
 }
 
-impl PortTop<'_> {
+impl PortTop {
+    pub fn new(mtu: usize) -> Result<Self> {
+        if mtu > MAX_MTU {
+            debug!("port mtu {} > MAX_MTU {}", mtu, MAX_MTU);
+            return Err(Error::BadArgument);
+        }
+
+        Ok(Self {
+            channel: FixedChannel::new(),
+            send_mutex: AsyncMutex::new(()),
+            mtu,
+        })
+    }
+
+    /// Return the bottom half port for the channel.
+    ///
+    /// Applications call Router::port().
+    /// Returns None if already borrowed. `id` is not checked, just passed through.
+    fn bottom(&self, id: PortId) -> Option<Port<'_>> {
+        self.channel.receiver().map(|packets| Port { packets, id })
+    }
+
     /// Enqueues a packet.
     ///
     /// Do not call with locks held.
@@ -116,14 +143,16 @@ impl PortTop<'_> {
     async fn forward_packet(&self, pkt: &[u8]) -> Result<()> {
         debug_assert!(MctpHeader::decode(pkt).is_ok());
 
-        let mut sender = self.packets.lock().await;
-        // Note: must not await while holding `sender`
-
         // Check space first (can't rollback after try_send)
         if pkt.len() > self.mtu {
             debug!("Forward packet too large");
             return Err(Error::NoSpace);
         }
+        // With forwarded packets we don't want to block if
+        // the queue is full (we drop packets instead).
+        // Don't hold this sender across any await.
+        let _l = self.send_mutex.lock().await;
+        let mut sender = self.channel.sender().unwrap();
 
         // Get a slot to send
         let slot = sender.try_send().ok_or_else(|| {
@@ -164,7 +193,9 @@ impl PortTop<'_> {
         };
 
         loop {
-            let mut sender = self.packets.lock().await;
+            let _l = self.send_mutex.lock().await;
+            // OK to unwrap, protected by send_mutex.lock()
+            let mut sender = self.channel.sender().unwrap();
 
             let qpkt = sender.send().await;
             qpkt.len = 0;
@@ -189,12 +220,13 @@ impl PortTop<'_> {
 ///
 /// An MCTP transport implementation will read packets to send with
 /// [`outbound()`](Self::outbound).
-pub struct PortBottom<'a> {
+pub struct Port<'a> {
     /// packet queue
     packets: Receiver<'a, PortRawMutex, PktBuf>,
+    id: PortId,
 }
 
-impl PortBottom<'_> {
+impl Port<'_> {
     /// Retrieve an outbound packet to send for this port.
     ///
     /// Should call [`outbound_done()`](Self::outbound_done) to consume the
@@ -209,6 +241,11 @@ impl PortBottom<'_> {
         // OK unwrap, checked by channel sender
         let dest = MctpHeader::decode(pkt).unwrap().dest;
         (pkt, dest)
+    }
+
+    /// Retrieve the `PortId`.
+    pub fn id(&self) -> PortId {
+        self.id
     }
 
     /// Attempt to retrieve an outbound packet.
@@ -230,65 +267,6 @@ impl PortBottom<'_> {
     /// Consume the outbound packet and advance the queue.
     pub fn outbound_done(&mut self) {
         self.packets.receive_done()
-    }
-}
-
-/// Storage for a Port, being a physical MCTP interface.
-// TODO: instead of storing Vec<u8, N>, it could
-// store `&'r []` and a length field, which would allow different ports
-// have different MAX_MESSAGE/MAX_MTU. Does add another lifetime parameter.
-pub struct PortStorage<const FORWARD_QUEUE: usize = 4> {
-    /// forwarded packet queue
-    packets: [PktBuf; FORWARD_QUEUE],
-}
-
-impl<const FORWARD_QUEUE: usize> PortStorage<FORWARD_QUEUE> {
-    pub fn new() -> Self {
-        Self {
-            packets: [const { PktBuf::new() }; FORWARD_QUEUE],
-        }
-    }
-}
-
-impl<const FORWARD_QUEUE: usize> Default for PortStorage<FORWARD_QUEUE> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct PortBuilder<'a> {
-    /// forwarded packet queue
-    packets: Channel<'a, PortRawMutex, PktBuf>,
-}
-
-impl<'a> PortBuilder<'a> {
-    pub fn new<const FORWARD_QUEUE: usize>(
-        storage: &'a mut PortStorage<FORWARD_QUEUE>,
-    ) -> Self {
-        // PortBuilder and PortStorage need to be separate structs, since
-        // zerocopy_channel::Channel takes a slice.
-        Self {
-            packets: Channel::new(storage.packets.as_mut_slice()),
-        }
-    }
-
-    pub fn build(
-        &mut self,
-        mtu: usize,
-    ) -> Result<(PortTop<'_>, PortBottom<'_>)> {
-        if mtu > MAX_MTU {
-            debug!("port mtu {} > MAX_MTU {}", mtu, MAX_MTU);
-            return Err(Error::BadArgument);
-        }
-
-        let (ps, pr) = self.packets.split();
-
-        let t = PortTop {
-            packets: AsyncMutex::new(ps),
-            mtu,
-        };
-        let b = PortBottom { packets: pr };
-        Ok((t, b))
     }
 }
 
@@ -382,18 +360,17 @@ impl WakerPool {
 /// Device-provided input handlers feed input MCTP packets to
 /// [`inbound()`](Self::inbound).
 ///
-/// For outbound packets each port has queue split into `PortTop` and `PortBottom`.
-/// `Router` will feed packets for a port into the top, and device output handlers
-/// will read from [`PortBottom`] and write out the specific MCTP transport.
-///
 /// [`update_time()`](Self::update_time) should be called periodically to
 /// handle timeouts.
 ///
 /// Packets not destined for the local EID will be forwarded out a port
 /// determined by the user-provided [`PortLookup`] implementation.
+///
+/// Outbound packets are provided to a transport's `Port` instance,
+/// returned by [`port()`](Self::port).
 pub struct Router<'r> {
     inner: AsyncMutex<RouterInner<'r>>,
-    ports: &'r [PortTop<'r>],
+    ports: Vec<&'r mut PortTop, { config::MAX_PORTS }>,
 
     /// Listeners for different message types.
     // Has a separate non-async Mutex so it can be used by RouterAsyncListener::drop()
@@ -424,11 +401,7 @@ impl<'r> Router<'r> {
     /// of the `ports`  slice are used as `PortId` identifiers.
     ///
     /// `lookup` callbacks define the routing table for outbound packets.
-    pub fn new(
-        stack: Stack,
-        ports: &'r [PortTop<'r>],
-        lookup: &'r dyn PortLookup,
-    ) -> Self {
+    pub fn new(stack: Stack, lookup: &'r dyn PortLookup) -> Self {
         let inner = RouterInner { stack, lookup };
 
         let app_listeners = BlockingMutex::new(RefCell::new(Vec::new()));
@@ -436,10 +409,29 @@ impl<'r> Router<'r> {
         Self {
             inner: AsyncMutex::new(inner),
             app_listeners,
+            ports: Vec::new(),
             recv_wakers: Default::default(),
-            ports,
             work_msg: AsyncMutex::new(Vec::new()),
         }
+    }
+
+    pub fn add_port(&mut self, top: &'r mut PortTop) -> Result<PortId> {
+        self.ports.push(top).map_err(|_| Error::NoSpace)?;
+        Ok(PortId((self.ports.len() - 1) as u8))
+    }
+
+    /// Return a port.
+    ///
+    /// A port may only be borrowed once (may be reborrowed after dropping).
+    pub fn port(&self, id: PortId) -> Result<Port<'_>> {
+        let port = self.ports.get(id.0 as usize).ok_or_else(|| {
+            debug!("Bad port index");
+            Error::BadArgument
+        })?;
+        port.bottom(id).ok_or_else(|| {
+            debug!("Port already borrowed");
+            Error::BadArgument
+        })
     }
 
     /// Called periodically to update the clock and check timeouts.

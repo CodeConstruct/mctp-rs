@@ -24,9 +24,7 @@ use embassy_usb_driver::{
     Driver, Endpoint, EndpointIn, EndpointOut, EndpointType,
 };
 use heapless::Vec;
-use mctp_estack::{
-    router::PortBottom, router::PortId, usb::MctpUsbHandler, Router,
-};
+use mctp_estack::{router::Port, router::PortId, usb::MctpUsbHandler, Router};
 
 use crate::MCTP_USB_MAX_PACKET;
 
@@ -86,7 +84,7 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
     }
 
     /// Run with a `mctp::Router` stack.
-    pub async fn run(mut self, mut bottom: PortBottom<'_>) -> ! {
+    pub async fn run(mut self, mut port: Port<'_>) -> ! {
         // Outer loop for reattaching USB
         loop {
             debug!("mctp usb send waiting");
@@ -94,18 +92,18 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
             debug!("mctp usb send attached");
             'sending: loop {
                 // Wait for at least one MCTP packet enqueued
-                let (pkt, _dest) = bottom.outbound().await;
+                let (pkt, _dest) = port.outbound().await;
                 let r = self.feed(pkt);
 
                 // Consume it
-                bottom.outbound_done();
+                port.outbound_done();
                 if r.is_err() {
                     // MCTP packet too large for USB
                     continue 'sending;
                 }
 
                 'fill: loop {
-                    let Some((pkt, _dest)) = bottom.try_outbound() else {
+                    let Some((pkt, _dest)) = port.try_outbound() else {
                         // No more packets
                         break 'fill;
                     };
@@ -113,7 +111,7 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
                     // See if it fits in the payload
                     match self.feed(pkt) {
                         // Success, consume it
-                        Ok(()) => bottom.outbound_done(),
+                        Ok(()) => port.outbound_done(),
                         // Won't fit, leave it until next 'sending iteration.
                         Err(_) => break 'fill,
                     }
@@ -272,14 +270,10 @@ impl<'d, D: Driver<'d>> MctpUsbClass<'d, D> {
     }
 
     /// Run with a `mctp::Router` stack.
-    pub async fn run(
-        self,
-        router: &Router<'_>,
-        bottom: PortBottom<'_>,
-        port: PortId,
-    ) -> ! {
+    pub async fn run(self, router: &Router<'_>, port: Port<'_>) -> ! {
         let (s, r) = self.split();
-        let _ = join(s.run(bottom), r.run(router, port)).await;
+        let id = port.id();
+        let _ = join(s.run(port), r.run(router, id)).await;
         unreachable!()
     }
 }
