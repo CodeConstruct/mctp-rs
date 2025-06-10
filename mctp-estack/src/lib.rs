@@ -119,6 +119,8 @@ pub mod config {
     /// Customise with `MCTP_ESTACK_NUM_RECEIVE` environment variable.
     /// Number of outstanding waiting responses, default 64
     pub const NUM_RECEIVE: usize = get_build_var!("MCTP_ESTACK_NUM_RECEIVE", 4);
+
+    /// Maximum number of incoming flows, default 64.
     ///
     /// After a message is sent with Tag Owner (TO) bit set, the stack will accept
     /// response messages with the same tag and TO _unset_. `FLOWS` defines
@@ -136,6 +138,20 @@ pub mod config {
     pub const MAX_MTU: usize = get_build_var!("MCTP_ESTACK_MAX_MTU", 255);
     const _: () =
         assert!(MAX_MTU >= crate::MctpHeader::LEN + 1, "MAX_MTU too small");
+
+    /// Per-port transmit queue length, default 4.
+    ///
+    /// This applies to [`Router`](crate::Router).
+    /// Each port will use `PORT_TXQUEUE` * `MAX_MTU` buffer space.
+    ///
+    /// Customise with `MCTP_ESTACK_PORT_TXQUEUE` environment variable.
+    pub const PORT_TXQUEUE: usize =
+        get_build_var!("MCTP_ESTACK_PORT_TXQUEUE", 4);
+
+    /// Maximum number of ports for [`Router`](crate::Router), default 1.
+    ///
+    /// Customise with `MCTP_ESTACK_MAX_PORTS` environment variable.
+    pub const MAX_PORTS: usize = get_build_var!("MCTP_ESTACK_MAX_PORTS", 2);
 }
 
 #[derive(Debug)]
