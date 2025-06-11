@@ -49,7 +49,7 @@ type PortRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 pub struct PortId(pub u8);
 
 /// A trait implemented by applications to determine the routing table.
-pub trait PortLookup: Send {
+pub trait PortLookup: Sync + Send {
     /// Returns the `PortId` for a destination EID.
     ///
     /// `PortId` is an index into the array of `ports` provided to [`Router::new`]
@@ -60,11 +60,7 @@ pub trait PortLookup: Send {
     ///
     /// `source_port` is the incoming interface of a forwarded packet,
     /// or `None` for locally generated packets.
-    fn by_eid(
-        &mut self,
-        eid: Eid,
-        source_port: Option<PortId>,
-    ) -> Option<PortId>;
+    fn by_eid(&self, eid: Eid, source_port: Option<PortId>) -> Option<PortId>;
 }
 
 /// Used like `heapless::Vec`, but lets the mut buffer be written into
@@ -416,7 +412,7 @@ pub struct RouterInner<'r> {
     /// Core MCTP stack
     stack: Stack,
 
-    lookup: &'r mut dyn PortLookup,
+    lookup: &'r dyn PortLookup,
 }
 
 impl<'r> Router<'r> {
@@ -431,7 +427,7 @@ impl<'r> Router<'r> {
     pub fn new(
         stack: Stack,
         ports: &'r [PortTop<'r>],
-        lookup: &'r mut dyn PortLookup,
+        lookup: &'r dyn PortLookup,
     ) -> Self {
         let inner = RouterInner { stack, lookup };
 
