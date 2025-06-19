@@ -1,5 +1,5 @@
 [workspace]
-members = [ "mctp-usb-embassy", "pldm-fw-cli", "standalone" ]
+members = [ "mctp-usb-embassy", "pldm-fw-cli", "pldm-platform", "standalone" ]
 resolver = "2"
 
 [workspace.package]
@@ -26,6 +26,7 @@ mctp = { version = "0.2", path = "mctp", default-features = false }
 num-derive = { version = "0.4", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 pldm-fw = { version = "0.2", path = "pldm-fw", default-features = false }
+pldm-platform = { path = "pldm-platform", default-features = false }
 pldm = { version = "0.2", path = "pldm", default-features = false }
 proptest = "1.0.0"
 simplelog = "0.12"
