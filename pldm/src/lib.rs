@@ -219,7 +219,7 @@ impl PldmRequest<'static> {
     /// Create a PLDM request from message data.
     ///
     /// May fail if the message data is not parsable as a PLDM message.
-    pub fn from_buf<'f>(data: &'f [u8]) -> Result<Self> {
+    pub fn from_buf(data: &[u8]) -> Result<Self> {
         PldmRequest::from_buf_borrowed(data).map(|p| p.make_owned())
     }
 }
