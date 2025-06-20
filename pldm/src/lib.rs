@@ -14,6 +14,7 @@
 //! used to construct higher-level PLDM messaging applications.
 
 use core::fmt::{self, Debug};
+use num_derive::FromPrimitive;
 
 use mctp::MsgIC;
 
@@ -124,7 +125,7 @@ pub type Result<T> = core::result::Result<T, PldmError>;
 #[allow(missing_docs)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, FromPrimitive)]
 pub enum CCode {
     SUCCESS = 0,
     ERROR = 1,
