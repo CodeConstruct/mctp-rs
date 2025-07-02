@@ -14,7 +14,7 @@ export RUSTFLAGS="-D warnings"
 cargo fmt -- --check
 
 # Check everything first
-cargo check --all-targets
+cargo check --all-targets --locked
 
 # stable, std
 cargo build --release --features mctp-estack/log
