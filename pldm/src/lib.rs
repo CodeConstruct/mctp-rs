@@ -50,9 +50,8 @@ impl core::fmt::Display for PldmError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for PldmError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for PldmError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::Mctp(s) => Some(s),
             _ => None,

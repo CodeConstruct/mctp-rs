@@ -190,8 +190,7 @@ pub enum Error {
     Io(std::io::Error),
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
