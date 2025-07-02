@@ -959,6 +959,7 @@ name = "pldm"
 version = "0.2.0"
 dependencies = [
  "mctp",
+ "num-derive",
  "num-traits",
 ]
 
