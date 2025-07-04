@@ -14,9 +14,9 @@ use core::future::{poll_fn, Future};
 use core::pin::pin;
 use core::task::{Poll, Waker};
 
-use crate::reassemble::Reassembler;
 use crate::{
-    AppCookie, Fragmenter, MctpMessage, SendOutput, Stack, MAX_MTU, MAX_PAYLOAD,
+    AppCookie, Fragmenter, MctpHeader, MctpMessage, SendOutput, Stack, MAX_MTU,
+    MAX_PAYLOAD,
 };
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
@@ -72,7 +72,6 @@ pub trait PortLookup: Send {
 struct PktBuf {
     data: [u8; MAX_MTU],
     len: usize,
-    dest: Eid,
 }
 
 impl PktBuf {
@@ -80,18 +79,15 @@ impl PktBuf {
         Self {
             data: [0u8; MAX_MTU],
             len: 0,
-            dest: Eid(0),
         }
     }
 
     fn set(&mut self, data: &[u8]) -> Result<()> {
-        let hdr = Reassembler::header(data);
-        debug_assert!(hdr.is_ok());
-        let hdr = hdr?;
+        debug_assert!(MctpHeader::decode(data).is_ok());
+
         let dst = self.data.get_mut(..data.len()).ok_or(Error::NoSpace)?;
         dst.copy_from_slice(data);
         self.len = data.len();
-        self.dest = Eid(hdr.dest_endpoint_id());
         Ok(())
     }
 }
@@ -122,7 +118,7 @@ impl PortTop<'_> {
     /// May block waiting for a port queue to flush.
     /// Packet must be a valid MCTP packet, may panic otherwise.
     async fn forward_packet(&self, pkt: &[u8]) -> Result<()> {
-        debug_assert!(Reassembler::header(pkt).is_ok());
+        debug_assert!(MctpHeader::decode(pkt).is_ok());
 
         let mut sender = self.packets.lock().await;
         // Note: must not await while holding `sender`
@@ -176,7 +172,6 @@ impl PortTop<'_> {
 
             let qpkt = sender.send().await;
             qpkt.len = 0;
-            qpkt.dest = fragmenter.dest();
             let r = fragmenter.fragment(payload, &mut qpkt.data);
             match r {
                 SendOutput::Packet(p) => {
@@ -188,9 +183,7 @@ impl PortTop<'_> {
                     sender.send_done();
                     break Err(err);
                 }
-                SendOutput::Complete { tag, cookie: _ } => {
-                    break Ok(tag)
-                }
+                SendOutput::Complete { tag, cookie: _ } => break Ok(tag),
             }
         }
     }
@@ -217,7 +210,9 @@ impl PortBottom<'_> {
             trace!("packets avail {}", self.packets.len());
         }
         let pkt = self.packets.receive().await;
-        (pkt, pkt.dest)
+        // OK unwrap, checked by channel sender
+        let dest = MctpHeader::decode(pkt).unwrap().dest;
+        (pkt, dest)
     }
 
     /// Attempt to retrieve an outbound packet.
@@ -230,7 +225,10 @@ impl PortBottom<'_> {
     /// `try_outbound()` may be called multiple times to peek at the same packet.
     pub fn try_outbound(&mut self) -> Option<(&[u8], Eid)> {
         trace!("packets avail {} try", self.packets.len());
-        self.packets.try_receive().map(|pkt| (&**pkt, pkt.dest))
+        self.packets.try_receive().map(|pkt| {
+            let dest = MctpHeader::decode(pkt).unwrap().dest;
+            (&**pkt, dest)
+        })
     }
 
     /// Consume the outbound packet and advance the queue.
@@ -461,11 +459,9 @@ impl<'r> Router<'r> {
     pub async fn inbound(&self, pkt: &[u8], port: PortId) -> Option<Eid> {
         let mut inner = self.inner.lock().await;
 
-        let Ok(header) = Reassembler::header(pkt) else {
-            return None;
-        };
+        let header = MctpHeader::decode(pkt).ok()?;
         // Source EID is returned even if packet routing fails
-        let ret_src = Some(Eid(header.source_endpoint_id()));
+        let ret_src = Some(header.src);
 
         // Handle locally if possible
         if inner.stack.is_local_dest(pkt) {
@@ -487,10 +483,8 @@ impl<'r> Router<'r> {
         }
 
         // Look for a route to forward to
-        let dest_eid = Eid(header.dest_endpoint_id());
-
-        let Some(p) = inner.lookup.by_eid(dest_eid, Some(port)) else {
-            debug!("No route for recv {}", dest_eid);
+        let Some(p) = inner.lookup.by_eid(header.dest, Some(port)) else {
+            debug!("No route for recv {}", header.dest);
             return ret_src;
         };
         drop(inner);

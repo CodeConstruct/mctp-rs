@@ -8,25 +8,20 @@
 #[allow(unused)]
 use crate::fmt::{debug, error, info, trace, warn};
 
-use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, MCTP_HEADER_VERSION_1};
+use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag};
 
-use crate::{AppCookie, Header, HEADER_LEN, MAX_MTU};
+use crate::{AppCookie, MctpHeader, MAX_MTU};
 
 /// Fragments a MCTP message.
 ///
 /// This is constructed from [`Stack::start_send()`](crate::Stack::start_send)
 #[derive(Debug)]
 pub struct Fragmenter {
-    src: Eid,
-    dest: Eid,
+    header: MctpHeader,
     typ: MsgType,
-    tag: Tag,
     ic: MsgIC,
-    seq: u8,
     mtu: usize,
 
-    first: bool,
-    done: bool,
     cookie: Option<AppCookie>,
 
     // A count of how many bytes have already been sent.
@@ -49,7 +44,7 @@ impl Fragmenter {
         }
         debug_assert!(typ.0 & 0x80 == 0, "IC bit's set in typ");
         debug_assert!(initial_seq & !mctp::MCTP_SEQ_MASK == 0);
-        if mtu < HEADER_LEN + 1 {
+        if mtu < MctpHeader::LEN + 1 {
             debug!("mtu too small");
             return Err(Error::BadArgument);
         }
@@ -59,27 +54,31 @@ impl Fragmenter {
         }
         // TODO other validity checks
 
+        let header = MctpHeader {
+            dest,
+            src,
+            seq: initial_seq,
+            som: true,
+            eom: false,
+            tag,
+        };
+
         Ok(Self {
             payload_used: 0,
-            src,
-            dest,
+            header,
             typ,
             mtu,
-            first: true,
-            done: false,
-            seq: initial_seq,
-            tag,
             cookie,
             ic,
         })
     }
 
     pub fn tag(&self) -> Tag {
-        self.tag
+        self.header.tag
     }
 
     pub fn dest(&self) -> Eid {
-        self.dest
+        self.header.dest
     }
 
     pub fn cookie(&self) -> Option<AppCookie> {
@@ -87,20 +86,7 @@ impl Fragmenter {
     }
 
     pub fn is_done(&self) -> bool {
-        self.done
-    }
-
-    fn header(&self) -> Header {
-        let mut header = Header::new(MCTP_HEADER_VERSION_1);
-        header.set_dest_endpoint_id(self.dest.0);
-        header.set_source_endpoint_id(self.src.0);
-        header.set_pkt_seq(self.seq);
-        if self.first {
-            header.set_som(self.first as u8);
-        }
-        header.set_msg_tag(self.tag.tag().0);
-        header.set_to(self.tag.is_owner() as u8);
-        header
+        self.header.eom
     }
 
     /// Returns fragments for the MCTP payload
@@ -112,12 +98,12 @@ impl Fragmenter {
         payload: &[u8],
         out: &'f mut [u8],
     ) -> SendOutput<'f> {
-        if self.done {
+        if self.header.eom {
             return SendOutput::success(self);
         }
 
         // first fragment needs type byte
-        let min = HEADER_LEN + self.first as usize;
+        let min = MctpHeader::LEN + self.header.som as usize;
 
         if out.len() < min {
             return SendOutput::failure(Error::NoSpace, self);
@@ -127,10 +113,10 @@ impl Fragmenter {
         // updated in `rest`
         let max_total = out.len().min(self.mtu);
         // let out = &mut out[..max_total];
-        let (h, mut rest) = out[..max_total].split_at_mut(HEADER_LEN);
+        let (h, mut rest) = out[..max_total].split_at_mut(MctpHeader::LEN);
 
         // Append type byte
-        if self.first {
+        if self.header.som {
             rest[0] = mctp::encode_type_ic(self.typ, self.ic);
             rest = &mut rest[1..];
         }
@@ -148,15 +134,14 @@ impl Fragmenter {
         d.copy_from_slice(&p[..l]);
 
         // Add the header
-        let mut header = self.header();
         if self.payload_used == payload.len() {
-            header.set_eom(1);
-            self.done = true;
+            self.header.eom = true;
         }
-        h.copy_from_slice(&header.0);
+        // OK unwrap: seq and tag are valid.
+        h.copy_from_slice(&self.header.encode().unwrap());
 
-        self.first = false;
-        self.seq = (self.seq + 1) & mctp::MCTP_SEQ_MASK;
+        self.header.som = false;
+        self.header.seq = (self.header.seq + 1) & mctp::MCTP_SEQ_MASK;
 
         let used = max_total - rest.len();
         SendOutput::Packet(&mut out[..used])
@@ -194,7 +179,7 @@ impl SendOutput<'_> {
 
     pub(crate) fn success(f: &Fragmenter) -> Self {
         Self::Complete {
-            tag: f.tag,
+            tag: f.header.tag,
             cookie: f.cookie,
         }
     }

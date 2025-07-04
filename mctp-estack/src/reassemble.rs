@@ -7,8 +7,6 @@
 #[allow(unused)]
 use crate::fmt::{debug, error, info, trace, warn};
 
-use mctp::MCTP_HEADER_VERSION_1;
-
 use crate::*;
 
 #[derive(Debug)]
@@ -63,33 +61,25 @@ impl Reassembler {
     }
 
     pub fn new(own_eid: Eid, packet: &[u8], stamp: EventStamp) -> Result<Self> {
-        let header = Self::header(packet)?;
+        let header = MctpHeader::decode(packet)?;
 
         if !Self::is_local_dest(own_eid, packet) {
             return Err(Error::InvalidInput);
         }
 
-        let dest_eid = Eid(header.dest_endpoint_id());
-        let peer = Eid(header.source_endpoint_id());
-        if peer == mctp::MCTP_ADDR_ANY {
+        if header.src == mctp::MCTP_ADDR_ANY {
             return Err(Error::InvalidInput);
         }
 
-        let tag = if header.to() == 1 {
-            Tag::Owned(TagValue(header.msg_tag()))
-        } else {
-            Tag::Unowned(TagValue(header.msg_tag()))
-        };
-
-        if header.som() != 1 {
+        if !header.som {
             // A reassembler always starts with a SOM
             return Err(Error::InvalidInput);
         }
 
         Ok(Self {
-            dest_eid,
-            peer,
-            tag,
+            dest_eid: header.dest,
+            peer: header.src,
+            tag: header.tag,
 
             state: State::New,
             cookie: None,
@@ -98,13 +88,12 @@ impl Reassembler {
     }
 
     pub fn is_local_dest(own_eid: Eid, packet: &[u8]) -> bool {
-        let Ok(header) = Self::header(packet) else {
+        let Ok(header) = MctpHeader::decode(packet) else {
             return false;
         };
 
-        let dest_eid = Eid(header.dest_endpoint_id());
         // Allow NULL EID for physical addressing
-        if !(dest_eid == own_eid || dest_eid == mctp::MCTP_ADDR_NULL) {
+        if !(header.dest == own_eid || header.dest == mctp::MCTP_ADDR_NULL) {
             return false;
         }
 
@@ -128,10 +117,8 @@ impl Reassembler {
             return Err(Error::InvalidInput);
         }
 
-        let header = Self::header(packet)?;
-        let som = header.som() == 1;
-        let eom = header.eom() == 1;
-        let min = HEADER_LEN + som as usize;
+        let header = MctpHeader::decode(packet)?;
+        let min = MctpHeader::LEN + header.som as usize;
         if packet.len() < min {
             // TODO counters
             debug!("Short packet");
@@ -139,9 +126,9 @@ impl Reassembler {
         }
         let payload = &packet[min..];
 
-        if som {
-            let (typ, ic) = mctp::decode_type_ic(packet[HEADER_LEN]);
-            let next_seq = header.pkt_seq();
+        if header.som {
+            let (typ, ic) = mctp::decode_type_ic(packet[MctpHeader::LEN]);
+            let next_seq = header.seq;
 
             self.state = State::Active { next_seq, typ, ic };
 
@@ -165,12 +152,12 @@ impl Reassembler {
             return Err(Error::InvalidInput);
         };
 
-        if header.pkt_seq() == *next_seq {
+        if header.seq == *next_seq {
             *next_seq = (*next_seq + 1) & mctp::MCTP_SEQ_MASK;
         } else {
             // Bad sequence halts reassembly
             // TODO counters
-            debug!("Bad seq got {} expect {}", header.pkt_seq(), next_seq);
+            debug!("Bad seq got {} expect {}", header.seq, next_seq);
             self.state = State::Bad;
             message.clear();
             return Err(Error::InvalidInput);
@@ -182,7 +169,7 @@ impl Reassembler {
             Error::NoSpace
         })?;
 
-        if eom {
+        if header.eom {
             self.state = State::Done { typ, ic };
             self.stamp = stamp;
             trace!("message reassembly complete, len {}", message.len());
@@ -224,14 +211,13 @@ impl Reassembler {
             State::New | State::Active { .. } => (),
         }
 
-        let Ok(header) = Self::header(packet) else {
+        let Ok(header) = MctpHeader::decode(packet) else {
             return false;
         };
 
-        self.peer == Eid(header.source_endpoint_id())
-            && self.dest_eid == Eid(header.dest_endpoint_id())
-            && self.tag.tag() == TagValue(header.msg_tag())
-            && self.tag.is_owner() == (header.to() == 1)
+        self.peer == header.src
+            && self.dest_eid == header.dest
+            && self.tag == header.tag
     }
 
     /// Check timeouts
@@ -255,27 +241,6 @@ impl Reassembler {
             State::Unused => return None,
         };
         self.stamp.check_timeout(now, timeout)
-    }
-
-    pub(crate) fn header(packet: &[u8]) -> Result<Header> {
-        if packet.len() < HEADER_LEN {
-            warn!("bad len {:?}", packet);
-            return Err(Error::InvalidInput);
-        }
-
-        // OK unwrap, size is fixed
-        let hd = packet[..HEADER_LEN].try_into().unwrap();
-        let header = Header::new_from_buf(hd, 1).map_err(|_e| {
-            warn!("bad header");
-            Error::InvalidInput
-        })?;
-
-        if header.hdr_version() != MCTP_HEADER_VERSION_1 {
-            warn!("wrong version 0x{:02x}", header.hdr_version());
-            return Err(Error::InvalidInput);
-        }
-
-        Ok(header)
     }
 
     pub(crate) fn set_cookie(&mut self, cookie: Option<AppCookie>) {

@@ -51,6 +51,7 @@ pub mod serial;
 pub mod usb;
 #[macro_use]
 mod util;
+mod proto;
 
 use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
@@ -58,6 +59,8 @@ pub use router::Router;
 
 use crate::fmt::*;
 pub(crate) use config::*;
+
+pub(crate) use proto::MctpHeader;
 
 /// Timeout for message reassembly.
 ///
@@ -74,8 +77,6 @@ pub const DEFERRED_TIMEOUT: u32 = 6000;
 /// Timeouts will be checked no more often than this interval (in milliseconds).
 /// See [`Stack::update()`].
 pub const TIMEOUT_INTERVAL: u32 = 100;
-
-pub(crate) const HEADER_LEN: usize = 4;
 
 /// Build-time configuration and defaults
 ///
@@ -116,7 +117,7 @@ pub mod config {
     /// Customise with `MCTP_ESTACK_MAX_MTU` environment variable.
     pub const MAX_MTU: usize = get_build_var!("MCTP_ESTACK_MAX_MTU", 255);
     const _: () =
-        assert!(MAX_MTU >= crate::HEADER_LEN + 1, "MAX_MTU too small");
+        assert!(MAX_MTU >= crate::MctpHeader::LEN + 1, "MAX_MTU too small");
 }
 
 #[derive(Debug)]
@@ -129,8 +130,6 @@ struct Flow {
 /// An opaque identifier that applications can use to associate responses.
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Hash, PartialOrd, Ord)]
 pub struct AppCookie(pub usize);
-
-type Header = libmctp::base_packet::MCTPTransportHeader<[u8; HEADER_LEN]>;
 
 /// Low level MCTP stack.
 ///
@@ -178,7 +177,7 @@ impl Stack {
             clock: now_millis,
             counter: 0,
         };
-        assert!(mtu >= HEADER_LEN + 1);
+        assert!(mtu >= MctpHeader::LEN + 1);
 
         Self {
             own_eid,
