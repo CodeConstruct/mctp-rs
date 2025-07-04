@@ -408,7 +408,7 @@ impl Stack {
         &mut self,
         source: Eid,
         tag: Tag,
-    ) -> Option<MctpMessage> {
+    ) -> Option<MctpMessage<'_>> {
         // Find the earliest matching entry
         self.done_reassemblers()
             .filter(|(re, _buf)| re.tag == tag && re.peer == source)
@@ -436,7 +436,7 @@ impl Stack {
     pub fn get_deferred_bycookie(
         &mut self,
         cookies: &[AppCookie],
-    ) -> Option<MctpMessage> {
+    ) -> Option<MctpMessage<'_>> {
         // Find the earliest matching entry
         self.done_reassemblers()
             .filter(|(re, _buf)| {
