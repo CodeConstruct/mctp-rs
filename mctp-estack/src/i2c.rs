@@ -21,8 +21,50 @@ const MCTP_I2C_HEADER: usize = 4;
 // bytecount is limited to u8, includes MCTP payload + 1 byte i2c source
 pub const MCTP_I2C_MAXMTU: usize = u8::MAX as usize - 1;
 
-type MctpI2cHeader =
-    libmctp::smbus_proto::MCTPSMBusHeader<[u8; MCTP_I2C_HEADER]>;
+pub struct MctpI2cHeader {
+    pub dest: u8,
+    pub source: u8,
+    pub byte_count: usize,
+}
+
+impl MctpI2cHeader {
+    fn encode(&self) -> Result<[u8; 4]> {
+        if self.dest > 0x7f || self.source > 0x7f {
+            return Err(Error::BadArgument);
+        }
+        if self.byte_count > u8::MAX as usize {
+            return Err(Error::BadArgument);
+        }
+        Ok([
+            self.dest << 1,
+            MCTP_I2C_COMMAND_CODE,
+            self.byte_count as u8,
+            self.source << 1 | 1,
+        ])
+    }
+
+    fn decode(pkt: &[u8]) -> Result<Self> {
+        let [dest, cmd, byte_count, source] =
+            pkt.try_into().map_err(|_| Error::BadArgument)?;
+        if dest & 1 != 0 {
+            trace!("Bad i2c dest write bit");
+            return Err(Error::InvalidInput);
+        }
+        if cmd != MCTP_I2C_COMMAND_CODE {
+            trace!("Bad i2c command code");
+            return Err(Error::InvalidInput);
+        }
+        if source & 1 != 1 {
+            trace!("Bad i2c source read bit");
+            return Err(Error::InvalidInput);
+        }
+        Ok(Self {
+            dest,
+            source,
+            byte_count: byte_count as usize,
+        })
+    }
+}
 
 /// Simple packet processing to add/remove the 4 byte MCTP-I2C header.
 #[derive(Debug, Clone)]
@@ -58,22 +100,13 @@ impl MctpI2cEncap {
             }
         }
 
-        if packet.len() < MCTP_I2C_HEADER {
-            return Err(Error::InvalidInput);
-        }
-
-        let (i2c, packet) = packet.split_at(MCTP_I2C_HEADER);
-        // OK unwrap, size matches
-        let header = MctpI2cHeader::new_from_buf(i2c.try_into().unwrap());
+        let header = MctpI2cHeader::decode(packet)?;
         // +1 for i2c source address field
-        if header.byte_count() as usize != packet.len() + 1 {
+        if header.byte_count != packet.len() + 1 {
             return Err(Error::InvalidInput);
         }
 
-        if header.command_code() != MCTP_I2C_COMMAND_CODE {
-            return Err(Error::InvalidInput);
-        }
-        Ok((packet, header.source_slave_addr()))
+        Ok((&packet[MCTP_I2C_HEADER..], header.source))
     }
 
     /// Handles a MCTP fragment with the PEC already validated
@@ -120,16 +153,18 @@ impl MctpI2cEncap {
             }
         };
 
-        // Write the i2c header and return the whole packet
-        let mut header = MctpI2cHeader::new();
-        header.set_dest_slave_addr(i2c_dest);
-        header.set_source_slave_addr(self.own_addr);
-        header.set_source_read_write(1);
-        header.set_command_code(MCTP_I2C_COMMAND_CODE);
         debug_assert!(packet.len() <= MCTP_I2C_MAXMTU);
-        header.set_byte_count((packet.len() + 1) as u8);
+        // Write the i2c header and return the whole packet
+        let header = MctpI2cHeader {
+            source: self.own_addr,
+            dest: i2c_dest,
+            byte_count: packet.len() + 1,
+        };
 
-        i2chead.copy_from_slice(&header.0);
+        match header.encode() {
+            Ok(h) => i2chead.copy_from_slice(&h),
+            Err(e) => return SendOutput::failure(e, fragmenter),
+        }
 
         let out_len = MCTP_I2C_HEADER + packet.len();
         let out = &mut out[..out_len];
@@ -153,14 +188,14 @@ impl MctpI2cEncap {
         }
 
         let (i2chead, packet) = out.split_at_mut(MCTP_I2C_HEADER);
-        let mut header = MctpI2cHeader::new();
-        header.set_dest_slave_addr(i2c_dest);
-        header.set_source_slave_addr(self.own_addr);
-        header.set_source_read_write(1);
-        header.set_command_code(MCTP_I2C_COMMAND_CODE);
-        // Include i2c source address byte in bytecount. No PEC.
-        header.set_byte_count((1 + inp.len()) as u8);
-        i2chead.copy_from_slice(&header.0);
+        // Write the i2c header and return the whole packet
+        let header = MctpI2cHeader {
+            source: self.own_addr,
+            dest: i2c_dest,
+            // Include i2c source address byte in bytecount. No PEC.
+            byte_count: inp.len() + 1,
+        };
+        i2chead.copy_from_slice(&header.encode()?);
         packet[..inp.len()].copy_from_slice(inp);
 
         if pec {

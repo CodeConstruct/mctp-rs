@@ -258,16 +258,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libmctp"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d077261b65cfe16a3d490243354fbaec3f22e5bcad546d21394105ab836d1d0"
-dependencies = [
- "bitfield",
- "smbus-pec",
-]
-
-[[package]]
 name = "log"
 version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -289,7 +279,6 @@ dependencies = [
  "embassy-sync 0.7.0",
  "embedded-io-async",
  "heapless",
- "libmctp",
  "log",
  "mctp",
  "smbus-pec",

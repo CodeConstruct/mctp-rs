@@ -10,8 +10,6 @@ mctp-estack = { version = "0.1", path = "mctp-estack" }
 pldm = { version = "0.2", path = "pldm", default-features = false }
 pldm-fw = { version = "0.2", path = "pldm-fw", default-features = false }
 
-libmctp = "0.2"
-
 embedded-io-async = "0.6"
 embedded-io-adapters = "0.6"
 defmt = "0.3"
