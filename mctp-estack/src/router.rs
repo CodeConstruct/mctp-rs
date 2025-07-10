@@ -112,10 +112,6 @@ pub struct PortTop<'a> {
     /// The outer mutex will not be held over an await.
     packets: AsyncMutex<Sender<'a, PortRawMutex, PktBuf>>,
 
-    /// Temporary storage to flatten vectorised local sent messages
-    // prior to fragmentation and queueing.
-    message: AsyncMutex<Vec<u8, MAX_PAYLOAD>>,
-
     mtu: usize,
 }
 
@@ -158,22 +154,21 @@ impl PortTop<'_> {
         &self,
         fragmenter: &mut Fragmenter,
         pkt: &[&[u8]],
+        work_msg: &mut Vec<u8, MAX_PAYLOAD>,
     ) -> Result<Tag> {
         trace!("send_message");
-        let mut msg;
         let payload = if pkt.len() == 1 {
             // Avoid the copy when sending a single slice
             pkt[0]
         } else {
-            msg = self.message.lock().await;
-            msg.clear();
+            work_msg.clear();
             for p in pkt {
-                msg.extend_from_slice(p).map_err(|_| {
+                work_msg.extend_from_slice(p).map_err(|_| {
                     debug!("Message too large");
                     Error::NoSpace
                 })?;
             }
-            &msg
+            work_msg
         };
 
         loop {
@@ -296,7 +291,6 @@ impl<'a> PortBuilder<'a> {
         let (ps, pr) = self.packets.split();
 
         let t = PortTop {
-            message: AsyncMutex::new(Vec::new()),
             packets: AsyncMutex::new(ps),
             mtu,
         };
@@ -404,6 +398,10 @@ pub struct Router<'r> {
         BlockingMutex<RefCell<Vec<(MsgType, AppCookie), MAX_LISTENERS>>>,
 
     recv_wakers: WakerPool,
+
+    /// Temporary storage to flatten vectorised local sent messages
+    // prior to fragmentation and queueing.
+    work_msg: AsyncMutex<Vec<u8, MAX_PAYLOAD>>,
 }
 
 pub struct RouterInner<'r> {
@@ -436,6 +434,7 @@ impl<'r> Router<'r> {
             app_listeners,
             recv_wakers: Default::default(),
             ports,
+            work_msg: AsyncMutex::new(Vec::new()),
         }
     }
 
@@ -657,7 +656,9 @@ impl<'r> Router<'r> {
         // release to allow other ports to continue work
         drop(inner);
 
-        top.send_message(&mut fragmenter, buf).await
+        // lock the shared work buffer against other app_send_message()
+        let mut work_msg = self.work_msg.lock().await;
+        top.send_message(&mut fragmenter, buf, &mut work_msg).await
     }
 
     /// Only needs to be called for tags allocated with tag_expires=false
