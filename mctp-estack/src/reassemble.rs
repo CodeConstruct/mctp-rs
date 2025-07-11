@@ -44,6 +44,12 @@ pub(crate) struct Reassembler {
     pub stamp: EventStamp,
 }
 
+impl Default for Reassembler {
+    fn default() -> Self {
+        Self::new_unused()
+    }
+}
+
 impl Reassembler {
     pub fn new_unused() -> Self {
         Self {

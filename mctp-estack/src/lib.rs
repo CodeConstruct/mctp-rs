@@ -179,8 +179,6 @@ impl Stack {
             counter: 0,
         };
         assert!(mtu >= HEADER_LEN + 1);
-        let reassemblers =
-            [(); NUM_RECEIVE].map(|_| (Reassembler::new_unused(), Vec::new()));
 
         Self {
             own_eid,
@@ -188,7 +186,7 @@ impl Stack {
             next_timeout: 0,
             mtu,
             flows: Default::default(),
-            reassemblers,
+            reassemblers: Default::default(),
             next_tag: 0,
             next_seq: 0,
         }
