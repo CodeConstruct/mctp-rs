@@ -86,6 +86,10 @@ impl Fragmenter {
         self.cookie
     }
 
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
     fn header(&self) -> Header {
         let mut header = Header::new(MCTP_HEADER_VERSION_1);
         header.set_dest_endpoint_id(self.dest.0);
@@ -133,7 +137,7 @@ impl Fragmenter {
 
         if payload.len() < self.payload_used {
             // Caller is passing varying payload buffers
-            return SendOutput::failure(Error::InvalidInput, self);
+            return SendOutput::failure(Error::BadArgument, self);
         }
 
         // Copy as much as is available in input or output
@@ -156,10 +160,6 @@ impl Fragmenter {
 
         let used = max_total - rest.len();
         SendOutput::Packet(&mut out[..used])
-    }
-
-    pub fn is_done(&self) -> bool {
-        self.done
     }
 }
 

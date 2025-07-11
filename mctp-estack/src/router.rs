@@ -182,16 +182,15 @@ impl PortTop<'_> {
                 SendOutput::Packet(p) => {
                     qpkt.len = p.len();
                     sender.send_done();
-                    if fragmenter.is_done() {
-                        break Ok(fragmenter.tag());
-                    }
                 }
                 SendOutput::Error { err, .. } => {
                     debug!("Error packetising");
                     sender.send_done();
                     break Err(err);
                 }
-                SendOutput::Complete { .. } => unreachable!(),
+                SendOutput::Complete { tag, cookie: _ } => {
+                    break Ok(tag)
+                }
             }
         }
     }
