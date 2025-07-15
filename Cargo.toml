@@ -1,5 +1,5 @@
 [workspace]
-members = [ "mctp-usb-embassy", "pldm-fw-cli", "pldm-platform", "pldm-platform-util", "standalone" ]
+members = [ "mctp-usb-embassy", "pldm-file", "pldm-fw-cli", "pldm-platform", "pldm-platform-util", "standalone" ]
 resolver = "2"
 
 [workspace.package]

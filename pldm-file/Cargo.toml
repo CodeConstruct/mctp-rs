@@ -1,0 +1,22 @@
+[package]
+name = "pldm-file"
+description = "Platform Level Data Model (PLDM) for File Transfer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["network-programming", "embedded", "hardware-support"]
+
+[dependencies]
+crc = { workspace = true }
+deku = { workspace = true }
+log = { workspace = true }
+mctp = { workspace = true }
+num-derive = { workspace = true }
+num-traits = { workspace = true }
+pldm = { workspace = true }
+
+[features]
+default = ["std"]
+alloc = ["pldm/alloc", "deku/alloc"]
+std = ["alloc", "pldm/std", "mctp/std"]

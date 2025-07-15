@@ -22,14 +22,14 @@ cargo build --release
 cargo test
 
 # stable, no_std
-NOSTD_CRATES="mctp pldm pldm-fw pldm-platform"
+NOSTD_CRATES="mctp pldm pldm-fw pldm-platform pldm-file"
 for c in $NOSTD_CRATES; do
     (
     cd $c
     cargo build --target thumbv7em-none-eabihf --no-default-features
     )
 done
-ALLOC_CRATES="pldm pldm-platform"
+ALLOC_CRATES="pldm pldm-platform pldm-file"
 for c in $ALLOC_CRATES; do
     (
     cd $c
