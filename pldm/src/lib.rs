@@ -521,3 +521,33 @@ pub fn pldm_tx_req(
     ep.send_vectored(mctp::MCTP_TYPE_PLDM, MsgIC(false), txs)?;
     Ok(())
 }
+
+/// Transmit an outgoing PLDM response, asynchronously
+pub async fn pldm_tx_resp_async(
+    ep: &mut impl mctp::AsyncRespChannel,
+    resp: &PldmResponse<'_>,
+) -> Result<()> {
+    let tx_buf = [resp.iid, resp.typ, resp.cmd, resp.cc];
+    let txs = &[&tx_buf, resp.data.as_ref()];
+    ep.send_vectored(MsgIC(false), txs).await?;
+    Ok(())
+}
+
+/// Transmit an outgoing PLDM response, asynchronously
+///
+/// The iid will be updated in `req`.
+pub async fn pldm_tx_req_async(
+    ep: &mut impl mctp::AsyncReqChannel,
+    req: &mut PldmRequest<'_>,
+) -> Result<()> {
+    // TODO IID allocation
+    const REQ_IID: u8 = 0;
+    req.iid = REQ_IID;
+
+    let tx_buf = [1 << 7 | req.iid, req.typ & 0x3f, req.cmd];
+
+    let txs = &[&tx_buf, req.data.as_ref()];
+    ep.send_vectored(mctp::MCTP_TYPE_PLDM, MsgIC(false), txs)
+        .await?;
+    Ok(())
+}
