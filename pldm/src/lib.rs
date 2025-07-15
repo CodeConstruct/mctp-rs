@@ -24,6 +24,7 @@ use num_derive::FromPrimitive;
 
 use mctp::MsgIC;
 
+pub mod control;
 pub mod util;
 use util::*;
 
