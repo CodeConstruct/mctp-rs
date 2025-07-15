@@ -10,7 +10,14 @@
 //!
 //! This module provides definitions for PLDM control requests and responses.
 
+use deku::{DekuRead, DekuWrite};
+
 use crate::{proto_error, PldmError, Result};
+
+pub mod responder;
+
+/// PLDM Messaging Control and Discovery type
+pub const PLDM_TYPE_CONTROL: u8 = 0;
 
 /// PLDM Control command codes
 #[allow(missing_docs)]
@@ -26,6 +33,15 @@ pub enum Cmd {
     NegotiateTransferParameters = 0x07,
     MultipartSend = 0x08,
     MultipartReceive = 0x09,
+}
+
+/// Completion codes for the PLDM Base (subtype 0) commands
+#[allow(missing_docs)]
+pub mod control_ccode {
+    pub const INVALID_DATA_TRANSFER_HANDLE: u8 = 0x80;
+    pub const INVALID_TRANSFER_OPERATION_FLAG: u8 = 0x81;
+    pub const INVALID_PLDM_TYPE_IN_REQUEST_DATA: u8 = 0x83;
+    pub const INVALID_PLDM_VERSION_IN_REQUEST_DATA: u8 = 0x84;
 }
 
 impl TryFrom<u8> for Cmd {
@@ -52,4 +68,68 @@ impl TryFrom<u8> for Cmd {
         };
         Ok(c)
     }
+}
+
+/// Set TID request
+#[derive(DekuRead, DekuWrite)]
+pub struct SetTIDReq {
+    /// TID
+    pub tid: u8,
+}
+
+/// Get TID response
+#[derive(DekuRead, DekuWrite)]
+pub struct GetTIDResp {
+    /// TID
+    pub tid: u8,
+}
+
+/// Get PLDM Version request
+#[derive(DekuRead, DekuWrite)]
+#[deku(endian = "little")]
+pub struct GetPLDMVersionReq {
+    /// DataTransferHandle
+    pub xfer_handle: u32,
+    /// TransferOperationFlag
+    pub xfer_op: u8,
+    /// PLDMType
+    pub pldm_type: u8,
+}
+
+/// Get PLDM Version response
+#[derive(DekuRead, DekuWrite)]
+#[deku(endian = "little")]
+pub struct GetPLDMVersionResp {
+    /// NextDataTransferHandle
+    pub next_handle: u32,
+    /// TransferFlag
+    pub xfer_flag: u8,
+    /// Version. We only support one version in our responses at present.
+    pub version: u32,
+    /// Checksum, over the version data.
+    pub crc: u32,
+}
+
+/// Get PLDM Types response
+#[derive(DekuRead, DekuWrite)]
+pub struct GetPLDMTypesResp {
+    /// PLDM Types bitmask
+    pub types: [u8; 8],
+}
+
+/// Get PLDM Commands request
+#[derive(DekuRead, DekuWrite)]
+#[deku(endian = "little")]
+pub struct GetPLDMCommandsReq {
+    /// PLDMType
+    pub pldm_type: u8,
+    /// Version
+    pub version: u32,
+}
+
+/// Get PLDM Commands response
+#[derive(DekuRead, DekuWrite)]
+pub struct GetPLDMCommandsResp {
+    /// PLDM Types bitmask
+    pub commands: [u8; 32],
 }

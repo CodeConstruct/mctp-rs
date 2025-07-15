@@ -8,6 +8,9 @@ repository.workspace = true
 categories = ["network-programming", "embedded", "hardware-support"]
 
 [dependencies]
+crc = "3.0"
+deku = { workspace = true }
+heapless = { workspace = true }
 mctp = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
