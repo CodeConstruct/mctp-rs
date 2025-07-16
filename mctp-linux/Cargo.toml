@@ -10,6 +10,7 @@ categories = ["network-programming", "embedded", "hardware-support", "os::linux-
 [dependencies]
 libc = "0.2"
 mctp = { workspace = true, features = ["std"] }
+smol = { version = "2.0" }
 
 [[example]]
 name = "mctp-req"

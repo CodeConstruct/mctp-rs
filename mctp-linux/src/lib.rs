@@ -40,9 +40,10 @@
 //! socket model.
 
 use core::mem;
+use smol::Async;
 use std::fmt;
 use std::io::Error;
-use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use mctp::{
@@ -160,12 +161,12 @@ impl MctpSocket {
         Ok(MctpSocket(fd))
     }
 
-    /// Blocking receive from a socket, into `buf`, returning a length
-    /// and source address
-    ///
-    /// Essentially a wrapper around [libc::recvfrom], using MCTP-specific
-    /// addressing.
-    pub fn recvfrom(&self, buf: &mut [u8]) -> Result<(usize, MctpSockAddr)> {
+    // Inner recvfrom, returning an io::Error on failure. This can be
+    // used with async wrappers.
+    fn io_recvfrom(
+        &self,
+        buf: &mut [u8],
+    ) -> std::io::Result<(usize, MctpSockAddr)> {
         let mut addr = MctpSockAddr::zero();
         let (addr_ptr, mut addr_len) = addr.as_raw_mut();
         let buf_ptr = buf.as_mut_ptr() as *mut libc::c_void;
@@ -177,17 +178,26 @@ impl MctpSocket {
         };
 
         if rc < 0 {
-            Err(last_os_error())
+            Err(Error::last_os_error())
         } else {
             Ok((rc as usize, addr))
         }
     }
 
-    /// Blocking send to a socket, given a buffer and address, returning
-    /// the number of bytes sent.
+    /// Blocking receive from a socket, into `buf`, returning a length
+    /// and source address
     ///
-    /// Essentially a wrapper around [libc::sendto].
-    pub fn sendto(&self, buf: &[u8], addr: &MctpSockAddr) -> Result<usize> {
+    /// Essentially a wrapper around [libc::recvfrom], using MCTP-specific
+    /// addressing.
+    pub fn recvfrom(&self, buf: &mut [u8]) -> Result<(usize, MctpSockAddr)> {
+        self.io_recvfrom(buf).map_err(mctp::Error::Io)
+    }
+
+    fn io_sendto(
+        &self,
+        buf: &[u8],
+        addr: &MctpSockAddr,
+    ) -> std::io::Result<usize> {
         let (addr_ptr, addr_len) = addr.as_raw();
         let buf_ptr = buf.as_ptr() as *const libc::c_void;
         let buf_len = buf.len() as libc::size_t;
@@ -198,10 +208,18 @@ impl MctpSocket {
         };
 
         if rc < 0 {
-            Err(last_os_error())
+            Err(Error::last_os_error())
         } else {
             Ok(rc as usize)
         }
+    }
+
+    /// Blocking send to a socket, given a buffer and address, returning
+    /// the number of bytes sent.
+    ///
+    /// Essentially a wrapper around [libc::sendto].
+    pub fn sendto(&self, buf: &[u8], addr: &MctpSockAddr) -> Result<usize> {
+        self.io_sendto(buf, addr).map_err(mctp::Error::Io)
     }
 
     /// Bind the socket to a local address.
@@ -298,6 +316,57 @@ impl std::os::fd::AsRawFd for MctpSocket {
     }
 }
 
+impl AsFd for MctpSocket {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.0.as_fd()
+    }
+}
+
+/// MCTP socket for async use
+pub struct MctpSocketAsync(Async<MctpSocket>);
+
+impl MctpSocketAsync {
+    /// Create a new async MCTP socket
+    pub fn new() -> Result<Self> {
+        let sock = MctpSocket::new()?;
+        let sock = Async::new(sock).map_err(mctp::Error::Io)?;
+
+        Ok(Self(sock))
+    }
+
+    /// Bind the socket to a local address.
+    pub fn bind(&self, addr: &MctpSockAddr) -> Result<()> {
+        self.0.as_ref().bind(addr)
+    }
+
+    /// Receive a message from this socket
+    ///
+    /// Returns the length of buffer read, and the peer address.
+    pub async fn recvfrom(
+        &self,
+        buf: &mut [u8],
+    ) -> Result<(usize, MctpSockAddr)> {
+        self.0
+            .read_with(|io| io.io_recvfrom(buf))
+            .await
+            .map_err(mctp::Error::Io)
+    }
+
+    /// Send a message to a given address
+    ///
+    /// Returns the number of bytes sent
+    pub async fn sendto(
+        &self,
+        buf: &[u8],
+        addr: &MctpSockAddr,
+    ) -> Result<usize> {
+        self.0
+            .write_with(|io| io.io_sendto(buf, addr))
+            .await
+            .map_err(mctp::Error::Io)
+    }
+}
+
 /// Encapsulation of a remote endpoint: a socket and an Endpoint ID.
 pub struct MctpLinuxReq {
     eid: Eid,
@@ -383,6 +452,71 @@ impl mctp::ReqChannel for MctpLinuxReq {
     }
 }
 
+/// Encapsulation of a remote endpoint: a socket and an Endpoint ID.
+pub struct MctpLinuxAsyncReq {
+    eid: Eid,
+    net: u32,
+    sock: MctpSocketAsync,
+    sent: bool,
+}
+
+impl MctpLinuxAsyncReq {
+    /// Create a new asynchronous request channel.
+    pub fn new(eid: Eid, net: Option<u32>) -> Result<Self> {
+        let net = net.unwrap_or(MCTP_NET_ANY);
+        Ok(Self {
+            eid,
+            net,
+            sock: MctpSocketAsync::new()?,
+            sent: false,
+        })
+    }
+}
+
+impl mctp::AsyncReqChannel for MctpLinuxAsyncReq {
+    fn remote_eid(&self) -> Eid {
+        self.eid
+    }
+
+    async fn send_vectored(
+        &mut self,
+        typ: MsgType,
+        ic: MsgIC,
+        bufs: &[&[u8]],
+    ) -> Result<()> {
+        let typ_ic = mctp::encode_type_ic(typ, ic);
+        let addr = MctpSockAddr::new(
+            self.eid.0,
+            self.net,
+            typ_ic,
+            mctp::MCTP_TAG_OWNER,
+        );
+        let concat = bufs
+            .iter()
+            .flat_map(|b| b.iter().cloned())
+            .collect::<Vec<u8>>();
+        self.sock.sendto(&concat, &addr).await?;
+        self.sent = true;
+        Ok(())
+    }
+
+    async fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> Result<(MsgType, MsgIC, &'f mut [u8])> {
+        if !self.sent {
+            return Err(mctp::Error::BadArgument);
+        }
+        let (sz, addr) = self.sock.recvfrom(buf).await?;
+        let src = Eid(addr.0.smctp_addr);
+        let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
+        if src != self.eid {
+            return Err(mctp::Error::Other);
+        }
+        Ok((typ, ic, &mut buf[..sz]))
+    }
+}
+
 /// A Listener for Linux MCTP messages
 pub struct MctpLinuxListener {
     sock: MctpSocket,
@@ -453,6 +587,62 @@ impl mctp::Listener for MctpLinuxListener {
     }
 }
 
+/// An MCTP Listener for asynchronous IO
+pub struct MctpLinuxAsyncListener {
+    sock: MctpSocketAsync,
+    net: u32,
+    typ: MsgType,
+}
+
+impl MctpLinuxAsyncListener {
+    /// Create a new `MctpLinuxAsyncListener`.
+    ///
+    /// This will listen for MCTP message type `typ`, on an optional
+    /// Linux network `net`. `None` network defaults to `MCTP_NET_ANY`.
+    pub fn new(typ: MsgType, net: Option<u32>) -> Result<Self> {
+        let sock = MctpSocketAsync::new()?;
+        // Linux requires MCTP_ADDR_ANY for binds.
+        let net = net.unwrap_or(MCTP_NET_ANY);
+        let addr = MctpSockAddr::new(
+            MCTP_ADDR_ANY.0,
+            net,
+            typ.0,
+            mctp::MCTP_TAG_OWNER,
+        );
+        sock.bind(&addr)?;
+        Ok(Self { sock, net, typ })
+    }
+}
+
+impl mctp::AsyncListener for MctpLinuxAsyncListener {
+    type RespChannel<'a> = MctpLinuxAsyncResp<'a>;
+
+    async fn recv<'f>(
+        &mut self,
+        buf: &'f mut [u8],
+    ) -> Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)> {
+        let (sz, addr) = self.sock.recvfrom(buf).await?;
+        let src = Eid(addr.0.smctp_addr);
+        let (typ, ic) = mctp::decode_type_ic(addr.0.smctp_type);
+        let tag = tag_from_smctp(addr.0.smctp_tag);
+        if let Tag::Unowned(_) = tag {
+            // bind() shouldn't give non-owned packets.
+            return Err(mctp::Error::InternalError);
+        }
+        if typ != self.typ {
+            // bind() should return the requested type
+            return Err(mctp::Error::InternalError);
+        }
+        let ep = MctpLinuxAsyncResp {
+            eid: src,
+            tv: tag.tag(),
+            listener: self,
+            typ,
+        };
+        Ok((typ, ic, &mut buf[..sz], ep))
+    }
+}
+
 /// A Linux MCTP Listener response channel
 pub struct MctpLinuxResp<'a> {
     eid: Eid,
@@ -489,6 +679,42 @@ impl mctp::RespChannel for MctpLinuxResp<'_> {
 
     fn req_channel(&self) -> Result<Self::ReqChannel> {
         MctpLinuxReq::new(self.eid, Some(self.listener.net))
+    }
+}
+
+/// A Linux MCTP Async Listener response channel
+pub struct MctpLinuxAsyncResp<'l> {
+    eid: Eid,
+    tv: TagValue,
+    listener: &'l MctpLinuxAsyncListener,
+    typ: MsgType,
+}
+
+impl<'l> mctp::AsyncRespChannel for MctpLinuxAsyncResp<'l> {
+    type ReqChannel<'a>
+        = MctpLinuxAsyncReq
+    where
+        Self: 'a;
+
+    async fn send_vectored(&mut self, ic: MsgIC, bufs: &[&[u8]]) -> Result<()> {
+        let typ_ic = mctp::encode_type_ic(self.typ, ic);
+        let tag = tag_to_smctp(&Tag::Unowned(self.tv));
+        let addr =
+            MctpSockAddr::new(self.eid.0, self.listener.net, typ_ic, tag);
+        let concat = bufs
+            .iter()
+            .flat_map(|b| b.iter().cloned())
+            .collect::<Vec<u8>>();
+        self.listener.sock.sendto(&concat, &addr).await?;
+        Ok(())
+    }
+
+    fn remote_eid(&self) -> Eid {
+        self.eid
+    }
+
+    fn req_channel(&self) -> Result<Self::ReqChannel<'_>> {
+        MctpLinuxAsyncReq::new(self.eid, Some(self.listener.net))
     }
 }
 
