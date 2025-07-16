@@ -225,11 +225,13 @@ impl<'d, D: Driver<'d>> MctpUsbClass<'d, D> {
         let interval = 1;
         let ep_out = alt.alloc_endpoint_out(
             EndpointType::Bulk,
+            None,
             MCTP_USB_MAX_PACKET as u16,
             interval,
         );
         let ep_in = alt.alloc_endpoint_in(
             EndpointType::Bulk,
+            None,
             MCTP_USB_MAX_PACKET as u16,
             interval,
         );

@@ -9,8 +9,8 @@ rust-version = "1.82"
 description = "MCTP over USB transport for embassy-usb"
 
 [dependencies]
-embassy-usb = { version = "0.4" }
-embassy-usb-driver = { version = "0.1" }
+embassy-usb = { version = "0.5" }
+embassy-usb-driver = { version = "0.2" }
 embassy-futures = { version = "0.1" }
 
 log = { version = "0.4", optional = true }
