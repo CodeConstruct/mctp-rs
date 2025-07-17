@@ -42,7 +42,7 @@
 use core::mem;
 use std::fmt;
 use std::io::Error;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use mctp::{
@@ -139,13 +139,7 @@ fn last_os_error() -> mctp::Error {
 }
 
 /// MCTP socket object.
-pub struct MctpSocket(RawFd);
-
-impl Drop for MctpSocket {
-    fn drop(&mut self) {
-        unsafe { libc::close(self.0) };
-    }
-}
+pub struct MctpSocket(OwnedFd);
 
 impl MctpSocket {
     /// Create a new MCTP socket. This can then be used for send/receive
@@ -161,7 +155,9 @@ impl MctpSocket {
         if rc < 0 {
             return Err(last_os_error());
         }
-        Ok(MctpSocket(rc))
+        // safety: the fd is valid, and we have exclusive ownership
+        let fd = unsafe { OwnedFd::from_raw_fd(rc) };
+        Ok(MctpSocket(fd))
     }
 
     /// Blocking receive from a socket, into `buf`, returning a length
@@ -174,9 +170,10 @@ impl MctpSocket {
         let (addr_ptr, mut addr_len) = addr.as_raw_mut();
         let buf_ptr = buf.as_mut_ptr() as *mut libc::c_void;
         let buf_len = buf.len() as libc::size_t;
+        let fd = self.as_raw_fd();
 
         let rc = unsafe {
-            libc::recvfrom(self.0, buf_ptr, buf_len, 0, addr_ptr, &mut addr_len)
+            libc::recvfrom(fd, buf_ptr, buf_len, 0, addr_ptr, &mut addr_len)
         };
 
         if rc < 0 {
@@ -194,9 +191,10 @@ impl MctpSocket {
         let (addr_ptr, addr_len) = addr.as_raw();
         let buf_ptr = buf.as_ptr() as *const libc::c_void;
         let buf_len = buf.len() as libc::size_t;
+        let fd = self.as_raw_fd();
 
         let rc = unsafe {
-            libc::sendto(self.0, buf_ptr, buf_len, 0, addr_ptr, addr_len)
+            libc::sendto(fd, buf_ptr, buf_len, 0, addr_ptr, addr_len)
         };
 
         if rc < 0 {
@@ -209,8 +207,9 @@ impl MctpSocket {
     /// Bind the socket to a local address.
     pub fn bind(&self, addr: &MctpSockAddr) -> Result<()> {
         let (addr_ptr, addr_len) = addr.as_raw();
+        let fd = self.as_raw_fd();
 
-        let rc = unsafe { libc::bind(self.0, addr_ptr, addr_len) };
+        let rc = unsafe { libc::bind(fd, addr_ptr, addr_len) };
 
         if rc < 0 {
             Err(last_os_error())
@@ -231,9 +230,10 @@ impl MctpSocket {
             tv_sec: dur.as_secs() as libc::time_t,
             tv_usec: dur.subsec_micros() as libc::suseconds_t,
         };
+        let fd = self.as_raw_fd();
         let rc = unsafe {
             libc::setsockopt(
-                self.0,
+                fd,
                 libc::SOL_SOCKET,
                 libc::SO_RCVTIMEO,
                 (&tv as *const libc::timeval) as *const libc::c_void,
@@ -260,9 +260,10 @@ impl MctpSocket {
         let mut tv = std::mem::MaybeUninit::<libc::timeval>::uninit();
         let mut tv_len =
             std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+        let fd = self.as_raw_fd();
         let rc = unsafe {
             libc::getsockopt(
-                self.0,
+                fd,
                 libc::SOL_SOCKET,
                 libc::SO_RCVTIMEO,
                 tv.as_mut_ptr() as *mut libc::c_void,
@@ -293,7 +294,7 @@ impl MctpSocket {
 
 impl std::os::fd::AsRawFd for MctpSocket {
     fn as_raw_fd(&self) -> RawFd {
-        self.0
+        self.0.as_raw_fd()
     }
 }
 
