@@ -1066,13 +1066,16 @@ dependencies = [
 name = "pldm-file"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "crc",
  "deku",
  "log",
  "mctp",
+ "mctp-linux",
  "num-derive",
  "num-traits",
  "pldm",
+ "smol",
 ]
 
 [[package]]
