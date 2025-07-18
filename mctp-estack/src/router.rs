@@ -728,11 +728,13 @@ impl<'r> RouterAsyncReqChannel<'r> {
 
     /// This must be called prior to drop whenever `tag_noexpire()` is used.
     ///
-    /// A workaround until async drop is implemented in Rust itself.
+    /// Failure to call will result in leaking tags in the Router.
+    ///
+    /// This is a workaround until async drop is implemented in Rust itself.
     /// <https://github.com/rust-lang/rust/issues/126482>
-    pub async fn async_drop(self) {
+    pub async fn async_drop(mut self) {
         if !self.tag_expires {
-            if let Some(tag) = self.sent_tag {
+            if let Some(tag) = self.sent_tag.take() {
                 self.router.app_release_tag(self.eid, tag).await;
             }
         }
