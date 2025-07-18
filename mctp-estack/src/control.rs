@@ -274,10 +274,11 @@ pub fn respond_get_eid<'a>(
 /// A Set Endpoint ID request.
 #[allow(missing_docs)]
 #[derive(Debug)]
-pub struct SetEndpointId {
-    pub eid: Eid,
-    pub force: bool,
-    pub reset: bool,
+pub enum SetEndpointId {
+    Set(Eid),
+    Force(Eid),
+    Reset,
+    SetDiscovered,
 }
 
 /// Parse a Set Endpoint ID request.
@@ -289,30 +290,26 @@ pub fn parse_set_eid(req: &MctpControlMsg) -> ControlResult<SetEndpointId> {
         return Err(CompletionCode::ERROR_INVALID_LENGTH);
     }
 
-    let eid = Eid::new_normal(req.body[1]).map_err(|_| {
-        warn!("Invalid Set EID {}", req.body[1]);
-        CompletionCode::ERROR_INVALID_DATA
-    })?;
-
-    let mut ret = SetEndpointId {
-        eid,
-        force: false,
-        reset: false,
-    };
-
-    match req.body[0] & 0x03 {
-        // Set
-        0b00 => (),
-        // Force
-        0b01 => ret.force = true,
+    let op = req.body[0] & 0x03;
+    Ok(match op {
+        // Set or Force
+        0b00 | 0b01 => {
+            let eid = Eid::new_normal(req.body[1]).map_err(|_| {
+                warn!("Invalid Set EID {}", req.body[1]);
+                CompletionCode::ERROR_INVALID_DATA
+            })?;
+            if op == 0b00 {
+                SetEndpointId::Set(eid)
+            } else {
+                SetEndpointId::Force(eid)
+            }
+        }
         // Reset
-        0b10 => ret.reset = true,
+        0b10 => SetEndpointId::Reset,
         // Set Discovered
-        0b11 => return Err(CompletionCode::ERROR_INVALID_DATA),
+        0b11 => SetEndpointId::SetDiscovered,
         _ => unreachable!(),
-    }
-
-    Ok(ret)
+    })
 }
 
 /// Create a Set Endpoint ID response.
@@ -326,7 +323,13 @@ pub fn respond_set_eid<'a>(
         return Err(CompletionCode::ERROR);
     }
     let status = if accepted { 0b00000000 } else { 0b00010000 };
-    let body = [CompletionCode::SUCCESS.into(), status, current_eid.0, 0x00];
+    let pool_size = 0;
+    let body = [
+        CompletionCode::SUCCESS.into(),
+        status,
+        current_eid.0,
+        pool_size,
+    ];
     let rsp_buf = &mut rsp_buf[0..body.len()];
     rsp_buf.clone_from_slice(&body);
     req.new_resp(rsp_buf)
@@ -448,22 +451,26 @@ impl<'a> MctpControl<'a> {
         &mut self,
         msg: &[u8],
         mut resp_chan: impl AsyncRespChannel,
-    ) -> mctp::Result<()> {
+    ) -> mctp::Result<Option<ControlEvent>> {
         let req = MctpControlMsg::from_buf(msg).map_err(|e| {
             // Can't send a response since request couldn't be parsed
-            debug!("Bad control input {e:?}");
+            debug!("Bad control input {:?}", e);
             mctp::Error::InvalidInput
         })?;
 
-        let mut resp = match self.handle_req(&req).await {
-            Err(e) => {
-                debug!("Control error response {:?}", e);
-                respond_error(&req, e, &mut self.rsp_buf)
-            }
-            Ok(r) => Ok(r),
-        }?;
+        let (mut resp, ev) =
+            match self.handle_req(&req, resp_chan.remote_eid()).await {
+                Err(e) => {
+                    debug!("Control error response {:?}", e);
+                    respond_error(&req, e, &mut self.rsp_buf).map(|r| (r, None))
+                }
+                Ok(r) => Ok(r),
+            }?;
 
-        resp_chan.send_vectored(MsgIC(false), &resp.slices()).await
+        resp_chan
+            .send_vectored(MsgIC(false), &resp.slices())
+            .await?;
+        Ok(ev)
     }
 
     /// Set MCTP message types to be reported by the handler.
@@ -485,9 +492,11 @@ impl<'a> MctpControl<'a> {
     async fn handle_req(
         &mut self,
         req: &'_ MctpControlMsg<'_>,
-    ) -> ControlResult<MctpControlMsg<'_>> {
+        source_eid: Eid,
+    ) -> ControlResult<(MctpControlMsg<'_>, Option<ControlEvent>)> {
         let cc = req.command_code();
 
+        let mut event = None;
         #[cfg(feature = "log")]
         debug!("Control request {:?}", cc);
         match cc {
@@ -496,11 +505,30 @@ impl<'a> MctpControl<'a> {
                 respond_get_eid(req, eid, 0, &mut self.rsp_buf)
             }
             CommandCode::SetEndpointID => {
-                let set = parse_set_eid(req)?;
-                let res = self.router.set_eid(set.eid).await;
-                let eid = self.router.get_eid().await;
+                let (SetEndpointId::Set(eid) | SetEndpointId::Force(eid)) =
+                    parse_set_eid(req)?
+                else {
+                    // Don't support Reset or SetDiscovered
+                    return Err(CompletionCode::ERROR_INVALID_DATA);
+                };
+                let old = self.router.get_eid().await;
+                let res = self.router.set_eid(eid).await;
+                let present_eid = self.router.get_eid().await;
 
-                respond_set_eid(req, res.is_ok(), eid, &mut self.rsp_buf)
+                if res.is_ok() && old != present_eid {
+                    event = Some(ControlEvent::SetEndpointId {
+                        old,
+                        new: present_eid,
+                        bus_owner: source_eid,
+                    });
+                }
+
+                respond_set_eid(
+                    req,
+                    res.is_ok(),
+                    present_eid,
+                    &mut self.rsp_buf,
+                )
             }
             CommandCode::GetEndpointUUID => {
                 if let Some(uuid) = self.uuid {
@@ -516,7 +544,21 @@ impl<'a> MctpControl<'a> {
             ),
             _ => Err(CompletionCode::ERROR_UNSUPPORTED_CMD),
         }
+        .map(|r| (r, event))
     }
+}
+
+/// An MCTP control handler event
+pub enum ControlEvent {
+    /// Set Endpoint ID changed EID
+    SetEndpointId {
+        /// Previous EID
+        old: Eid,
+        /// New EID
+        new: Eid,
+        /// Bus Owner that set the EID
+        bus_owner: Eid,
+    },
 }
 
 #[cfg(test)]
