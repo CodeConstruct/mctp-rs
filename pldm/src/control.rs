@@ -44,6 +44,29 @@ pub mod control_ccode {
     pub const INVALID_PLDM_VERSION_IN_REQUEST_DATA: u8 = 0x84;
 }
 
+/// Multipart transfer operation values
+#[allow(missing_docs)]
+#[allow(non_camel_case_types)]
+pub mod xfer_op {
+    pub const FIRST_PART: u8 = 0;
+    pub const NEXT_PART: u8 = 1;
+    pub const ABORT: u8 = 2;
+    pub const COMPLETE: u8 = 3;
+    pub const CURRENT_PART: u8 = 4;
+}
+
+/// Transfer flag values
+#[allow(missing_docs)]
+#[allow(non_camel_case_types)]
+pub mod xfer_flag {
+    pub const START: u8 = 1;
+    pub const MIDDLE: u8 = 2;
+    pub const END: u8 = 4;
+    // Provided by the spec....
+    pub const START_AND_END: u8 = START | END;
+    pub const ACKNOWLEDGE_COMPLETION: u8 = 8;
+}
+
 impl TryFrom<u8> for Cmd {
     type Error = PldmError;
 
@@ -132,4 +155,34 @@ pub struct GetPLDMCommandsReq {
 pub struct GetPLDMCommandsResp {
     /// PLDM Types bitmask
     pub commands: [u8; 32],
+}
+
+/// Multipart Receive request
+#[derive(DekuRead, DekuWrite)]
+#[deku(endian = "little")]
+pub struct MultipartReceiveReq {
+    /// PLDM type
+    pub pldm_type: u8,
+    /// Transfer operation
+    pub xfer_op: u8,
+    /// Transfer context identifier
+    pub xfer_context: u32,
+    /// Transfer handle for this receive request
+    pub xfer_handle: u32,
+    /// Requested offset
+    pub req_offset: u32,
+    /// Requested length
+    pub req_length: u32,
+}
+
+/// Multipart Receive response
+#[derive(DekuRead, DekuWrite)]
+#[deku(endian = "little")]
+pub struct MultipartReceiveResp {
+    /// Transfer flag
+    pub xfer_flag: u8,
+    /// Next transfer handle
+    pub next_handle: u32,
+    /// Data length
+    pub len: u32,
 }

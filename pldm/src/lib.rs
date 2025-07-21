@@ -141,6 +141,7 @@ pub enum CCode {
     ERROR_NOT_READY = 4,
     ERROR_UNSUPPORTED_PLDM_CMD = 5,
     ERROR_INVALID_PLDM_TYPE = 32,
+    ERROR_INVALID_TRANSFER_CONTEXT = 33,
 }
 
 /// Base PLDM request type
