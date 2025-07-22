@@ -1036,6 +1036,7 @@ dependencies = [
  "crc",
  "deku",
  "heapless",
+ "log",
  "mctp",
  "num-derive",
  "num-traits",

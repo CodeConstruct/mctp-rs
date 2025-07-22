@@ -14,6 +14,7 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::{proto_error, PldmError, Result};
 
+pub mod requester;
 pub mod responder;
 
 /// PLDM Messaging Control and Discovery type
