@@ -1,6 +1,7 @@
 use num_derive::FromPrimitive;
 
 use deku::{DekuRead, DekuWrite};
+use enumset::{EnumSet, EnumSetType};
 
 /// PLDM for File Transfer commands
 #[allow(missing_docs)]
@@ -48,6 +49,16 @@ pub enum DfProperty {
     MaxConcurrentMedium = 0x01,
     MaxFileDescriptors = 0x02,
 }
+
+#[derive(EnumSetType, Debug)]
+pub enum DfOpenAttribute {
+    DfOpenWrite = 0,
+    DfOpenExclusive = 1,
+    DfOpenFifo = 2,
+    DfOpenPushed = 3,
+}
+
+pub type DfOpenAttributes = EnumSet<DfOpenAttribute>;
 
 impl TryFrom<u32> for DfProperty {
     type Error = ();

@@ -1069,6 +1069,7 @@ dependencies = [
  "anyhow",
  "crc",
  "deku",
+ "enumset",
  "log",
  "mctp",
  "mctp-linux",

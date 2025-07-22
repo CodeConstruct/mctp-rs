@@ -10,6 +10,7 @@ categories = ["network-programming", "embedded", "hardware-support"]
 [dependencies]
 crc = { workspace = true }
 deku = { workspace = true }
+enumset = { workspace = true }
 log = { workspace = true }
 mctp = { workspace = true }
 num-derive = { workspace = true }
