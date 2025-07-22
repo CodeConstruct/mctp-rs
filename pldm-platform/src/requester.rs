@@ -1,20 +1,22 @@
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
-use pldm::CCode;
 
 use num_traits::FromPrimitive;
 
 use crate::proto::*;
 use crate::PLDM_TYPE_PLATFORM;
-use pldm::{pldm_xfer_buf, proto_error, PldmError, PldmRequest, Result};
+use pldm::{
+    control::xfer_flag, pldm_xfer_buf_async, proto_error, CCode, PldmError,
+    PldmRequest, Result,
+};
 
 use deku::{DekuContainerRead, DekuContainerWrite};
 
 use heapless::Vec;
 
 /// Reads a numeric sensor.
-pub fn get_sensor_reading(
-    comm: &mut impl mctp::ReqChannel,
+pub async fn get_sensor_reading(
+    comm: &mut impl mctp::AsyncReqChannel,
     sensor: SensorId,
     rearm: bool,
 ) -> Result<GetSensorReadingResp> {
@@ -31,7 +33,7 @@ pub fn get_sensor_reading(
     );
 
     let mut rx = [0; 30];
-    let resp = pldm_xfer_buf(comm, req, &mut rx)?;
+    let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
 
     let ((rest, _), ret) = GetSensorReadingResp::from_bytes((&resp.data, 0))
         .map_err(|e| {
@@ -49,8 +51,8 @@ pub fn get_sensor_reading(
 /// Reads a simple state sensor.
 ///
 /// Reads sensor offset 0.
-pub fn get_simple_state_sensor_reading(
-    comm: &mut impl mctp::ReqChannel,
+pub async fn get_simple_state_sensor_reading(
+    comm: &mut impl mctp::AsyncReqChannel,
     sensor: SensorId,
     rearm: bool,
 ) -> Result<StateField> {
@@ -70,7 +72,7 @@ pub fn get_simple_state_sensor_reading(
     );
 
     let mut rx = [0; 50];
-    let resp = pldm_xfer_buf(comm, req, &mut rx)?;
+    let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
 
     match CCode::from_u8(resp.cc) {
         Some(CCode::SUCCESS) => (),
@@ -105,8 +107,8 @@ pub fn get_simple_state_sensor_reading(
 /// SetNumericSensorEnable
 ///
 /// `op_event_enable` and `state_event_enable` are ignored if `event_no_change` is set.
-pub fn set_numeric_sensor_enable(
-    comm: &mut impl mctp::ReqChannel,
+pub async fn set_numeric_sensor_enable(
+    comm: &mut impl mctp::AsyncReqChannel,
     sensor: SensorId,
     set_op_state: SetSensorOperationalState,
     event_no_change: bool,
@@ -136,7 +138,7 @@ pub fn set_numeric_sensor_enable(
     );
 
     let mut rx = [0; 50];
-    let resp = pldm_xfer_buf(comm, req, &mut rx)?;
+    let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
 
     match CCode::from_u8(resp.cc) {
         Some(CCode::SUCCESS) => (),
@@ -159,8 +161,8 @@ pub fn set_numeric_sensor_enable(
 ///
 /// Sets field 0 of a sensor.
 /// `op_event_enable` and `state_event_enable` are ignored if `event_no_change` is set.
-pub fn set_simple_state_sensor_enables(
-    comm: &mut impl mctp::ReqChannel,
+pub async fn set_simple_state_sensor_enables(
+    comm: &mut impl mctp::AsyncReqChannel,
     sensor: SensorId,
     set_op_state: SetSensorOperationalState,
     event_no_change: bool,
@@ -191,7 +193,7 @@ pub fn set_simple_state_sensor_enables(
     );
 
     let mut rx = [0; 50];
-    let resp = pldm_xfer_buf(comm, req, &mut rx)?;
+    let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
 
     match CCode::from_u8(resp.cc) {
         Some(CCode::SUCCESS) => (),
@@ -208,4 +210,87 @@ pub fn set_simple_state_sensor_enables(
     }
 
     Ok(())
+}
+
+pub async fn get_pdr_repository_info(
+    comm: &mut impl mctp::AsyncReqChannel,
+) -> Result<GetPDRRepositoryInfoResp> {
+    let req = PldmRequest::new_borrowed(
+        PLDM_TYPE_PLATFORM,
+        Cmd::GetPDRRepositoryInfo as u8,
+        &[],
+    );
+
+    let mut rx = [0; 50];
+    let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
+
+    let ((rest, _), ret) =
+        GetPDRRepositoryInfoResp::from_bytes((&resp.data, 0)).map_err(|e| {
+            trace!("GetPDRRepositoryInfo parse error {e}");
+            proto_error!("Bad GetPDRRepositoryInfo response")
+        })?;
+
+    if !rest.is_empty() {
+        return Err(proto_error!("Extra response"));
+    }
+
+    Ok(ret)
+}
+
+pub async fn get_pdr(
+    comm: &mut impl mctp::AsyncReqChannel,
+    record_handle: u32,
+) -> Result<PdrRecord> {
+    // TODO: callers pass a buffer? might be nice to
+    // reuse between tx/rx.
+    let mut rxbuf = [0; 200];
+
+    let getpdr = GetPDRReq {
+        record_handle,
+        data_transfer_handle: 0,
+        transfer_operation_flag: TransferOperationFlag::FirstPart,
+        // subtract 4 bytes pldm header, 12 bytes PDR header/crc
+        request_count: (rxbuf.len() - 4 - 12) as u16,
+        record_change_number: 0,
+    };
+    let mut txdata = [0; 50];
+    let l = getpdr.to_slice(&mut txdata)?;
+    let txdata = &txdata[..l];
+    let req = PldmRequest::new_borrowed(
+        PLDM_TYPE_PLATFORM,
+        Cmd::GetPDR as u8,
+        txdata,
+    );
+
+    let resp = pldm_xfer_buf_async(comm, req, &mut rxbuf).await?;
+    let ((rest, _), pdrrsp) =
+        GetPDRResp::from_bytes((&resp.data, 0)).map_err(|e| {
+            trace!("GetPDR parse error {e:?}");
+            proto_error!("Bad GetPDR response")
+        })?;
+    if !rest.is_empty() {
+        return Err(proto_error!("Extra response"));
+    }
+
+    if pdrrsp.transfer_flag != xfer_flag::START_AND_END {
+        return Err(proto_error!("Can't handle multipart"));
+    }
+
+    let ((rest, _), pdr) =
+        Pdr::from_bytes((&pdrrsp.record_data, 0)).map_err(|e| {
+            trace!("GetSensorReading parse error {e}");
+            proto_error!("Bad GetSensorReading response")
+        })?;
+    if !rest.is_empty() {
+        return Err(proto_error!("Extra PDR response"));
+    }
+
+    if pdr.record_handle != record_handle {
+        return Err(proto_error!("PDR record handle mismatch"));
+    }
+    if pdr.pdr_header_version != PDR_VERSION_1 {
+        return Err(proto_error!("PDR unknown version"));
+    }
+
+    Ok(pdr.record)
 }

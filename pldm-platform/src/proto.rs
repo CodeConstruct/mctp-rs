@@ -1,5 +1,6 @@
 use core::{marker::PhantomData, num::ParseIntError, str::FromStr};
 
+use deku::DekuContainerWrite;
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
@@ -9,8 +10,16 @@ use num_traits::FromPrimitive;
 
 use deku::{
     ctx::Limit, deku_derive, writer::Writer, DekuEnumExt, DekuError, DekuRead,
-    DekuReader, DekuWrite, DekuWriter,
+    DekuReader, DekuUpdate, DekuWrite, DekuWriter,
 };
+
+use pldm::control::xfer_flag;
+use pldm::{proto_error, PldmError, PldmResult};
+
+pub mod entity_type {
+    pub const PHYSICAL: u16 = 0b00000000_00000000;
+    pub const LOGICAL: u16 = 0b10000000_00000000;
+}
 
 /// PLDM Platform Commands
 #[allow(missing_docs)]
@@ -57,13 +66,31 @@ pub enum Cmd {
     GetPDRRepositorySignature = 0x53,
 }
 
+impl TryFrom<u8> for Cmd {
+    type Error = PldmError;
+
+    fn try_from(value: u8) -> Result<Self, PldmError> {
+        Self::from_u8(value).ok_or_else(|| {
+            proto_error!("Unknown PLDM platform command", "{value:02x}")
+        })
+    }
+}
+
 // TODO: PlatformError type?
 
 /// PLDM platform response codes
 #[allow(missing_docs)]
-mod plat_codes {
+pub mod plat_codes {
     pub const INVALID_SENSOR_ID: u8 = 0x80;
     pub const EVENT_GENERATION_NOT_SUPPORTED: u8 = 0x82;
+
+    // Get PDR
+    pub const INVALID_DATA_TRANSFER_HANDLE: u8 = 0x80;
+    pub const INVALID_TRANSFER_OPERATION_FLAG: u8 = 0x81;
+    pub const INVALID_RECORD_HANDLE: u8 = 0x82;
+    pub const INVALID_RECORD_CHANGE_NUMBER: u8 = 0x83;
+    pub const TRANSFER_TIMEOUT: u8 = 0x84;
+    pub const REPOSITORY_UPDATE_IN_PROGRESS: u8 = 0x85;
 }
 
 pub use plat_codes::*;
@@ -165,7 +192,7 @@ pub enum SensorState {
     UpperFatal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VecWrap<T, const N: usize>(pub heapless::Vec<T, N>);
 
 impl<T, const N: usize> From<heapless::Vec<T, N>> for VecWrap<T, N> {
@@ -400,4 +427,250 @@ pub struct SetStateSensorEnablesReq {
 
     #[deku(count = "composite_sensor_count")]
     pub fields: VecWrap<SetEnableField, 8>,
+}
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[deku(id_type = "u8")]
+#[repr(u8)]
+pub enum PDRRepositoryState {
+    Available = 0,
+    UpdateInProgress,
+    Failed,
+}
+
+// TODO
+pub type Timestamp104 = [u8; 13];
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone)]
+pub struct GetPDRRepositoryInfoResp {
+    pub state: PDRRepositoryState,
+    pub update_time: Timestamp104,
+    pub oem_update_time: Timestamp104,
+    pub record_count: u32,
+    pub repository_size: u32,
+    pub largest_record_size: u32,
+    pub data_transfer_handle_timeout: u8,
+}
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[deku(id_type = "u8")]
+#[repr(u8)]
+pub enum TransferOperationFlag {
+    NextPart = 0,
+    FirstPart = 1,
+}
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone)]
+pub struct GetPDRReq {
+    pub record_handle: u32,
+    pub data_transfer_handle: u32,
+    pub transfer_operation_flag: TransferOperationFlag,
+    pub request_count: u16,
+    pub record_change_number: u16,
+}
+
+const MAX_PDR_TRANSFER: usize = 100;
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone)]
+pub struct GetPDRResp {
+    pub next_record_handle: u32,
+    pub next_data_transfer_handle: u32,
+    pub transfer_flag: u8,
+
+    #[deku(temp, temp_value = "self.record_data.len() as u16")]
+    response_count: u16,
+    #[deku(count = "response_count")]
+    pub record_data: VecWrap<u8, MAX_PDR_TRANSFER>,
+
+    /// CRC over entire PDR, when transfer_flag == end
+    // TODO
+    #[deku(cond = "*transfer_flag & xfer_flag::END != 0")]
+    pub crc: Option<u8>,
+}
+
+impl GetPDRResp {
+    pub fn new_single(
+        record_handle: u32,
+        record: PdrRecord,
+    ) -> PldmResult<Self> {
+        let mut pdr = Pdr {
+            record_handle,
+            pdr_header_version: PDR_VERSION_1,
+            record_change_number: 0,
+            data_length: 0,
+            record,
+        };
+        pdr.update()?;
+        info!("pdr after update {pdr:#x?}");
+
+        let mut s = GetPDRResp {
+            next_record_handle: 0,
+            next_data_transfer_handle: 0,
+            transfer_flag: xfer_flag::START_AND_END,
+            record_data: Default::default(),
+            // TODO crc
+            crc: Some(0),
+        };
+        let cap = s.record_data.capacity();
+        s.record_data.resize_default(cap).unwrap();
+        let len = pdr.to_slice(&mut s.record_data)?;
+        s.record_data.truncate(len);
+        Ok(s)
+    }
+}
+
+#[derive(Default)]
+struct Length {
+    pos: i64,
+    len: u64,
+}
+
+impl Length {
+    fn len<CTX>(c: &impl DekuWriter<CTX>, ctx: CTX) -> Result<u64, DekuError> {
+        let mut l = Length::default();
+        let mut w = deku::writer::Writer::new(&mut l);
+        c.to_writer(&mut w, ctx)?;
+        info!("len {}", l.len);
+        Ok(l.len)
+    }
+}
+
+impl deku::no_std_io::Write for &mut Length {
+    fn write(&mut self, buf: &[u8]) -> deku::no_std_io::Result<usize> {
+        info!("wr {}", buf.len());
+        self.pos += buf.len() as i64;
+        self.len = self.len.max(self.pos as u64);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> deku::no_std_io::Result<()> {
+        Ok(())
+    }
+}
+
+impl deku::no_std_io::Seek for &mut Length {
+    fn seek(
+        &mut self,
+        pos: deku::no_std_io::SeekFrom,
+    ) -> deku::no_std_io::Result<u64> {
+        use deku::no_std_io;
+        match pos {
+            no_std_io::SeekFrom::Start(p) => self.pos = p as i64,
+            no_std_io::SeekFrom::End(_p) => {
+                return Err(no_std_io::Error::from(
+                    no_std_io::ErrorKind::UnexpectedEof,
+                ));
+            }
+            no_std_io::SeekFrom::Current(p) => self.pos += p,
+        }
+        Ok(self.pos as u64)
+    }
+}
+
+pub const PDR_VERSION_1: u8 = 1;
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone)]
+pub struct Pdr {
+    pub record_handle: u32,
+    pub pdr_header_version: u8,
+    #[deku(temp, temp_value = "self.record.pdr_type()")]
+    pdr_type: u8,
+    pub record_change_number: u16,
+    #[deku(update = "Length::len(&self.record, self.record.pdr_type())?")]
+    pub data_length: u16,
+
+    #[deku(ctx = "*pdr_type")]
+    pub record: PdrRecord,
+}
+
+#[non_exhaustive]
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone)]
+#[deku(ctx = "pdr_type: u8", id = "pdr_type")]
+pub enum PdrRecord {
+    #[deku(id = 30)]
+    FileDescriptor(FileDescriptorPdr),
+}
+
+impl PdrRecord {
+    fn pdr_type(&self) -> u8 {
+        match self {
+            Self::FileDescriptor(_) => 30,
+        }
+    }
+}
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone)]
+#[deku(id_type = "u8")]
+#[repr(u8)]
+pub enum FileClassification {
+    OEM = 0,
+    BootLog,
+    SerialTxFIFO,
+    SerialRxFIFO,
+    DiagnosticLog,
+    CrashDumpFile,
+    SecurityLog,
+    FRUDataFile,
+    TelemetryDataFile,
+    TelemetryDataLog,
+    OtherLog = 0xFD,
+    OtherFile = 0xFE,
+    FileDirectory = 0xFF,
+}
+
+pub mod file_capabilities {
+    pub const EX_READ_OPEN: u16 = 1 << 0;
+    pub const EX_WRITE_OPEN: u16 = 1 << 1;
+    pub const FILE_TRUNC: u16 = 1 << 2;
+    pub const DATA_TYPE: u16 = 1 << 3;
+    pub const POLLED: u16 = 1 << 4;
+    pub const PUSHED: u16 = 1 << 5;
+    pub const DATA_VOLATILITY: u16 = 1 << 6;
+    pub const FILE_MODIFY: u16 = 1 << 7;
+    pub const FC_ZERO_LENGTH_PERMITTED: u16 = 1 << 8;
+    pub const FC_WRITES_PERMITTED: u16 = 1 << 9;
+}
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Clone)]
+pub struct FileDescriptorPdr {
+    pub terminus_handle: u16,
+    pub file_identifier: u16,
+    pub entity_type: u16,
+    pub entity_instance: u16,
+    pub container_id: u16,
+    pub superior_directory: u16,
+    pub file_classification: FileClassification,
+    pub oem_file_classification: u8,
+    pub capabilities: u16,
+    pub file_version: u32,
+    pub file_max_size: u32,
+    pub file_max_desc_count: u8,
+    pub file_name_length: u8,
+
+    #[deku(temp, temp_value = "self.file_name.len() as u8")]
+    pub file_name_len: u8,
+    /// File name.
+    ///
+    /// A null terminated string.
+    // TODO: null terminated string type
+    // TODO: max length
+    #[deku(count = "file_name_len")]
+    pub file_name: VecWrap<u8, MAX_PDR_TRANSFER>,
+
+    #[deku(temp, temp_value = "self.oem_file_name.len() as u8")]
+    pub oem_file_name_len: u8,
+    /// OEM file name.
+    ///
+    /// A null terminated string.
+    // TODO: null terminated string type
+    #[deku(count = "oem_file_name_len")]
+    pub oem_file_name: VecWrap<u8, MAX_PDR_TRANSFER>,
 }
