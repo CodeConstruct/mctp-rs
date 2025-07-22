@@ -42,6 +42,7 @@ pub mod control_ccode {
     pub const INVALID_TRANSFER_OPERATION_FLAG: u8 = 0x81;
     pub const INVALID_PLDM_TYPE_IN_REQUEST_DATA: u8 = 0x83;
     pub const INVALID_PLDM_VERSION_IN_REQUEST_DATA: u8 = 0x84;
+    pub const NEGOTIATION_INCOMPLETE: u8 = 0x83;
 }
 
 /// Multipart transfer operation values
@@ -155,6 +156,36 @@ pub struct GetPLDMCommandsReq {
 pub struct GetPLDMCommandsResp {
     /// PLDM Types bitmask
     pub commands: [u8; 32],
+}
+
+/// Negotiate Transfer Parameters request
+#[derive(DekuRead, DekuWrite)]
+#[deku(endian = "little")]
+pub struct NegotiateTransferParametersReq {
+    /// RequesterPartSize.
+    ///
+    /// Maximum transfer size supported by the requester
+    pub part_size: u16,
+
+    /// Requester Protocol Support
+    ///
+    /// Bitmask of PLDM protocols implementing multipart transfer
+    pub protocols: [u8; 8],
+}
+
+/// Negotiate Transfer Parameters response
+#[derive(DekuRead, DekuWrite)]
+#[deku(endian = "little")]
+pub struct NegotiateTransferParametersResp {
+    /// ResponderPartSize.
+    ///
+    /// Negotiated transfer size
+    pub part_size: u16,
+
+    /// Responder Protocol Support
+    ///
+    /// Bitmask of negotiated PLDM protocols implementing multipart transfer
+    pub protocols: [u8; 8],
 }
 
 /// Multipart Receive request
