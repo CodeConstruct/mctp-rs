@@ -20,6 +20,7 @@ extern crate alloc;
 use alloc::{string::String, vec::Vec};
 
 use core::fmt::{self, Debug};
+use deku::DekuError;
 use num_derive::FromPrimitive;
 
 use mctp::MsgIC;
@@ -44,6 +45,8 @@ pub enum PldmError {
     InvalidArgument,
     /// No buffer space available
     NoSpace,
+    /// Error completion code received
+    CompletionCode(u8),
 }
 
 impl core::fmt::Display for PldmError {
@@ -53,6 +56,9 @@ impl core::fmt::Display for PldmError {
             Self::Mctp(s) => write!(f, "MCTP error: {s}"),
             Self::InvalidArgument => write!(f, "Invalid Argument"),
             Self::NoSpace => write!(f, "Insufficient buffer space available"),
+            Self::CompletionCode(c) => {
+                write!(f, "Error completion code {c:#02x} received")
+            }
         }
     }
 }
@@ -71,6 +77,29 @@ impl From<mctp::Error> for PldmError {
         PldmError::Mctp(e)
     }
 }
+
+impl From<DekuError> for PldmError {
+    fn from(err: DekuError) -> Self {
+        match err {
+            DekuError::Incomplete(_) => proto_error!("Incomplete input"),
+            DekuError::Parse(e) => proto_error!("Parse error", "{e}"),
+            _ => proto_error!("Deku error", "{err}"),
+        }
+    }
+}
+
+/// Convert a PLDM Completion code into a `PldmResult`.
+///
+/// Success completion code returns `Ok`.
+pub fn ccode_result(ccode: u8) -> PldmResult<()> {
+    match ccode {
+        0 => Ok(()),
+        e => Err(PldmError::CompletionCode(e)),
+    }
+}
+
+/// PLDM result type
+pub type PldmResult<T> = core::result::Result<T, PldmError>;
 
 #[cfg(feature = "alloc")]
 type ErrStr = String;
