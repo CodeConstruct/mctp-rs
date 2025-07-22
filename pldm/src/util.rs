@@ -78,7 +78,7 @@ impl<'a> SliceWriter<'a> {
     }
 
     /// Returns the written buffer
-    pub fn done(&mut self) -> &mut [u8] {
+    pub fn done(self) -> &'a mut [u8] {
         &mut self.s[..self.pos]
     }
 
