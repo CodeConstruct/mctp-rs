@@ -371,6 +371,31 @@ impl<'a> PldmResponse<'a> {
     }
 }
 
+fn check_req_resp_match(req: &PldmRequest, rsp: &PldmResponse) -> Result<()> {
+    if rsp.iid != req.iid {
+        return Err(proto_error!(
+            "Incorrect instance ID in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.iid, rsp.iid)
+        ));
+    }
+
+    if rsp.typ != req.typ {
+        return Err(proto_error!(
+            "Incorrect PLDM type in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, rsp.typ)
+        ));
+    }
+
+    if rsp.cmd != req.cmd {
+        return Err(proto_error!(
+            "Incorrect PLDM command in reply",
+            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, rsp.cmd)
+        ));
+    }
+
+    Ok(())
+}
+
 /// Represents either a PLDM request or response message
 #[derive(Debug)]
 pub enum PldmMessage<'a> {
@@ -407,28 +432,31 @@ pub fn pldm_xfer_buf<'buf>(
     pldm_tx_req(ep, &mut req)?;
 
     let rsp = pldm_rx_resp_borrowed(ep, rx_buf)?;
+    check_req_resp_match(&req, &rsp)?;
 
-    if rsp.iid != req.iid {
-        return Err(proto_error!(
-            "Incorrect instance ID in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.iid, rsp.iid)
-        ));
+    Ok(rsp)
+}
+
+/// Async PLDM transfer
+///
+/// Sends a Request, and waits for a response. This is generally
+/// used by PLDM Requesters, which issue commands to Responders.
+///
+/// This function requires an external `rx_buf`.
+pub async fn pldm_xfer_buf_async<'buf>(
+    ep: &mut impl mctp::AsyncReqChannel,
+    mut req: PldmRequest<'_>,
+    rx_buf: &'buf mut [u8],
+) -> Result<PldmResponse<'buf>> {
+    pldm_tx_req_async(ep, &mut req).await?;
+
+    let (_typ, ic, rx_buf) = ep.recv(rx_buf).await?;
+    if ic.0 {
+        return Err(proto_error!("IC bit set"));
     }
 
-    if rsp.typ != req.typ {
-        return Err(proto_error!(
-            "Incorrect PLDM type in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, rsp.typ)
-        ));
-    }
-
-    if rsp.cmd != req.cmd {
-        return Err(proto_error!(
-            "Incorrect PLDM command in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, rsp.cmd)
-        ));
-    }
-
+    let rsp = PldmResponse::from_buf_borrowed(rx_buf)?;
+    check_req_resp_match(&req, &rsp)?;
     Ok(rsp)
 }
 
