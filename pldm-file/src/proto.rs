@@ -35,6 +35,12 @@ pub mod file_ccode {
     pub const UNABLE_TO_OPEN_FILE: u8 = 0x8a;
 }
 
+#[derive(Debug)]
+pub struct FileIdentifier(pub u16);
+
+#[derive(Debug)]
+pub struct FileDescriptor(pub u16);
+
 // These are represented as their encoding in the DfProperties command;
 // a bitmask, where only one value is permitted.
 #[repr(u32)]

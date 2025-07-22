@@ -13,8 +13,6 @@ use crate::proto::file_ccode;
 use crate::proto::*;
 use crate::PLDM_TYPE_FILE_TRANSFER;
 
-pub struct FileIdentifier(pub u16);
-
 const FILE_ID: FileIdentifier = FileIdentifier(0);
 
 // todo: negotiate this
@@ -25,8 +23,6 @@ pub trait Host {
     // just a single-file implementation
     fn read(&self, buf: &mut [u8], offset: usize) -> std::io::Result<usize>;
 }
-
-struct FileDescriptor(u16);
 
 // Created at the first stage (XFER_FIRST_PART) of a MultpartReceive,
 // where we have the offset and size.
