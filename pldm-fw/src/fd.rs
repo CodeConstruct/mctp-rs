@@ -1194,7 +1194,7 @@ pub trait Device {
     /// or a ComponentResponseCode otherwise (see PLDM FW specification).
     /// When `update == false` a response may indicate conditional success,
     /// such as requiring update flags to be set.
-
+    //
     // fd shouldn't call this directly, instead use check_update_component()
     // which checks that comp exists in the component list.
     fn update_component(&mut self, update: bool, comp: &UpdateComponent) -> u8;
