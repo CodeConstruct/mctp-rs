@@ -292,5 +292,13 @@ pub async fn get_pdr(
         return Err(proto_error!("PDR unknown version"));
     }
 
+    let expect_len = pdrrsp.record_data.len() - 10;
+    if pdr.data_length as usize != expect_len {
+        warn!(
+            "Incorrect PDR data_length, got {}, expect {}",
+            pdr.data_length, expect_len
+        );
+    }
+
     Ok(pdr.record)
 }
