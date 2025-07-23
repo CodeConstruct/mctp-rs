@@ -152,15 +152,15 @@ impl Cmd {
     }
 
     pub const fn is_fd(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::GetPackageData
-            | Self::RequestFirmwareData
-            | Self::TransferComplete
-            | Self::VerifyComplete
-            | Self::ApplyComplete
-            | Self::GetMetaData => true,
-            _ => false,
-        }
+                | Self::RequestFirmwareData
+                | Self::TransferComplete
+                | Self::VerifyComplete
+                | Self::ApplyComplete
+                | Self::GetMetaData
+        )
     }
 }
 
