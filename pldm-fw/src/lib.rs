@@ -360,11 +360,7 @@ impl fmt::Display for DescriptorString {
         let trim_chars = ['\0', ' '];
         match self {
             Self::String(s) => {
-                write!(
-                    f,
-                    "{}",
-                    s.trim_end_matches(&trim_chars).escape_default()
-                )
+                write!(f, "{}", s.trim_end_matches(trim_chars).escape_default())
             }
             Self::Bytes(bs) => {
                 for b in bs.iter() {
