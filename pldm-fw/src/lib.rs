@@ -364,7 +364,7 @@ impl fmt::Display for DescriptorString {
             }
             Self::Bytes(bs) => {
                 for b in bs.iter() {
-                    write!(f, "{:02x}", b)?;
+                    write!(f, "{b:02x}")?;
                 }
                 Ok(())
             }
@@ -630,20 +630,20 @@ impl Descriptor {
 impl fmt::Display for Descriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PciVid(id) => write!(f, "pci-vendor:{:04x}", id),
-            Self::Iana(id) => write!(f, "iana:{:08x}", id),
-            Self::Uuid(id) => write!(f, "uuid:{}", id),
-            Self::PciDid(id) => write!(f, "pci-device:{:04x}", id),
-            Self::PciSubVid(id) => write!(f, "pci-subsys-vendor:{:04x}", id),
-            Self::PciSubDid(id) => write!(f, "pci-subsys-device:{:04x}", id),
+            Self::PciVid(id) => write!(f, "pci-vendor:{id:04x}"),
+            Self::Iana(id) => write!(f, "iana:{id:08x}"),
+            Self::Uuid(id) => write!(f, "uuid:{id}"),
+            Self::PciDid(id) => write!(f, "pci-device:{id:04x}"),
+            Self::PciSubVid(id) => write!(f, "pci-subsys-vendor:{id:04x}"),
+            Self::PciSubDid(id) => write!(f, "pci-subsys-device:{id:04x}"),
             Self::Vendor { title, data } => {
                 match title {
-                    Some(t) => write!(f, "vendor:{}", t)?,
+                    Some(t) => write!(f, "vendor:{t}")?,
                     None => write!(f, "vendor:")?,
                 }
                 write!(f, "[")?;
                 for b in data {
-                    write!(f, "{:02x}", b)?;
+                    write!(f, "{b:02x}")?;
                 }
                 write!(f, "]")?;
                 Ok(())
@@ -770,7 +770,7 @@ impl fmt::Display for ComponentVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.version)?;
         if let Some(d) = self.date {
-            write!(f, " ({:?})", d)?;
+            write!(f, " ({d:?})")?;
         }
         if self.stamp != 0 {
             write!(f, " [{:08x}]", self.stamp)?;

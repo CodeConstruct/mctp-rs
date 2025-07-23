@@ -26,7 +26,7 @@ fn print_device_info(
     dev: &pldm_fw::DeviceIdentifiers,
     fwp: &pldm_fw::FirmwareParameters,
 ) {
-    println!("Device: {}", dev);
+    println!("Device: {dev}");
     println!("Firmware Parameters:");
     println!("  Active version:  {}", fwp.active);
     println!("  Pending version: {}", fwp.pending);
@@ -47,7 +47,7 @@ fn print_device_info(
         }
     );
     for (idx, comp) in fwp.components.iter().enumerate() {
-        println!("    [{}]", idx);
+        println!("    [{idx}]");
         println!("      Classification:  {:?}", comp.classification);
         println!("      Index:           {:?}", comp.classificationindex);
         println!("      Identifier:      0x{:04x}", comp.identifier);
@@ -79,7 +79,7 @@ fn print_package(pkg: &pldm_fw::pkg::Package) {
     }
     println!("  Components:");
     for (idx, cmp) in pkg.components.iter().enumerate() {
-        println!("   {:2}:", idx);
+        println!("   {idx:2}:");
         println!("       classification: {:?}", cmp.classification);
         println!("       identifier:     0x{:04x}", cmp.identifier);
         println!("       version:        {}", cmp.version);
@@ -91,7 +91,7 @@ fn print_package(pkg: &pldm_fw::pkg::Package) {
 }
 
 fn print_device(dev: &pldm_fw::DeviceIdentifiers) {
-    println!("Device: {}", dev);
+    println!("Device: {dev}");
 }
 
 fn print_update(update: &pldm_fw::ua::Update) {
@@ -119,9 +119,9 @@ fn extract_component(
 
     let fname = format!("component-{}.{:04x}.bin", idx, comp.identifier);
     let mut f = std::fs::File::create(&fname)
-        .with_context(|| format!("Can't open output file {}", fname))?;
+        .with_context(|| format!("Can't open output file {fname}"))?;
 
-    println!("extracting component {} to {}", idx, fname);
+    println!("extracting component {idx} to {fname}");
 
     let mut buf = vec![0u8; comp.file_size];
     pkg.read_component(comp, 0, &mut buf)?;
@@ -147,10 +147,10 @@ fn confirm_update() -> bool {
 
 fn open_package(fname: String) -> anyhow::Result<pldm_fw::pkg::Package> {
     let f = std::fs::File::open(&fname)
-        .with_context(|| format!("Can't open PLDM package {}", fname))?;
+        .with_context(|| format!("Can't open PLDM package {fname}"))?;
 
     let pkg = pldm_fw::pkg::Package::parse(f)
-        .with_context(|| format!("Can't parse PLDM package {}", fname))?;
+        .with_context(|| format!("Can't parse PLDM package {fname}"))?;
 
     Ok(pkg)
 }
@@ -263,7 +263,7 @@ fn duration_str(d: &chrono::Duration) -> String {
         s -= h * 3600;
         let m = s / 60;
         s -= m * 60;
-        format!("{:02}:{:02}:{:02}", h, m, s)
+        format!("{h:02}:{m:02}:{s:02}")
     }
 }
 
@@ -278,7 +278,7 @@ fn bps_str(bps: f32) -> String {
     } else if bps > (B_PER_kB * threshold) {
         format!("{:.2} kB/sec", bps / B_PER_kB)
     } else {
-        format!("{:.0} B/sec", bps)
+        format!("{bps:.0} B/sec")
     }
 }
 
@@ -375,7 +375,7 @@ fn main() -> anyhow::Result<()> {
             for idx in e.components {
                 let res = extract_component(&pkg, idx);
                 if let Err(e) = res {
-                    println!("Error extracting: {:?}", e);
+                    println!("Error extracting: {e:?}");
                 }
             }
         }

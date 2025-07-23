@@ -248,8 +248,7 @@ impl Package {
             }
             _ => {
                 return Err(PldmPackageError::new_format(&format!(
-                    "unknown package UUID {}",
-                    identifier
+                    "unknown package UUID {identifier}"
                 )))
             }
         };
