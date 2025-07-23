@@ -253,7 +253,6 @@ impl Default for MctpSerialHandler {
 
 #[cfg(test)]
 mod tests {
-
     use crate::serial::*;
     use crate::*;
     use embedded_io_adapters::futures_03::FromFutures;
@@ -269,7 +268,7 @@ mod tests {
     async fn do_roundtrip(payload: &[u8]) {
         let mut esc = vec![];
         let mut s = FromFutures::new(&mut esc);
-        MctpSerialHandler::frame_to_serial(&payload, &mut s)
+        MctpSerialHandler::frame_to_serial(payload, &mut s)
             .await
             .unwrap();
         debug!("{:02x?}", payload);
