@@ -126,6 +126,7 @@ impl<R: RespChannel> Responder<R> {
     /// Update mode idle timeout, 120 seconds
     pub const FD_T1_TIMEOUT: u64 = 120_000;
 
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             ua_eid: None,
