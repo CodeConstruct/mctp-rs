@@ -6,7 +6,7 @@ set -e
 export CARGO_TARGET_DIR=target/ci
 
 rustup target add thumbv7em-none-eabihf
-rustup component add rustfmt
+rustup component add rustfmt clippy
 
 export RUSTDOCFLAGS='-D warnings'
 export RUSTFLAGS="-D warnings"
@@ -15,6 +15,7 @@ cargo fmt -- --check
 
 # Check everything first
 cargo check --all-targets --locked
+cargo clippy --all-targets
 
 # stable, std
 cargo build --release --features mctp-estack/log
