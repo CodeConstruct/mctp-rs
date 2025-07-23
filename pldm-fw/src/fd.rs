@@ -434,7 +434,7 @@ impl<R: RespChannel> Responder<R> {
         if found {
             dev.update_component(update, up)
         } else {
-            return ComponentResponseCode::NotSupported as u8;
+            ComponentResponseCode::NotSupported as u8
         }
     }
 
