@@ -163,6 +163,7 @@ impl MctpSocket {
 
     // Inner recvfrom, returning an io::Error on failure. This can be
     // used with async wrappers.
+    // This uses MSG_TRUNC so the returned length may be larger than buf.len()
     fn io_recvfrom(
         &self,
         buf: &mut [u8],
@@ -174,7 +175,14 @@ impl MctpSocket {
         let fd = self.as_raw_fd();
 
         let rc = unsafe {
-            libc::recvfrom(fd, buf_ptr, buf_len, 0, addr_ptr, &mut addr_len)
+            libc::recvfrom(
+                fd,
+                buf_ptr,
+                buf_len,
+                libc::MSG_TRUNC,
+                addr_ptr,
+                &mut addr_len,
+            )
         };
 
         if rc < 0 {
@@ -190,7 +198,11 @@ impl MctpSocket {
     /// Essentially a wrapper around [libc::recvfrom], using MCTP-specific
     /// addressing.
     pub fn recvfrom(&self, buf: &mut [u8]) -> Result<(usize, MctpSockAddr)> {
-        self.io_recvfrom(buf).map_err(mctp::Error::Io)
+        let (len, addr) = self.io_recvfrom(buf).map_err(mctp::Error::Io)?;
+        if len > buf.len() {
+            return Err(mctp::Error::NoSpace);
+        }
+        Ok((len, addr))
     }
 
     fn io_sendto(
@@ -346,10 +358,15 @@ impl MctpSocketAsync {
         &self,
         buf: &mut [u8],
     ) -> Result<(usize, MctpSockAddr)> {
-        self.0
+        let (len, addr) = self
+            .0
             .read_with(|io| io.io_recvfrom(buf))
             .await
-            .map_err(mctp::Error::Io)
+            .map_err(mctp::Error::Io)?;
+        if len > buf.len() {
+            return Err(mctp::Error::NoSpace);
+        }
+        Ok((len, addr))
     }
 
     /// Send a message to a given address
