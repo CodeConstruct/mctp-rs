@@ -1079,9 +1079,7 @@ impl UpdateComponent {
                 comparisonstamp,
                 version,
             ),
-        ) = tuple((le_u16, le_u16, le_u8, le_u32, parse_string_adjacent))(
-            &buf,
-        )?;
+        ) = tuple((le_u16, le_u16, le_u8, le_u32, parse_string_adjacent))(buf)?;
 
         let s = Self {
             classification: classification.into(),
@@ -1114,7 +1112,7 @@ impl UpdateComponent {
             le_u32,
             le_u32,
             parse_string_adjacent,
-        ))(&buf)?;
+        ))(buf)?;
 
         let s = Self {
             classification: classification.into(),

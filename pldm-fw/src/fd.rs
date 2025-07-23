@@ -155,7 +155,7 @@ impl<R: RespChannel> Responder<R> {
 
         let Some(cmd) = Cmd::from_u8(req.cmd) else {
             self.reply_error(
-                &req,
+                req,
                 &mut comm,
                 CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8,
             );
@@ -176,7 +176,7 @@ impl<R: RespChannel> Responder<R> {
             _ => {
                 if self.ua_eid != Some(eid) {
                     debug!("Ignoring {cmd:?} from mismatching EID {eid}, expected {:?}", self.ua_eid);
-                    self.reply_error(&req, &mut comm,
+                    self.reply_error(req, &mut comm,
                         CCode::ERROR_NOT_READY as u8,
                     );
                 }
@@ -193,25 +193,25 @@ impl<R: RespChannel> Responder<R> {
 
         // Handlers will return Ok if they have replied
         let r = match cmd {
-            Cmd::QueryDeviceIdentifiers => self.cmd_qdi(&req, &mut comm, d),
-            Cmd::GetFirmwareParameters => self.cmd_fwparams(&req, &mut comm, d),
-            Cmd::RequestUpdate => self.cmd_update(&req, eid, &mut comm, d),
+            Cmd::QueryDeviceIdentifiers => self.cmd_qdi(req, &mut comm, d),
+            Cmd::GetFirmwareParameters => self.cmd_fwparams(req, &mut comm, d),
+            Cmd::RequestUpdate => self.cmd_update(req, eid, &mut comm, d),
             Cmd::PassComponentTable => {
-                self.cmd_pass_components(&req, &mut comm, d)
+                self.cmd_pass_components(req, &mut comm, d)
             }
             Cmd::UpdateComponent => {
-                return self.cmd_update_component(&req, comm, d)
+                return self.cmd_update_component(req, comm, d)
             }
-            Cmd::ActivateFirmware => self.cmd_activate(&req, &mut comm, d),
-            Cmd::CancelUpdate => self.cmd_cancel_update(&req, &mut comm, d),
+            Cmd::ActivateFirmware => self.cmd_activate(req, &mut comm, d),
+            Cmd::CancelUpdate => self.cmd_cancel_update(req, &mut comm, d),
             Cmd::CancelUpdateComponent => {
-                self.cmd_cancel_update_component(&req, &mut comm, d)
+                self.cmd_cancel_update_component(req, &mut comm, d)
             }
-            Cmd::GetStatus => self.cmd_get_status(&req, &mut comm, d),
+            Cmd::GetStatus => self.cmd_get_status(req, &mut comm, d),
             _ => {
                 trace!("unhandled command {cmd:?}");
                 self.reply_error(
-                    &req,
+                    req,
                     &mut comm,
                     CCode::ERROR_UNSUPPORTED_PLDM_CMD as u8,
                 );
@@ -221,7 +221,7 @@ impl<R: RespChannel> Responder<R> {
 
         if let Err(e) = &r {
             debug!("Error handling {cmd:?}: {e:?}");
-            self.reply_error(&req, &mut comm, CCode::ERROR as u8);
+            self.reply_error(req, &mut comm, CCode::ERROR as u8);
         }
         Ok(())
     }
@@ -629,7 +629,7 @@ impl<R: RespChannel> Responder<R> {
         resp.cc = CCode::SUCCESS as u8;
         pldm_tx_resp(comm, &resp)?;
 
-        dev.cancel_component(&details);
+        dev.cancel_component(details);
         self.set_state(State::ReadyXfer);
 
         Ok(())
