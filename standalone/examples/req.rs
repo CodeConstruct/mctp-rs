@@ -106,11 +106,9 @@ fn req(ch: &mut impl ReqChannel, payload: &[u8], fatal: bool) -> Result<()> {
 
     info!("Reply {rep:02x?}");
 
-    if fatal {
-        if rep != payload || typ != rep_typ {
-            info!("rep_typ 0x{rep_typ:x?}");
-            bail!("Response mismatch)")
-        }
+    if fatal && (rep != payload || typ != rep_typ) {
+        info!("rep_typ 0x{rep_typ:x?}");
+        bail!("Response mismatch)")
     }
     assert!(rep == payload);
     Ok(())
