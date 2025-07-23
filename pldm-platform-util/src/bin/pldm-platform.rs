@@ -13,6 +13,7 @@ use argh::FromArgs;
 use mctp_linux::MctpAddr;
 
 use pldm_platform::proto::{SensorId, SetSensorOperationalState};
+use pldm_platform::requester::*;
 
 #[derive(FromArgs, Debug)]
 #[argh(description = "PLDM platform requester")]
@@ -40,6 +41,8 @@ enum Command {
     StateSensor(StateSensorCommand),
     NumericEnable(NumericEnableCommand),
     StateEnable(StateEnableCommand),
+    PdrRepository(PdrRepositoryCommand),
+    GetPdr(GetPdrCommand),
     Version(VersionCommand),
 }
 
@@ -117,6 +120,18 @@ struct StateEnableCommand {
     op_state: String,
 }
 
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "pdr-repo", description = "Get PDR Repsitory Info")]
+struct PdrRepositoryCommand {}
+
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "get-pdr", description = "Get PDR")]
+struct GetPdrCommand {
+    /// PDR record
+    #[argh(positional)]
+    record: u32,
+}
+
 fn enable_command_op(op_state: &str) -> Result<SetSensorOperationalState> {
     Ok(if op_state.starts_with("en") {
         SetSensorOperationalState::Enabled
@@ -181,19 +196,14 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Version(_) => info!("pldm-platform {}", env!("VERSION")),
         Command::NumericSensor(s) => {
             let mut ep = args.addr.create_req_async()?;
-            let reading = pldm_platform::requester::get_sensor_reading(
-                &mut ep, s.sensor, false,
-            )
-            .await?;
+            let reading = get_sensor_reading(&mut ep, s.sensor, false).await?;
             println!("Sensor {} {:?}", s.sensor.0, reading);
         }
         Command::StateSensor(s) => {
             let mut ep = args.addr.create_req_async()?;
             let reading =
-                pldm_platform::requester::get_simple_state_sensor_reading(
-                    &mut ep, s.sensor, false,
-                )
-                .await?;
+                get_simple_state_sensor_reading(&mut ep, s.sensor, false)
+                    .await?;
             if let Some(state_set) = s.state_set {
                 println!(
                     "Sensor {} {:?}",
@@ -206,7 +216,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
         Command::NumericEnable(s) => {
             let mut ep = args.addr.create_req_async()?;
-            pldm_platform::requester::set_numeric_sensor_enable(
+            set_numeric_sensor_enable(
                 &mut ep,
                 s.sensor,
                 enable_command_op(&s.op_state)?,
@@ -218,7 +228,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
         Command::StateEnable(s) => {
             let mut ep = args.addr.create_req_async()?;
-            pldm_platform::requester::set_simple_state_sensor_enables(
+            set_simple_state_sensor_enables(
                 &mut ep,
                 s.sensor,
                 enable_command_op(&s.op_state)?,
@@ -227,6 +237,16 @@ async fn async_main() -> anyhow::Result<()> {
                 enable_command_state_event_enable(&s.event)?,
             )
             .await?;
+        }
+        Command::PdrRepository(_) => {
+            let mut ep = args.addr.create_req_async()?;
+            let pdr_info = get_pdr_repository_info(&mut ep).await?;
+            println!("PDR Repository Info: {pdr_info:#x?}");
+        }
+        Command::GetPdr(s) => {
+            let mut ep = args.addr.create_req_async()?;
+            let pdr = get_pdr(&mut ep, s.record).await?;
+            println!("PDR: {pdr:#x?}");
         }
     }
     Ok(())
