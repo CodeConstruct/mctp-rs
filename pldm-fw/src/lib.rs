@@ -4,7 +4,7 @@
  *
  * Copyright (c) 2023 Code Construct
  */
-#![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 // #![warn(missing_docs)]
 
@@ -30,7 +30,8 @@ use nom::{
 #[cfg(feature = "alloc")]
 use nom::multi::{count, length_count};
 
-extern crate pldm;
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 /// Firmware Device specific
 pub mod fd;

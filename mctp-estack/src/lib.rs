@@ -25,13 +25,17 @@
 //! `mctp-estack` uses fixed sizes to be suitable on no-alloc platforms.
 //! These can be configured at build time, see [`config`]
 
-#![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![allow(clippy::int_plus_one)]
 #![allow(clippy::too_many_arguments)]
 // defmt does not currently allow inline format arguments, so we don't want
 // those reworked when using the log crate either.
 #![allow(clippy::uninlined_format_args)]
+
+#[cfg(test)]
+#[macro_use]
+extern crate std;
 
 /// Re-exported so that callers can use the same `heapless` version.
 ///

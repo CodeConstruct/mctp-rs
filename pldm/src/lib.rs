@@ -4,7 +4,7 @@
  *
  * Copyright (c) 2023 Code Construct
  */
-#![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -12,6 +12,12 @@
 //!
 //! This crate implements some base communication primitives for PLDM,
 //! used to construct higher-level PLDM messaging applications.
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "alloc")]
+use alloc::{format, string::String, vec::Vec};
 
 use core::fmt::{self, Debug};
 use num_derive::FromPrimitive;
@@ -77,6 +83,7 @@ type ErrStr = &'static str;
 /// Example
 ///
 /// ```
+/// extern crate alloc;
 /// # let iid = 1;
 /// # let actual_iid = 2;
 /// use pldm::proto_error;
@@ -87,10 +94,10 @@ type ErrStr = &'static str;
 #[cfg(feature = "alloc")]
 macro_rules! proto_error {
     ($msg: expr, $desc_str: expr) => {
-        $crate::PldmError::Protocol(format!("{}. {}", $msg, $desc_str))
+        $crate::PldmError::Protocol(alloc::format!("{}. {}", $msg, $desc_str))
     };
     ($msg: expr) => {
-        $crate::PldmError::Protocol(format!("{}.", $msg))
+        $crate::PldmError::Protocol(alloc::format!("{}.", $msg))
     };
 }
 

@@ -6,6 +6,9 @@
 //! Helper functions
 use core::mem::size_of;
 
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 /// Holds either an allocated `Vec` or borrowed slice.
 ///
 /// Can be constructed using `.into()` on a `Vec` (`std` feature) or `&[u8]` (always)
