@@ -589,7 +589,9 @@ impl<R: RespChannel> Responder<R> {
         resp.cc = CCode::SUCCESS as u8;
         pldm_tx_resp(comm, &resp)?;
 
-        details.map(|d| dev.cancel_component(d));
+        if let Some(details) = details {
+            dev.cancel_component(details);
+        }
         self.set_idle(PldmIdleReason::Cancel);
 
         Ok(())
