@@ -390,7 +390,7 @@ where
                     let rate = elapsed / sz_done as i32; // time per byte
 
                     /* blocks may be repeated */
-                    let sz_left = if sz_done <= sz { sz - sz_done } else { 0 };
+                    let sz_left = sz.saturating_sub(sz_done);
 
                     remaining = rate * sz_left as i32;
                     // OK unwrap, overflows after 200k years
