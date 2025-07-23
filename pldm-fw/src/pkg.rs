@@ -56,7 +56,7 @@ impl<'a> ComponentBitmap {
     pub fn parse(
         component_bits: u16,
     ) -> impl FnMut(&'a [u8]) -> VResult<&'a [u8], Self> {
-        let bytes = (component_bits + 7) / 8;
+        let bytes = component_bits.div_ceil(8);
         map(take(bytes), move |b: &[u8]| ComponentBitmap {
             n_bits: component_bits as usize,
             bits: b.to_vec(),
