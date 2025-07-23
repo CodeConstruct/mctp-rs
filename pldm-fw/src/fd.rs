@@ -491,7 +491,7 @@ impl<R: RespChannel> Responder<R> {
         // Special case for zero size component. It will immediately send TransferComplete
         // instead of RequestFirmwareData.
         let transfer_result =
-            (details.size == 0).then(|| TransferResult::Success);
+            (details.size == 0).then_some(TransferResult::Success);
 
         let req_comm = comm.req_channel()?;
 
