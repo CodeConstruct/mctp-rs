@@ -196,8 +196,8 @@ impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
             #[cfg(feature = "std")]
-            Self::Io(i) => write!(fmt, "MCTP IO Error: {}", i),
-            _ => write!(fmt, "MCTP Error: {:?}", self),
+            Self::Io(i) => write!(fmt, "MCTP IO Error: {i}"),
+            _ => write!(fmt, "MCTP Error: {self:?}"),
         }
     }
 }

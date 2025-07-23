@@ -266,8 +266,7 @@ pub fn pass_component_table(
                 }
                 x => {
                     return Err(PldmUpdateError::new_proto(format!(
-                        "unknown PCT response {:02x}",
-                        x
+                        "unknown PCT response {x:02x}"
                     )))
                 }
             }

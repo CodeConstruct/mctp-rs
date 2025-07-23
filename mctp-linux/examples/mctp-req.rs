@@ -27,7 +27,7 @@ fn main() -> std::io::Result<()> {
     let mut rx_buf = vec![0u8; 16];
     let (typ, ic, rx_buf) = ep.recv(&mut rx_buf)?;
 
-    println!("response type {}, ic {:?}: {:x?}", typ, ic, rx_buf);
+    println!("response type {typ}, ic {ic:?}: {rx_buf:x?}");
 
     Ok(())
 }
