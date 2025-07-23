@@ -432,9 +432,9 @@ pub fn pldm_xfer_buf<'buf>(
 /// Responder implementations will typically want to respond via
 /// [`pldm_tx_resp`].
 #[cfg(feature = "alloc")]
-pub fn pldm_rx_req<'lis, L>(
-    listener: &'lis mut L,
-) -> Result<(PldmRequest<'static>, L::RespChannel<'lis>)>
+pub fn pldm_rx_req<L>(
+    listener: &mut L,
+) -> Result<(PldmRequest<'static>, L::RespChannel<'_>)>
 where
     L: mctp::Listener,
 {
