@@ -142,7 +142,7 @@ fn confirm_update() -> bool {
         return false;
     }
 
-    line.trim().to_ascii_lowercase() == "y"
+    line.trim().eq_ignore_ascii_case("y")
 }
 
 fn open_package(fname: String) -> anyhow::Result<pldm_fw::pkg::Package> {
