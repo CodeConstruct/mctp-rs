@@ -17,7 +17,7 @@
 extern crate alloc;
 
 #[cfg(feature = "alloc")]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 
 use core::fmt::{self, Debug};
 use num_derive::FromPrimitive;
@@ -84,20 +84,23 @@ type ErrStr = &'static str;
 /// Example
 ///
 /// ```
-/// extern crate alloc;
+/// # extern crate alloc;
 /// # let iid = 1;
 /// # let actual_iid = 2;
+/// # let buf = b"123";
 /// use pldm::proto_error;
 /// proto_error!("Mismatching IID", "Expected {iid:02x}, received {actual_iid:02x}");
 /// proto_error!("Rq bit wasn't expected");
+/// proto_error!("Short response", "{} bytes", buf.len());
 /// ```
 #[macro_export]
 #[cfg(feature = "alloc")]
 macro_rules! proto_error {
-    ($msg: expr, $desc_str: expr) => {
-        $crate::PldmError::Protocol(alloc::format!("{}. {}", $msg, $desc_str))
+    ($msg:expr, $($desc_fmt:expr),* $(,)?) => {
+        $crate::PldmError::Protocol(alloc::format!("{}. {}", $msg,
+            alloc::format!($($desc_fmt),*)))
     };
-    ($msg: expr) => {
+    ($msg:expr) => {
         $crate::PldmError::Protocol(alloc::format!("{}.", $msg))
     };
 }
@@ -111,17 +114,23 @@ macro_rules! proto_error {
 /// ```
 /// # let iid = 1;
 /// # let actual_iid = 2;
+/// # let buf = b"123";
 /// use pldm::proto_error;
 /// proto_error!("Mismatching IID", "Expected {iid:02x}, received {actual_iid:02x}");
 /// proto_error!("Rq bit wasn't expected");
+/// proto_error!("Short response", "{} bytes", buf.len());
 /// ```
 #[macro_export]
 #[cfg(not(feature = "alloc"))]
 macro_rules! proto_error {
-    ($msg: expr, $desc_str: expr) => {
-        $crate::PldmError::Protocol($msg)
+    ($msg:expr, $($desc_fmt:expr),* $(,)?) => {
+        {
+            // Avoid unused variable warning
+            let _ = format_args!($($desc_fmt),*);
+            $crate::PldmError::Protocol($msg)
+        }
     };
-    ($msg: expr) => {
+    ($msg:expr) => {
         $crate::PldmError::Protocol($msg)
     };
 }
@@ -249,10 +258,7 @@ impl<'a> PldmRequest<'a> {
     /// May fail if the message data is not parsable as a PLDM message.
     pub fn from_buf_borrowed(data: &'a [u8]) -> Result<PldmRequest<'a>> {
         if data.len() < 3 {
-            return Err(proto_error!(
-                "Short request",
-                format!("{} bytes", data.len())
-            ));
+            return Err(proto_error!("Short request", "{} bytes", data.len()));
         }
 
         let rq = (data[0] & 0x80) != 0;
@@ -345,7 +351,8 @@ impl<'a> PldmResponse<'a> {
         if rx_buf.len() < 4 {
             return Err(proto_error!(
                 "Short response",
-                format!("{} bytes", rx_buf.len())
+                "{} bytes",
+                rx_buf.len()
             ));
         }
 
@@ -375,21 +382,27 @@ fn check_req_resp_match(req: &PldmRequest, rsp: &PldmResponse) -> Result<()> {
     if rsp.iid != req.iid {
         return Err(proto_error!(
             "Incorrect instance ID in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.iid, rsp.iid)
+            "Expected 0x{:02x} got 0x{:02x}",
+            req.iid,
+            rsp.iid
         ));
     }
 
     if rsp.typ != req.typ {
         return Err(proto_error!(
             "Incorrect PLDM type in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.typ, rsp.typ)
+            "Expected 0x{:02x} got 0x{:02x}",
+            req.typ,
+            rsp.typ
         ));
     }
 
     if rsp.cmd != req.cmd {
         return Err(proto_error!(
             "Incorrect PLDM command in reply",
-            format!("Expected 0x{:02x} got 0x{:02x}", req.cmd, rsp.cmd)
+            "Expected 0x{:02x} got 0x{:02x}",
+            req.cmd,
+            rsp.cmd,
         ));
     }
 
