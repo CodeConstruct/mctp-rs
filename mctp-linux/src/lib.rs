@@ -797,4 +797,17 @@ impl MctpAddr {
     pub fn create_listener(&self, typ: MsgType) -> Result<MctpLinuxListener> {
         MctpLinuxListener::new(typ, self.net)
     }
+
+    /// Create an `MctpLinuxAsyncReq` using the net & eid values in this address.
+    pub fn create_req_async(&self) -> Result<MctpLinuxAsyncReq> {
+        MctpLinuxAsyncReq::new(self.eid, self.net)
+    }
+
+    /// Create an `MctpLinuxAsyncListener`.
+    pub fn create_listener_async(
+        &self,
+        typ: MsgType,
+    ) -> Result<MctpLinuxAsyncListener> {
+        MctpLinuxAsyncListener::new(typ, self.net)
+    }
 }
