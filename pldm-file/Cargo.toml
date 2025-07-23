@@ -20,7 +20,9 @@ pldm = { workspace = true }
 [dev-dependencies]
 anyhow = "1.0"
 mctp-linux = { workspace = true }
+pldm-platform = { workspace = true, features = ["alloc"] }
 smol = "2.0"
+env_logger = "0.11.3"
 
 [features]
 default = ["std"]

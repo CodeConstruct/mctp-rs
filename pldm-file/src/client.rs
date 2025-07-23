@@ -1,7 +1,10 @@
 use deku::{DekuContainerRead, DekuContainerWrite};
 use log::trace;
 use pldm::control::{MultipartReceiveReq, MultipartReceiveResp};
-use pldm::{pldm_xfer_buf_async, proto_error, PldmError, PldmRequest, Result};
+use pldm::{
+    pldm_xfer_buf_async, proto_error, PldmError, PldmRequest, PldmResult,
+    Result,
+};
 
 use crate::proto::*;
 use crate::PLDM_TYPE_FILE_TRANSFER;
@@ -78,27 +81,61 @@ pub async fn df_open(
 
 const PART_SIZE: usize = 1024;
 
+/// Read a file from the host.
+///
+/// The total file size read is returned.
 pub async fn df_read(
     comm: &mut impl mctp::AsyncReqChannel,
     file: FileDescriptor,
     offset: usize,
     buf: &mut [u8],
 ) -> Result<usize> {
-    if offset > u32::MAX as usize {
-        return Err(proto_error!("invalid offset"));
-    }
-    if buf.len() > u32::MAX as usize {
-        return Err(proto_error!("invalid length"));
-    }
+    let len = buf.len();
+    let mut v = pldm::util::SliceWriter::new(buf);
 
-    let mut part_offset = 0;
+    df_read_with(comm, file, offset, len, |b| {
+        let r = v.extend(b);
+        debug_assert!(r.is_some(), "provided data should be <= len");
+        Ok(())
+    })
+    .await
+}
+
+/// Read a file into a provided closure.
+///
+/// The `out` closure will be called repeatedly with sequential buffer chunks
+/// sent from the host. Any error returned by `out` will be returned from `df_read_with`.
+pub async fn df_read_with<F>(
+    comm: &mut impl mctp::AsyncReqChannel,
+    file: FileDescriptor,
+    offset: usize,
+    len: usize,
+    mut out: F,
+) -> Result<usize>
+where
+    F: FnMut(&[u8]) -> PldmResult<()>,
+{
+    let req_offset = u32::try_from(offset).map_err(|_| {
+        trace!("invalid offset");
+        PldmError::InvalidArgument
+    })?;
+    let req_length = u32::try_from(len).map_err(|_| {
+        trace!("invalid len");
+        PldmError::InvalidArgument
+    })?;
+    req_length.checked_add(req_offset).ok_or_else(|| {
+        trace!("invalid len");
+        PldmError::InvalidArgument
+    })?;
+
+    let mut part_offset = 0usize;
     let mut req = MultipartReceiveReq {
         pldm_type: PLDM_TYPE_FILE_TRANSFER,
         xfer_op: pldm::control::xfer_op::FIRST_PART,
         xfer_context: file.0 as u32,
         xfer_handle: 0,
-        req_offset: offset as u32,
-        req_length: buf.len() as u32,
+        req_offset,
+        req_length,
     };
     loop {
         let mut tx_buf = [0; 18];
@@ -138,13 +175,14 @@ pub async fn df_read(
             return Err(proto_error!("data checksum mismatch"));
         }
 
-        let total_len = part_offset + resp_data_len;
+        // Ensure the host doesn't send more data than requested
+        let total_len = part_offset
+            .checked_add(resp_data_len)
+            .filter(|l| *l <= (req_length as usize))
+            .ok_or(proto_error!("excess data received"))?;
 
-        if total_len > buf.len() {
-            return Err(proto_error!("host data data overflow?"));
-        }
-
-        buf[part_offset..total_len].copy_from_slice(resp_data);
+        // provide data to the callback
+        out(resp_data)?;
 
         if read_resp.xfer_flag & pldm::control::xfer_flag::END != 0 {
             break Ok(total_len);

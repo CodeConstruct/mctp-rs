@@ -1070,12 +1070,14 @@ dependencies = [
  "crc",
  "deku",
  "enumset",
+ "env_logger",
  "log",
  "mctp",
  "mctp-linux",
  "num-derive",
  "num-traits",
  "pldm",
+ "pldm-platform",
  "smol",
 ]
 

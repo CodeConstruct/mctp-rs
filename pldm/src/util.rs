@@ -151,6 +151,19 @@ impl<'a> SliceWriter<'a> {
         Some(l)
     }
 
+    /// Pushes slice into the output buffer, little endian.
+    ///
+    /// Returns the number of elements written or `None` on insufficient space.
+    #[must_use]
+    pub fn extend(&mut self, v: &[u8]) -> Option<usize> {
+        self.push_with(|s| {
+            s.get_mut(..v.len()).map(|s| {
+                s.copy_from_slice(v);
+                s.len()
+            })
+        })
+    }
+
     /// Pushes data into the output buffer provided by a function, with a length prefix.
     ///
     /// The `write` closure writes into the output buffer (with prefix space left),
@@ -285,5 +298,16 @@ mod tests {
         });
         assert_eq!(r, Some(2));
         assert_eq!(x, [3, 4, 99u8]);
+
+        let mut x = [0u8; 5];
+        let mut w = SliceWriter::new(&mut x);
+        let r = w.extend(&[1, 2, 3]);
+        assert_eq!(r, Some(3));
+        assert_eq!(x, [1, 2, 3, 0, 0u8]);
+
+        let mut x = [0u8; 2];
+        let mut w = SliceWriter::new(&mut x);
+        let r = w.extend(&[1, 2, 3]);
+        assert_eq!(r, None);
     }
 }
