@@ -422,7 +422,7 @@ impl DescriptorString {
     }
 
     pub fn new_str(s: &str) -> Option<Self> {
-        if s.as_bytes().len() > 0xff {
+        if s.len() > 0xff {
             return None;
         }
         Some(Self::String(s.to_string()))
