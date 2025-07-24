@@ -2,9 +2,9 @@
 name = "pldm"
 description = "Platform Level Data Model (PLDM) base types and functions"
 version = "0.2.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/CodeConstruct/mctp-rs"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 categories = ["network-programming", "embedded", "hardware-support"]
 
 [dependencies]
