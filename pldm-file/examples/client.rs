@@ -3,8 +3,8 @@ use mctp::Eid;
 use mctp_linux::MctpLinuxAsyncReq;
 use pldm::control::requester::negotiate_transfer_parameters;
 use pldm_file::{
-    client::{df_open, df_properties, df_read},
-    proto::{DfOpenAttributes, DfProperty, FileIdentifier},
+    client::{df_close, df_open, df_properties, df_read},
+    proto::{DfCloseAttributes, DfOpenAttributes, DfProperty, FileIdentifier},
 };
 
 const EID: Eid = Eid(8);
@@ -40,6 +40,11 @@ fn main() -> Result<()> {
         let res = df_read(&mut req, fd, 0, &mut buf).await;
 
         println!("Read: {res:?}");
+
+        let attrs = DfCloseAttributes::empty();
+        let res = df_close(&mut req, fd, attrs).await;
+
+        println!("Close: {res:?}");
 
         Ok(())
     })

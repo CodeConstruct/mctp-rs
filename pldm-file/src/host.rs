@@ -122,6 +122,7 @@ impl<const N: usize> Responder<N> {
         let r = match cmd {
             Cmd::DfProperties => self.cmd_dfproperties(req, host),
             Cmd::DfOpen => self.cmd_dfopen(req, host),
+            Cmd::DfClose => self.cmd_dfclose(req, host),
             _ => {
                 trace!("unhandled command {cmd:?}");
                 Err(CCode::ERROR_UNSUPPORTED_PLDM_CMD.into())
@@ -262,6 +263,30 @@ impl<const N: usize> Responder<N> {
         resp.set_data(dfo_resp.to_bytes()?);
 
         Ok(resp)
+    }
+
+    fn cmd_dfclose<'a>(
+        &mut self,
+        req: &'a PldmRequest<'a>,
+        _host: &mut impl Host,
+    ) -> Result<PldmResponse<'a>> {
+        let (rest, dfc) = DfCloseReq::from_bytes((&req.data, 0))?;
+
+        if !rest.0.is_empty() {
+            Err(CCode::ERROR_INVALID_LENGTH)?;
+        }
+
+        if dfc.attributes != 0 {
+            Err(file_ccode::ZEROLENGTH_NOT_ALLOWED)?;
+        }
+
+        self.files
+            .get_mut(dfc.file_descriptor as usize)
+            .ok_or(file_ccode::INVALID_FILE_DESCRIPTOR)? // valid?
+            .take()
+            .ok_or(file_ccode::INVALID_FILE_DESCRIPTOR)?; // open?
+
+        Ok(req.response())
     }
 
     fn cmd_multipart_receive<'a, const T: usize>(

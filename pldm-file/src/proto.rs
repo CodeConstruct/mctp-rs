@@ -60,6 +60,13 @@ pub enum DfOpenAttribute {
 
 pub type DfOpenAttributes = EnumSet<DfOpenAttribute>;
 
+#[derive(EnumSetType, Debug)]
+pub enum DfCloseAttribute {
+    DfCloseZeroLength = 0,
+}
+
+pub type DfCloseAttributes = EnumSet<DfCloseAttribute>;
+
 impl TryFrom<u32> for DfProperty {
     type Error = ();
 
@@ -91,4 +98,10 @@ pub struct DfOpenReq {
 #[derive(DekuRead, DekuWrite)]
 pub struct DfOpenResp {
     pub file_descriptor: u16,
+}
+
+#[derive(DekuRead, DekuWrite)]
+pub struct DfCloseReq {
+    pub file_descriptor: u16,
+    pub attributes: u16,
 }

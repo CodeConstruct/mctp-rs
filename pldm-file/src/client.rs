@@ -79,6 +79,36 @@ pub async fn df_open(
     Ok(FileDescriptor(ret.file_descriptor))
 }
 
+pub async fn df_close(
+    comm: &mut impl mctp::AsyncReqChannel,
+    fd: FileDescriptor,
+    attributes: DfCloseAttributes,
+) -> Result<()> {
+    let req = DfCloseReq {
+        file_descriptor: fd.0,
+        attributes: attributes.as_u16(),
+    };
+
+    let mut buf = [0; 4];
+    let l = req.to_slice(&mut buf).map_err(|_| PldmError::NoSpace)?;
+    let buf = &buf[..l];
+
+    let req = PldmRequest::new_borrowed(
+        PLDM_TYPE_FILE_TRANSFER,
+        Cmd::DfClose as u8,
+        buf,
+    );
+
+    let mut rx = [0; 10];
+    let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
+
+    if resp.cc != 0 {
+        return Err(proto_error!("DfClose failed"));
+    }
+
+    Ok(())
+}
+
 const PART_SIZE: usize = 1024;
 
 /// Read a file from the host.
