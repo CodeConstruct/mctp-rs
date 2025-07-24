@@ -435,7 +435,7 @@ where
 
                     progress(&u);
                 } else {
-                    error!("firmware transfer error: 0x{:02x}", res);
+                    error!("firmware transfer error: 0x{res:02x}");
                 }
                 let mut fw_resp = fw_req.response();
                 fw_resp.cc = 0;
