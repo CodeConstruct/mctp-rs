@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use mctp::Eid;
 use mctp_linux::MctpLinuxAsyncReq;
-use pldm::control::requester::negotiate_transfer_parameters;
+use pldm::{control::requester::negotiate_transfer_parameters, PldmError};
 use pldm_file::{
-    client::{df_close, df_open, df_properties, df_read},
+    client::{df_close, df_open, df_properties, df_read_with},
     proto::{DfCloseAttributes, DfOpenAttributes, DfProperty, FileIdentifier},
 };
 
@@ -36,8 +36,21 @@ fn main() -> Result<()> {
 
         println!("Open: {fd:?}");
 
-        let mut buf = vec![0; 4096];
-        let res = df_read(&mut req, fd, 0, &mut buf).await;
+        let mut buf = Vec::new();
+        let req_len = 4096;
+
+        println!("Reading...");
+        let res = df_read_with(&mut req, fd, 0, req_len, |part| {
+            println!("  {} bytes", part.len());
+            if buf.len() + part.len() > req_len {
+                println!("  data overflow!");
+                Err(PldmError::NoSpace)
+            } else {
+                buf.extend_from_slice(part);
+                Ok(())
+            }
+        })
+        .await;
 
         println!("Read: {res:?}");
 
