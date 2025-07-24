@@ -93,7 +93,12 @@ impl<const N: usize> Responder<N> {
             PLDM_TYPE_FILE_TRANSFER,
             0xf1f0f000,
             Some(MAX_PART_SIZE),
-            &[Cmd::DfProperties as u8],
+            &[
+                Cmd::DfProperties as u8,
+                Cmd::DfOpen as u8,
+                Cmd::DfClose as u8,
+                Cmd::DfRead as u8,
+            ],
         )
     }
 
