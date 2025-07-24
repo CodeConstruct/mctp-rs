@@ -21,6 +21,7 @@ pub mod responder;
 pub const PLDM_TYPE_CONTROL: u8 = 0;
 
 /// PLDM Control command codes
+#[derive(Debug)]
 #[allow(missing_docs)]
 #[repr(u8)]
 #[non_exhaustive]
@@ -96,21 +97,21 @@ impl TryFrom<u8> for Cmd {
 }
 
 /// Set TID request
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 pub struct SetTIDReq {
     /// TID
     pub tid: u8,
 }
 
 /// Get TID response
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 pub struct GetTIDResp {
     /// TID
     pub tid: u8,
 }
 
 /// Get PLDM Version request
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little")]
 pub struct GetPLDMVersionReq {
     /// DataTransferHandle
@@ -122,7 +123,7 @@ pub struct GetPLDMVersionReq {
 }
 
 /// Get PLDM Version response
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little")]
 pub struct GetPLDMVersionResp {
     /// NextDataTransferHandle
@@ -136,14 +137,14 @@ pub struct GetPLDMVersionResp {
 }
 
 /// Get PLDM Types response
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 pub struct GetPLDMTypesResp {
     /// PLDM Types bitmask
     pub types: [u8; 8],
 }
 
 /// Get PLDM Commands request
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little")]
 pub struct GetPLDMCommandsReq {
     /// PLDMType
@@ -153,14 +154,14 @@ pub struct GetPLDMCommandsReq {
 }
 
 /// Get PLDM Commands response
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 pub struct GetPLDMCommandsResp {
     /// PLDM Types bitmask
     pub commands: [u8; 32],
 }
 
 /// Negotiate Transfer Parameters request
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little")]
 pub struct NegotiateTransferParametersReq {
     /// RequesterPartSize.
@@ -175,7 +176,7 @@ pub struct NegotiateTransferParametersReq {
 }
 
 /// Negotiate Transfer Parameters response
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little")]
 pub struct NegotiateTransferParametersResp {
     /// ResponderPartSize.
@@ -190,7 +191,7 @@ pub struct NegotiateTransferParametersResp {
 }
 
 /// Multipart Receive request
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little")]
 pub struct MultipartReceiveReq {
     /// PLDM type
@@ -208,7 +209,7 @@ pub struct MultipartReceiveReq {
 }
 
 /// Multipart Receive response
-#[derive(DekuRead, DekuWrite)]
+#[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little")]
 pub struct MultipartReceiveResp {
     /// Transfer flag
