@@ -19,8 +19,11 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
 
+#[allow(unused)]
+use log::{debug, error, info, trace, warn};
+
 use core::fmt::{self, Debug};
-use deku::DekuError;
+use deku::{no_std_io::ErrorKind, DekuError};
 use num_derive::FromPrimitive;
 
 use mctp::MsgIC;
@@ -82,8 +85,14 @@ impl From<DekuError> for PldmError {
     fn from(err: DekuError) -> Self {
         match err {
             DekuError::Incomplete(_) => proto_error!("Incomplete input"),
-            DekuError::Parse(e) => proto_error!("Parse error", "{e}"),
-            _ => proto_error!("Deku error", "{err}"),
+            DekuError::Io(ErrorKind::WriteZero) => {
+                trace!("Deku no space");
+                PldmError::NoSpace
+            }
+            _ => {
+                trace!("Deku error: {err:?}");
+                proto_error!("Deku error", "{err}")
+            }
         }
     }
 }
