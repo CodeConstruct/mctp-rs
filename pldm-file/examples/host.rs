@@ -61,7 +61,7 @@ fn main() -> Result<()> {
                 // we pass all of the multipart receive commands over to
                 // the pldm-file handler
                 (pldm::control::PLDM_TYPE_CONTROL, MP_RECV) => pldm_file
-                    .multipart_request_in(chan, &req, &mut host)
+                    .multipart_request_in(chan, &req, &pldm_ctrl, &mut host)
                     .await
                     .context("PLDM file multipart handler failed")?,
                 (pldm::control::PLDM_TYPE_CONTROL, _) => pldm_ctrl

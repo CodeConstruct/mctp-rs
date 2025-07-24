@@ -2,7 +2,7 @@
 
 use deku::{DekuContainerRead, DekuContainerWrite, DekuError};
 use log::{debug, trace};
-use mctp::AsyncRespChannel;
+use mctp::{AsyncRespChannel, Eid};
 use num_traits::FromPrimitive;
 use pldm::{
     self, pldm_tx_resp_async, proto_error, CCode, PldmError, PldmRequest,
@@ -15,8 +15,7 @@ use crate::PLDM_TYPE_FILE_TRANSFER;
 
 const FILE_ID: FileIdentifier = FileIdentifier(0);
 
-// todo: negotiate this
-const PART_SIZE: usize = 1024;
+const MAX_PART_SIZE: u16 = 1024;
 
 pub trait Host {
     /// Returns number of bytes read
@@ -93,7 +92,7 @@ impl<const N: usize> Responder<N> {
         pldm.register_type(
             PLDM_TYPE_FILE_TRANSFER,
             0xf1f0f000,
-            Some(PART_SIZE as u16),
+            Some(MAX_PART_SIZE),
             &[Cmd::DfProperties as u8],
         )
     }
@@ -149,10 +148,11 @@ impl<const N: usize> Responder<N> {
     }
 
     // We may want to move this to the general request_in() path?
-    pub async fn multipart_request_in<R: AsyncRespChannel>(
+    pub async fn multipart_request_in<const T: usize, R: AsyncRespChannel>(
         &mut self,
         mut comm: R,
         req: &PldmRequest<'_>,
+        pldm_ctrl: &pldm::control::responder::Responder<T>,
         host: &mut impl Host,
     ) -> pldm::Result<()> {
         let Ok(cmd) = pldm::control::Cmd::try_from(req.cmd) else {
@@ -166,9 +166,12 @@ impl<const N: usize> Responder<N> {
         };
 
         let res = match cmd {
-            pldm::control::Cmd::MultipartReceive => {
-                self.cmd_multipart_receive(req, host)
-            }
+            pldm::control::Cmd::MultipartReceive => self.cmd_multipart_receive(
+                req,
+                comm.remote_eid(),
+                pldm_ctrl,
+                host,
+            ),
             _ => {
                 trace!("unhandled multipart request");
                 Err(CCode::ERROR_UNSUPPORTED_PLDM_CMD.into())
@@ -261,9 +264,11 @@ impl<const N: usize> Responder<N> {
         Ok(resp)
     }
 
-    fn cmd_multipart_receive<'a>(
+    fn cmd_multipart_receive<'a, const T: usize>(
         &mut self,
         req: &'a PldmRequest<'a>,
+        eid: Eid,
+        ctrl: &pldm::control::responder::Responder<T>,
         host: &mut impl Host,
     ) -> Result<PldmResponse<'a>> {
         let (rest, cmd) = pldm::control::MultipartReceiveReq::from_bytes((
@@ -279,6 +284,11 @@ impl<const N: usize> Responder<N> {
         if cmd.xfer_context > u16::MAX as u32 {
             Err(CCode::ERROR_INVALID_TRANSFER_CONTEXT)?;
         }
+
+        let part_size = ctrl
+            .negotiated_xfer_size(eid, PLDM_TYPE_FILE_TRANSFER)
+            .ok_or(pldm::control::control_ccode::NEGOTIATION_INCOMPLETE)?
+            as usize;
 
         let fd = FileDescriptor(cmd.xfer_context as u16);
 
@@ -321,7 +331,7 @@ impl<const N: usize> Responder<N> {
         let offset = match cmd.xfer_op {
             pldm::control::xfer_op::FIRST_PART
             | pldm::control::xfer_op::CURRENT_PART => xfer_ctx.offset,
-            pldm::control::xfer_op::NEXT_PART => xfer_ctx.offset + PART_SIZE,
+            pldm::control::xfer_op::NEXT_PART => xfer_ctx.offset + part_size,
             _ => Err(CCode::ERROR_INVALID_DATA)?,
         };
 
@@ -330,10 +340,10 @@ impl<const N: usize> Responder<N> {
         }
 
         let start = offset == 0;
-        let (len, end) = if offset + PART_SIZE >= full_len {
+        let (len, end) = if offset + part_size >= full_len {
             (full_len - offset, true)
         } else {
-            (PART_SIZE, false)
+            (part_size, false)
         };
 
         let mut flags = 0;
