@@ -181,3 +181,54 @@ pub async fn get_pldm_commands<'f>(
 
     Ok(ret.done())
 }
+
+/// Negotiate Transfer Parameters.
+///
+/// This sends a Negotiate Transfer Parameters command with the given PLDM
+/// type set and requested size. Returns the negotiated size and type set
+/// from the responder.
+pub async fn negotiate_transfer_parameters<'f>(
+    comm: &mut impl AsyncReqChannel,
+    req_types: &[u8],
+    neg_types_buf: &'f mut [u8],
+    part_size: u16,
+) -> PldmResult<(u16, &'f [u8])> {
+    let mut buf = [0u8; 10];
+
+    let req_types = req_types.iter().fold(0u64, |x, typ| x | 1 << typ);
+
+    let req = control::NegotiateTransferParametersReq {
+        part_size,
+        protocols: req_types.to_le_bytes(),
+    };
+
+    let len = req.to_slice(&mut buf)?;
+    let req = PldmRequest::new_borrowed(
+        control::PLDM_TYPE_CONTROL,
+        control::Cmd::NegotiateTransferParameters as u8,
+        &buf[..len],
+    );
+
+    let mut rx_buf = [0u8; 16];
+    let resp = pldm_xfer_buf_async(comm, req, &mut rx_buf).await?;
+
+    ccode_result(resp.cc)?;
+
+    let ((rest, _), cmdrsp) =
+        control::NegotiateTransferParametersReq::from_bytes((&resp.data, 0))?;
+
+    if !rest.is_empty() {
+        warn!("Extra negotiate transfer parameters response");
+    }
+
+    let neg_types = u64::from_le_bytes(cmdrsp.protocols);
+    let mut neg_types_ret = SliceWriter::new(neg_types_buf);
+    for t in 0..64 {
+        let mask = 1u64 << t;
+        if neg_types & mask != 0 {
+            neg_types_ret.push_le(t as u8).ok_or(PldmError::NoSpace)?;
+        }
+    }
+
+    Ok((cmdrsp.part_size, neg_types_ret.done()))
+}
