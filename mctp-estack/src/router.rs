@@ -316,7 +316,18 @@ impl Default for WakerPool {
 
 impl WakerPool {
     fn wake(&self, cookie: AppCookie) {
-        self.inner.lock(|i| i.borrow_mut().pool[&cookie].wake())
+        self.inner.lock(|i| {
+            let mut i = i.borrow_mut();
+            if let Some(w) = i.pool.get_mut(&cookie) {
+                w.wake()
+            } else {
+                // This can currently happen if a ReqChannel is dropped but the core stack
+                // subsequently receives a response message corresponding to that cookie.
+                // TODO fix expiring from the stack (?) and make this a debug_assertion.
+                // We can't expire in the ReqChannel drop handler since it needs async
+                // for locking.
+            }
+        })
     }
 
     fn wake_all(&self) {
