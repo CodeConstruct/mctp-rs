@@ -3,6 +3,11 @@ members = [ "pldm-fw-cli", "standalone" ]
 exclude = [ "mctp-usb-embassy" ]
 resolver = "2"
 
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/CodeConstruct/mctp-rs"
+
 [workspace.dependencies]
 mctp = { version = "0.2", path = "mctp", default-features = false }
 mctp-linux = { version = "0.2", path = "mctp-linux" }
