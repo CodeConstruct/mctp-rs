@@ -209,7 +209,7 @@ impl<const N: usize> Responder<N> {
         req: &PldmRequest,
     ) -> PldmCommandResult<PldmResponse<'_>> {
         let data = &req.data;
-        let (_rest, sreq) = control::SetTIDReq::from_bytes((data, data.len()))?;
+        let (_rest, sreq) = control::SetTIDReq::from_bytes((data, 0))?;
         self.tid = sreq.tid;
 
         let resp = req.response_borrowed(&[]);
@@ -232,8 +232,7 @@ impl<const N: usize> Responder<N> {
         req: &PldmRequest,
     ) -> PldmCommandResult<PldmResponse<'_>> {
         let data = &req.data;
-        let (_rest, vreq) =
-            control::GetPLDMVersionReq::from_bytes((data, data.len()))?;
+        let (_rest, vreq) = control::GetPLDMVersionReq::from_bytes((data, 0))?;
 
         // Get First Part?
         if vreq.xfer_op != 1 {
@@ -287,8 +286,7 @@ impl<const N: usize> Responder<N> {
         req: &PldmRequest,
     ) -> PldmCommandResult<PldmResponse<'_>> {
         let data = &req.data;
-        let (_rest, creq) =
-            control::GetPLDMCommandsReq::from_bytes((data, data.len()))?;
+        let (_rest, creq) = control::GetPLDMCommandsReq::from_bytes((data, 0))?;
 
         let typ = self
             .types
@@ -318,10 +316,7 @@ impl<const N: usize> Responder<N> {
     ) -> PldmCommandResult<PldmResponse<'_>> {
         let data = &req.data;
         let (_rest, nreq) =
-            control::NegotiateTransferParametersReq::from_bytes((
-                data,
-                data.len(),
-            ))?;
+            control::NegotiateTransferParametersReq::from_bytes((data, 0))?;
 
         let req_size = nreq.part_size;
         if !req_size.is_power_of_two() || req_size < 256 {
