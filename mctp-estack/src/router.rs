@@ -771,6 +771,9 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     ) -> Result<()> {
         // For the first call, we pass a None tag, get an Owned one allocated.
         // Subsequent calls will fail unless tag_noexpire() was performed.
+        if self.cookie.is_none() {
+            self.cookie = Some(self.router.recv_wakers.alloc()?);
+        }
         let tag = self
             .router
             .app_send_message(
@@ -780,14 +783,11 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
                 self.tag_expires,
                 integrity_check,
                 bufs,
-                None,
+                self.cookie,
             )
             .await?;
         debug_assert!(matches!(tag, Tag::Owned(_)));
         self.sent_tag = Some(tag);
-        if self.cookie.is_none() {
-            self.cookie = Some(self.router.recv_wakers.alloc()?);
-        }
         Ok(())
     }
 
