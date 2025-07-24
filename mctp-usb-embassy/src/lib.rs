@@ -4,6 +4,9 @@
  */
 #![no_std]
 #![forbid(unsafe_code)]
+// defmt does not currently allow inline format arguments, so we don't want
+// those reworked when using the log crate either.
+#![allow(clippy::uninlined_format_args)]
 
 //! # MCTP over USB transport for `embassy-usb`.
 //!
