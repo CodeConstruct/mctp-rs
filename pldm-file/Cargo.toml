@@ -28,3 +28,11 @@ env_logger = "0.11.3"
 default = ["std"]
 alloc = ["pldm/alloc", "deku/alloc"]
 std = ["alloc", "pldm/std", "mctp/std"]
+
+[[example]]
+name = "pldm-file-host"
+path = "examples/host.rs"
+
+[[example]]
+name = "pldm-file-client"
+path = "examples/client.rs"
