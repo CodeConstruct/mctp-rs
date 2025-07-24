@@ -29,6 +29,9 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::int_plus_one)]
 #![allow(clippy::too_many_arguments)]
+// defmt does not currently allow inline format arguments, so we don't want
+// those reworked when using the log crate either.
+#![allow(clippy::uninlined_format_args)]
 
 /// Re-exported so that callers can use the same `heapless` version.
 ///
