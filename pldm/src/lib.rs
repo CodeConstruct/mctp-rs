@@ -508,6 +508,7 @@ pub async fn pldm_xfer_buf_async<'buf>(
 
     let rsp = PldmResponse::from_buf_borrowed(rx_buf)?;
     check_req_resp_match(&req, &rsp)?;
+    ccode_result(rsp.cc)?;
     Ok(rsp)
 }
 
