@@ -515,7 +515,7 @@ impl<'a> MctpControl<'a> {
                 let res = self.router.set_eid(eid).await;
                 let present_eid = self.router.get_eid().await;
 
-                if res.is_ok() && old != present_eid {
+                if res.is_ok() {
                     event = Some(ControlEvent::SetEndpointId {
                         old,
                         new: present_eid,
@@ -550,9 +550,12 @@ impl<'a> MctpControl<'a> {
 
 /// An MCTP control handler event
 pub enum ControlEvent {
-    /// Set Endpoint ID changed EID
+    /// Set Endpoint ID received.
+    ///
+    /// Note that the EID may be unchanged.
     SetEndpointId {
-        /// Previous EID
+        /// Previous EID.
+        ///
         old: Eid,
         /// New EID
         new: Eid,
