@@ -142,8 +142,8 @@ impl<const N: usize> Responder<N> {
 
         if let Err((typ, e)) = res {
             debug!("error sending {typ} response. {e:?}");
+            return Err(e);
         }
-
         Ok(())
     }
 
