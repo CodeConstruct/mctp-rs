@@ -91,7 +91,11 @@ impl<'a> SliceWriter<'a> {
         Some(s.len())
     }
 
-    fn push_le<S>(&mut self, v: S) -> Option<usize>
+    /// Pushes a value into the output buffer, little endian.
+    ///
+    /// Returns the length written or `None` on insufficient space.
+    #[must_use]
+    pub fn push_le<S>(&mut self, v: S) -> Option<usize>
     where
         S: num_traits::ToBytes,
     {
