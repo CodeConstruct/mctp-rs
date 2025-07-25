@@ -12,9 +12,9 @@ pldm-fw = { workspace = true, features = ["std"] }
 mctp-linux = { workspace = true }
 mctp = { workspace = true }
 
-argh = "0.1.12"
-anyhow = "1.0.80"
-env_logger = "0.11.3"
-log = "0.4"
-chrono = {version = "0.4", default-features = false, features = ["clock"] }
-enumset = "1.1"
+argh = { workspace = true}
+anyhow = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+enumset = { workspace = true }
