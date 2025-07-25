@@ -8,21 +8,21 @@ repository.workspace = true
 categories = ["network-programming"]
 
 [dependencies]
-mctp = { workspace = true, features = ["std"] }
+mctp = { workspace = true }
 mctp-estack = { workspace = true }
 
-log = "0.4"
+log = { workspace = true }
 embedded-io-async = { workspace = true }
-smol = "2.0"
+smol = { workspace = true }
 
 [dev-dependencies]
-anyhow = "1.0"
-argh = "0.1"
-simplelog = "0.12"
-embedded-io-adapters = { workspace = true, features = ["std", "futures-03"] }
+anyhow = { workspace = true }
+argh = { workspace = true}
+simplelog = { workspace = true }
+embedded-io-adapters = { workspace = true }
 getrandom = "0.2"
 
-proptest = "1.0.0"
+proptest = { workspace = true }
 
 [features]
 std = ["mctp/std", "embedded-io-adapters/std"]
