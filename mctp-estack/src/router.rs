@@ -708,8 +708,12 @@ impl<'r> Router<'r> {
 
 /// A request channel.
 pub struct RouterAsyncReqChannel<'r> {
+    /// Destination EID
     eid: Eid,
-    sent_tag: Option<Tag>,
+    /// Tag from the last `send()`.
+    ///
+    /// Cleared upon receiving a response, except in the case of !tag_expires.
+    last_tag: Option<Tag>,
     router: &'r Router<'r>,
     tag_expires: bool,
     cookie: Option<AppCookie>,
@@ -719,7 +723,7 @@ impl<'r> RouterAsyncReqChannel<'r> {
     fn new(eid: Eid, router: &'r Router<'r>) -> Self {
         RouterAsyncReqChannel {
             eid,
-            sent_tag: None,
+            last_tag: None,
             tag_expires: true,
             router,
             cookie: None,
@@ -729,8 +733,12 @@ impl<'r> RouterAsyncReqChannel<'r> {
     /// Set the tag to not expire. That allows multiple calls to `send()`.
     ///
     /// `async_drop` must be called prior to drop.
+    ///
+    /// Should be called prior to any `send()` and may only be called once
+    /// for a `RouterAsyncReqChannel`.
+    /// This can also be called after the `recv()` has completed.
     pub fn tag_noexpire(&mut self) -> Result<()> {
-        if self.sent_tag.is_some() {
+        if self.last_tag.is_some() {
             return Err(Error::BadArgument);
         }
         self.tag_expires = false;
@@ -745,7 +753,7 @@ impl<'r> RouterAsyncReqChannel<'r> {
     /// <https://github.com/rust-lang/rust/issues/126482>
     pub async fn async_drop(mut self) {
         if !self.tag_expires {
-            if let Some(tag) = self.sent_tag.take() {
+            if let Some(tag) = self.last_tag.take() {
                 self.router.app_release_tag(self.eid, tag).await;
             }
         }
@@ -754,7 +762,7 @@ impl<'r> RouterAsyncReqChannel<'r> {
 
 impl Drop for RouterAsyncReqChannel<'_> {
     fn drop(&mut self) {
-        if !self.tag_expires && self.sent_tag.is_some() {
+        if !self.tag_expires && self.last_tag.is_some() {
             warn!("Didn't call async_drop()");
         }
         if let Some(c) = self.cookie {
@@ -773,24 +781,37 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
     /// Note that it will return failure immediately if the MCTP stack has no available tags,
     /// that behaviour may need changing in future.
     ///
-    /// Subsequent calls will fail unless tag_noexpire() was performed.
+    /// A `RouterAsyncReqChannel` can only receive responses for its
+    /// most recent `send()`, unless unless `tag_noexpire()` was set.
     async fn send_vectored(
         &mut self,
         typ: MsgType,
         integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> Result<()> {
-        // For the first call, we pass a None tag, get an Owned one allocated.
-        // Subsequent calls will fail unless tag_noexpire() was performed.
+        let send_tag = if self.tag_expires {
+            // Expiring (normal) case. Pass a None tag, and use a new cookie.
+            // An allocated tag is returned from app_send_message().
+            if let Some(c) = self.cookie.take() {
+                self.router.recv_wakers.remove(c);
+            }
+            None
+        } else {
+            // Non-expiring case, allocate a tag and cookie the
+            // first time then reuse it.
+            self.last_tag
+        };
+
         if self.cookie.is_none() {
             self.cookie = Some(self.router.recv_wakers.alloc()?);
         }
+
         let tag = self
             .router
             .app_send_message(
                 self.eid,
                 typ,
-                self.sent_tag,
+                send_tag,
                 self.tag_expires,
                 integrity_check,
                 bufs,
@@ -798,15 +819,20 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
             )
             .await?;
         debug_assert!(matches!(tag, Tag::Owned(_)));
-        self.sent_tag = Some(tag);
+        self.last_tag = Some(tag);
         Ok(())
     }
 
+    /// Receive a message.
+    ///
+    /// In the normal case, this will only receive responses to the
+    /// most recent `send()`. Responses to earlier `send()`s will be dropped.
+    /// When `tag_noexpire()` is set, this can receive multiple responses.
     async fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
     ) -> Result<(MsgType, MsgIC, &'f mut [u8])> {
-        let Some(Tag::Owned(tv)) = self.sent_tag else {
+        let Some(Tag::Owned(tv)) = self.last_tag else {
             debug!("recv without send");
             return Err(Error::BadArgument);
         };
@@ -818,6 +844,17 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_> {
             self.router.app_recv(cookie, buf).await?;
         debug_assert_eq!(tag, recv_tag);
         debug_assert_eq!(eid, self.eid);
+
+        if self.tag_expires {
+            self.last_tag = None;
+
+            // Remove the cookie. It would get cleared up anyway
+            // by drop() or a later send(), but this means it won't
+            // be taking up a slot in the interim.
+            if let Some(c) = self.cookie.take() {
+                self.router.recv_wakers.remove(c);
+            }
+        }
         Ok((typ, ic, buf))
     }
 

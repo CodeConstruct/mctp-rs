@@ -585,16 +585,21 @@ impl Stack {
         trace!("set flow {}", peer);
 
         if let Some(tv) = tag {
+            if flow_expires {
+                trace!("Can't specify a tag with tag_expires");
+                return Err(Error::BadArgument);
+            }
+
+            // Compare with any existing flow
             if let Some(f) = self.flows.get_mut(&(peer, tv)) {
-                if f.expiry_stamp.is_some() {
-                    // An Owned tag given to start_send() must have been initially created
-                    // tag_expires=false.
-                    trace!("Can't specify an owned tag that didn't have tag_expires=false");
+                if flow_expires != f.expiry_stamp.is_some() {
+                    trace!("varying slow_expires for flow");
                     return Err(Error::BadArgument);
                 }
 
                 if f.cookie != cookie {
-                    trace!("varying app for flow");
+                    trace!("varying cookie for flow");
+                    return Err(Error::BadArgument);
                 }
                 return Ok(tv);
             }
