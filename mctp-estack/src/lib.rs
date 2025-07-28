@@ -26,7 +26,9 @@
 //! These can be configured at build time, see [`config`]
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// Temporarily relaxed for zerocopy_channel vendored code.
+#![deny(unsafe_code)]
+// #![forbid(unsafe_code)]
 #![allow(clippy::int_plus_one)]
 #![allow(clippy::too_many_arguments)]
 // defmt does not currently allow inline format arguments, so we don't want
@@ -64,6 +66,10 @@ pub mod usb;
 #[macro_use]
 mod util;
 mod proto;
+
+#[rustfmt::skip]
+#[allow(clippy::needless_lifetimes)]
+mod zerocopy_channel;
 
 use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;

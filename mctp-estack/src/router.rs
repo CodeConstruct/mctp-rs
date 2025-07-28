@@ -20,8 +20,8 @@ use crate::{
 };
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
+use crate::zerocopy_channel::{Channel, Receiver, Sender};
 use embassy_sync::waitqueue::WakerRegistration;
-use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use heapless::{Entry, FnvIndexMap, Vec};
 
