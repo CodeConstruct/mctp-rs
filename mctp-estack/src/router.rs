@@ -204,13 +204,19 @@ impl PortTop {
                 SendOutput::Packet(p) => {
                     qpkt.len = p.len();
                     sender.send_done();
+                    if fragmenter.is_done() {
+                        // Break here rather than using SendOutput::Complete,
+                        // since we don't want to call channel.sender() an extra time.
+                        break Ok(fragmenter.tag());
+                    }
                 }
                 SendOutput::Error { err, .. } => {
                     debug!("Error packetising");
+                    debug_assert!(false, "Shouldn't fail, can't roll back");
                     sender.send_done();
                     break Err(err);
                 }
-                SendOutput::Complete { tag, cookie: _ } => break Ok(tag),
+                SendOutput::Complete { .. } => unreachable!(),
             }
         }
     }
