@@ -50,17 +50,24 @@ pub struct PortId(pub u8);
 
 /// A trait implemented by applications to determine the routing table.
 pub trait PortLookup: Sync + Send {
-    /// Returns the `PortId` for a destination EID.
+    /// Returns `(PortId, MTU)` for a destination EID.
     ///
-    /// `PortId` is an index into the array of `ports` provided to [`Router::new`]
-    ///
-    /// Return `None` to drop the packet as unreachable. This lookup
+    /// Return a `None` `PortId` to drop the packet as unreachable. This lookup
     /// is only called for outbound packets - packets destined for the local EID
     /// will not be passed to this callback.
     ///
+    /// A MTU can optionally be returned, it will be applied to locally fragmented packets.
+    /// This MTU is ignored for forwarded packets in a bridge (the transport implementation
+    /// can drop packets if desired).
+    /// If MTU is `None`, the MCTP minimum 64 is used.
+    ///
     /// `source_port` is the incoming interface of a forwarded packet,
     /// or `None` for locally generated packets.
-    fn by_eid(&self, eid: Eid, source_port: Option<PortId>) -> Option<PortId>;
+    fn by_eid(
+        &self,
+        eid: Eid,
+        source_port: Option<PortId>,
+    ) -> (Option<PortId>, Option<usize>);
 }
 
 /// Used like `heapless::Vec`, but lets the mut buffer be written into
@@ -108,9 +115,6 @@ impl core::ops::Deref for PktBuf {
 pub struct PortTop {
     /// Forwarded packet queue.
     channel: FixedChannel<PortRawMutex, PktBuf, { config::PORT_TXQUEUE }>,
-
-    mtu: usize,
-
     // Callers should hold send_mutex when using channel.sender().
     // send_message() will wait on send_mutex being available using sender_waker.
     send_mutex: BlockingMutex<()>,
@@ -118,18 +122,12 @@ pub struct PortTop {
 }
 
 impl PortTop {
-    pub fn new(mtu: usize) -> Result<Self> {
-        if mtu > MAX_MTU {
-            debug!("port mtu {} > MAX_MTU {}", mtu, MAX_MTU);
-            return Err(Error::BadArgument);
-        }
-
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             channel: FixedChannel::new(),
-            mtu,
             send_mutex: BlockingMutex::new(()),
             sender_waker: AtomicWaker::new(),
-        })
+        }
     }
 
     /// Return the bottom half port for the channel.
@@ -148,11 +146,6 @@ impl PortTop {
     async fn forward_packet(&self, pkt: &[u8]) -> Result<()> {
         debug_assert!(MctpHeader::decode(pkt).is_ok());
 
-        // Check space first (can't rollback after try_send)
-        if pkt.len() > self.mtu {
-            debug!("Forward packet too large");
-            return Err(Error::NoSpace);
-        }
         // With forwarded packets we don't want to block if
         // the queue is full (we drop packets instead).
         let r = self.send_mutex.lock(|_| {
@@ -242,6 +235,12 @@ impl PortTop {
             })
         })
         .await
+    }
+}
+
+impl Default for PortTop {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -511,7 +510,8 @@ impl<'r> Router<'r> {
         }
 
         // Look for a route to forward to
-        let Some(p) = inner.lookup.by_eid(header.dest, Some(port)) else {
+        let (Some(p), _mtu) = inner.lookup.by_eid(header.dest, Some(port))
+        else {
             debug!("No route for recv {}", header.dest);
             return ret_src;
         };
@@ -651,7 +651,8 @@ impl<'r> Router<'r> {
     ) -> Result<Tag> {
         let mut inner = self.inner.lock().await;
 
-        let Some(p) = inner.lookup.by_eid(eid, None) else {
+        let (port, mtu) = inner.lookup.by_eid(eid, None);
+        let Some(p) = port else {
             debug!("No route for recv {}", eid);
             return Err(Error::TxFailure);
         };
@@ -661,7 +662,6 @@ impl<'r> Router<'r> {
             return Err(Error::TxFailure);
         };
 
-        let mtu = top.mtu;
         let mut fragmenter = inner
             .stack
             .start_send(
@@ -670,7 +670,7 @@ impl<'r> Router<'r> {
                 tag,
                 tag_expires,
                 integrity_check,
-                Some(mtu),
+                mtu,
                 cookie,
             )
             .inspect_err(|e| trace!("error fragmenter {}", e))?;
