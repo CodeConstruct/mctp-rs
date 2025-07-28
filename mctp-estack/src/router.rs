@@ -21,7 +21,7 @@ use crate::{
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
 use crate::zerocopy_channel::{FixedChannel, Receiver};
-use embassy_sync::waitqueue::WakerRegistration;
+use embassy_sync::waitqueue::{AtomicWaker, WakerRegistration};
 
 use heapless::{Entry, FnvIndexMap, Vec};
 
@@ -108,9 +108,13 @@ impl core::ops::Deref for PktBuf {
 pub struct PortTop {
     /// Forwarded packet queue.
     channel: FixedChannel<PortRawMutex, PktBuf, { config::PORT_TXQUEUE }>,
-    send_mutex: AsyncMutex<()>,
 
     mtu: usize,
+
+    // Callers should hold send_mutex when using channel.sender().
+    // send_message() will wait on send_mutex being available using sender_waker.
+    send_mutex: BlockingMutex<()>,
+    sender_waker: AtomicWaker,
 }
 
 impl PortTop {
@@ -122,8 +126,9 @@ impl PortTop {
 
         Ok(Self {
             channel: FixedChannel::new(),
-            send_mutex: AsyncMutex::new(()),
             mtu,
+            send_mutex: BlockingMutex::new(()),
+            sender_waker: AtomicWaker::new(),
         })
     }
 
@@ -150,21 +155,27 @@ impl PortTop {
         }
         // With forwarded packets we don't want to block if
         // the queue is full (we drop packets instead).
-        // Don't hold this sender across any await.
-        let _l = self.send_mutex.lock().await;
-        let mut sender = self.channel.sender().unwrap();
+        let r = self.send_mutex.lock(|_| {
+            // OK unwrap, we have the send_mutex
+            let mut sender = self.channel.sender().unwrap();
 
-        // Get a slot to send
-        let slot = sender.try_send().ok_or_else(|| {
-            debug!("Dropped forward packet");
-            Error::TxFailure
-        })?;
+            // Get a slot to send
+            let slot = sender.try_send().ok_or_else(|| {
+                debug!("Dropped forward packet");
+                Error::TxFailure
+            })?;
 
-        // Fill the buffer
-        // OK unwrap: pkt.len() checked above.
-        slot.set(pkt).unwrap();
-        sender.send_done();
-        Ok(())
+            // Fill the buffer
+            if slot.set(pkt).is_ok() {
+                sender.send_done();
+                Ok(())
+            } else {
+                debug!("Oversized forward packet");
+                Err(Error::TxFailure)
+            }
+        });
+        self.sender_waker.wake();
+        r
     }
 
     /// Fragments and enqueues a message.
@@ -192,33 +203,45 @@ impl PortTop {
             work_msg
         };
 
-        loop {
-            let _l = self.send_mutex.lock().await;
-            // OK to unwrap, protected by send_mutex.lock()
-            let mut sender = self.channel.sender().unwrap();
+        // send_message() needs to wait for packets to get enqueued to the PortTop channel.
+        // It shouldn't hold the send_mutex() across an await, since that would block
+        // forward_packet().
+        poll_fn(|cx| {
+            self.send_mutex.lock(|_| {
+                // OK to unwrap, protected by send_mutex.lock()
+                let mut sender = self.channel.sender().unwrap();
 
-            let qpkt = sender.send().await;
-            qpkt.len = 0;
-            let r = fragmenter.fragment(payload, &mut qpkt.data);
-            match r {
-                SendOutput::Packet(p) => {
-                    qpkt.len = p.len();
-                    sender.send_done();
-                    if fragmenter.is_done() {
-                        // Break here rather than using SendOutput::Complete,
-                        // since we don't want to call channel.sender() an extra time.
-                        break Ok(fragmenter.tag());
+                // Send as much as we can in a loop without blocking.
+                // If it blocks the next poll_fn iteration will continue
+                // where it left off.
+                loop {
+                    let Poll::Ready(qpkt) = sender.poll_send(cx) else {
+                        self.sender_waker.register(cx.waker());
+                        break Poll::Pending;
+                    };
+
+                    qpkt.len = 0;
+                    match fragmenter.fragment(payload, &mut qpkt.data) {
+                        SendOutput::Packet(p) => {
+                            qpkt.len = p.len();
+                            sender.send_done();
+                            if fragmenter.is_done() {
+                                // Break here rather than using SendOutput::Complete,
+                                // since we don't want to call channel.sender() an extra time.
+                                break Poll::Ready(Ok(fragmenter.tag()));
+                            }
+                        }
+                        SendOutput::Error { err, .. } => {
+                            debug!("Error packetising");
+                            debug_assert!(false, "fragment () shouldn't fail");
+                            break Poll::Ready(Err(err));
+                        }
+                        SendOutput::Complete { .. } => unreachable!(),
                     }
                 }
-                SendOutput::Error { err, .. } => {
-                    debug!("Error packetising");
-                    debug_assert!(false, "Shouldn't fail, can't roll back");
-                    sender.send_done();
-                    break Err(err);
-                }
-                SendOutput::Complete { .. } => unreachable!(),
-            }
-        }
+            })
+        })
+        .await
     }
 }
 
