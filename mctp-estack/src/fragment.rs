@@ -10,7 +10,7 @@ use crate::fmt::{debug, error, info, trace, warn};
 
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag};
 
-use crate::{AppCookie, MctpHeader, MAX_MTU};
+use crate::{AppCookie, MctpHeader};
 
 /// Fragments a MCTP message.
 ///
@@ -44,15 +44,10 @@ impl Fragmenter {
         }
         debug_assert!(typ.0 & 0x80 == 0, "IC bit's set in typ");
         debug_assert!(initial_seq & !mctp::MCTP_SEQ_MASK == 0);
-        if mtu < MctpHeader::LEN + 1 {
+        if mtu < mctp::MCTP_MIN_MTU {
             debug!("mtu too small");
             return Err(Error::BadArgument);
         }
-        if mtu > MAX_MTU {
-            debug!("mtu too large");
-            return Err(Error::BadArgument);
-        }
-        // TODO other validity checks
 
         let header = MctpHeader {
             dest,
@@ -93,6 +88,8 @@ impl Fragmenter {
     ///
     /// The same input message `payload` should be passed to each `fragment()` call.
     /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with packet contents.
+    ///
+    /// `out` must be at least as large as the specified `mtu`.
     pub fn fragment<'f>(
         &mut self,
         payload: &[u8],
@@ -102,11 +99,11 @@ impl Fragmenter {
             return SendOutput::success(self);
         }
 
-        // first fragment needs type byte
-        let min = MctpHeader::LEN + self.header.som as usize;
-
-        if out.len() < min {
-            return SendOutput::failure(Error::NoSpace, self);
+        // Require at least MTU buffer size, to ensure that all non-end
+        // fragments are the same size per the spec.
+        if out.len() < self.mtu {
+            debug!("small out buffer");
+            return SendOutput::failure(Error::BadArgument, self);
         }
 
         // Reserve header space, the remaining buffer keeps being
@@ -123,6 +120,7 @@ impl Fragmenter {
 
         if payload.len() < self.payload_used {
             // Caller is passing varying payload buffers
+            debug!("varying payload");
             return SendOutput::failure(Error::BadArgument, self);
         }
 

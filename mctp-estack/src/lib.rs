@@ -164,8 +164,6 @@ pub struct Stack {
     /// cached next expiry time from update()
     next_timeout: u64,
 
-    mtu: usize,
-
     // Arbitrary counter to make tag allocation more variable.
     next_tag: u8,
 
@@ -180,22 +178,15 @@ impl Stack {
     ///
     /// `now_millis` is the current timestamp, the same style as would be
     /// passed to `update_clock()`.
-    ///
-    /// `mtu` is the default MTU of the stack. Specific [`start_send()`](Self::start_send)
-    /// calls may use a smaller MTU if needed (for example a per-link or per-EID MTU).
-    /// `new()` will panic if a MTU smaller than 5 is given (minimum MCTP header and type byte).
-    pub fn new(own_eid: Eid, mtu: usize, now_millis: u64) -> Self {
+    pub fn new(own_eid: Eid, now_millis: u64) -> Self {
         let now = EventStamp {
             clock: now_millis,
             counter: 0,
         };
-        assert!(mtu >= MctpHeader::LEN + 1);
-
         Self {
             own_eid,
             now,
             next_timeout: 0,
-            mtu,
             flows: Default::default(),
             reassemblers: Default::default(),
             next_tag: 0,
@@ -298,7 +289,7 @@ impl Stack {
     ///
     /// Returns a [`Fragmenter`] that will packetize the message.
     ///
-    /// `mtu` is an optional override, will be the min of the stack MTU and the argument.
+    /// `mtu` is optional, the default and minimum is 64 (MCTP protocol minimum).
     ///
     /// The provided cookie will be returned when `send_fill()` completes.
     ///
@@ -330,10 +321,8 @@ impl Stack {
             Some(Tag::Unowned(tv)) => Tag::Unowned(tv),
         };
 
-        let mut frag_mtu = self.mtu;
-        if let Some(m) = mtu {
-            frag_mtu = frag_mtu.min(m);
-        }
+        let frag_mtu = mtu.unwrap_or(mctp::MCTP_MIN_MTU);
+        // mtu size checked by Fragmenter::new()
 
         // Vary the starting seq
         self.next_seq = (self.next_seq + 1) & mctp::MCTP_SEQ_MASK;
