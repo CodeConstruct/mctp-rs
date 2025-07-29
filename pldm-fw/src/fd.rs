@@ -167,17 +167,21 @@ impl<R: RespChannel> Responder<R> {
         // Check for consistent EID
         match cmd {
             // informational commands or Cancel always allowed
-            | Cmd::QueryDeviceIdentifiers
+            Cmd::QueryDeviceIdentifiers
             | Cmd::GetFirmwareParameters
             | Cmd::GetStatus
             | Cmd::CancelUpdate
             // RequestUpdate will check itself
-            | Cmd::RequestUpdate
-            => (),
+            | Cmd::RequestUpdate => (),
             _ => {
                 if self.ua_eid != Some(eid) {
-                    debug!("Ignoring {cmd:?} from mismatching EID {eid}, expected {:?}", self.ua_eid);
-                    self.reply_error(req, &mut comm,
+                    debug!(
+                        "Ignoring {cmd:?} from mismatching EID {eid}, expected {:?}",
+                        self.ua_eid
+                    );
+                    self.reply_error(
+                        req,
+                        &mut comm,
                         CCode::ERROR_NOT_READY as u8,
                     );
                 }
@@ -243,7 +247,7 @@ impl<R: RespChannel> Responder<R> {
                 req_comm,
                 req_pending,
                 ..
-            } => req_pending.then(|| req_comm),
+            } => req_pending.then_some(req_comm),
             _ => None,
         };
         trace!("pending reply {}", r.is_some());
@@ -268,14 +272,15 @@ impl<R: RespChannel> Responder<R> {
 
         match Cmd::from_u8(rsp.cmd) {
             Some(Cmd::RequestFirmwareData) => self.download_response(rsp, d),
-            | Some(Cmd::TransferComplete)
-            | Some(Cmd::VerifyComplete)
-            | Some(Cmd::ApplyComplete)
+
             // Ignore replies to these requests.
             // We may have already moved on to a later state
             // and don't have any useful retry for them.
-            => Ok(()),
-            _ => Err(proto_error!("Unsupported PLDM response"))
+            Some(Cmd::TransferComplete)
+            | Some(Cmd::VerifyComplete)
+            | Some(Cmd::ApplyComplete) => Ok(()),
+
+            _ => Err(proto_error!("Unsupported PLDM response")),
         }
     }
 

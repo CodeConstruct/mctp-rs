@@ -70,25 +70,15 @@ impl<'a> ComponentBitmap {
     }
 
     pub fn as_index_str(&self) -> String {
-        let mut s = String::new();
-        let mut first = true;
-        for i in 0usize..self.n_bits {
-            if self.bit(i) {
-                s.push_str(&format!("{}{}", if first { "" } else { ", " }, i));
-                first = false;
-            }
-        }
-        s
+        (0usize..self.n_bits)
+            .filter(|&i| self.bit(i))
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn as_index_vec(&self) -> Vec<usize> {
-        let mut v = Vec::new();
-        for i in 0usize..self.n_bits {
-            if self.bit(i) {
-                v.push(i)
-            }
-        }
-        v
+        (0usize..self.n_bits).filter(|&i| self.bit(i)).collect()
     }
 }
 
@@ -232,7 +222,7 @@ impl Package {
             .finish()
             .map_err(|_| PldmPackageError::new_format("can't parse devices"))?;
 
-        /* this is the first divegence in package format versions; the
+        /* this is the first divergence in package format versions; the
          * downstream device identification area is only present in 1.1.x
          */
         let r = match identifier {

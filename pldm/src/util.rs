@@ -226,7 +226,6 @@ impl<S> NoneNoSpace<S> for Option<S> {
 
 #[cfg(test)]
 mod tests {
-
     use crate::*;
 
     #[test]
