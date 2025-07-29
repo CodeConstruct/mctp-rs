@@ -423,13 +423,19 @@ pub struct RouterInner<'r> {
 impl<'r> Router<'r> {
     /// Create a new Router.
     ///
-    /// The EID of the provided `stack` is used to match local destination packets.
-    ///
-    /// `ports` is a list of transport interfaces for the router. The indices
-    /// of the `ports`  slice are used as `PortId` identifiers.
+    /// `own_eid` is the EID that will respond locally to messages, and
+    /// is used as a source address.
     ///
     /// `lookup` callbacks define the routing table for outbound packets.
-    pub fn new(stack: Stack, lookup: &'r dyn PortLookup) -> Self {
+    ///
+    /// `now_millis` is the current timestamp, as would be provided to
+    /// [`update_time`](Self::update_time).
+    pub fn new(
+        own_eid: Eid,
+        lookup: &'r dyn PortLookup,
+        now_millis: u64,
+    ) -> Self {
+        let stack = Stack::new(own_eid, now_millis);
         let inner = RouterInner { stack, lookup };
 
         let app_listeners = BlockingMutex::new(RefCell::new(Vec::new()));
