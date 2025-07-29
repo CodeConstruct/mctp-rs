@@ -47,7 +47,7 @@ extern crate std;
 /// released.
 pub use heapless::Vec;
 
-use heapless::FnvIndexMap;
+use heapless::{Entry, FnvIndexMap};
 
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
@@ -396,13 +396,21 @@ impl Stack {
         match re.receive(packet, buf, self.now.increment()) {
             // Received a complete message
             Ok(Some(mut msg)) => {
-                // Have received a "response", flow is finished.
-                // TODO preallocated tags won't remove the flow.
+                // Have received a "response", flow may be finished.
                 let re = &mut msg.reassembler;
                 if !re.tag.is_owner() {
-                    trace!("remove flow");
-                    let r = self.flows.remove(&(re.peer, re.tag.tag()));
-                    debug_assert!(r.is_some(), "non-existent remove_flow");
+                    let e = self.flows.entry((re.peer, re.tag.tag()));
+                    match e {
+                        Entry::Occupied(e) => {
+                            if e.get().expiry_stamp.is_some() {
+                                trace!("remove flow");
+                                e.remove();
+                            }
+                        }
+                        Entry::Vacant(_) => {
+                            debug_assert!(false, "non-existent remove_flow")
+                        }
+                    }
                 }
 
                 Ok(Some(msg))
