@@ -30,19 +30,18 @@ for c in $NOSTD_CRATES; do
     )
 done
 
-# mctp-estack combinations
+# mctp-estack combinations, defmt and log
 (
 cd mctp-estack
 cargo build --target thumbv7em-none-eabihf --features defmt --no-default-features
 cargo build --features log
 )
 
-# not a workspace
+# mctp-usb-embassy combinations, defmt and log
 (
 cd mctp-usb-embassy
 cargo build --target thumbv7em-none-eabihf --features defmt --no-default-features
 cargo build --features log
-cargo doc
 )
 
 cargo doc --features mctp-estack/log

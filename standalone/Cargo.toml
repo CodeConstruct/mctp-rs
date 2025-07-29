@@ -10,7 +10,7 @@ categories = ["network-programming"]
 [dependencies]
 embedded-io-async = { workspace = true }
 log = { workspace = true }
-mctp-estack = { workspace = true }
+mctp-estack = { workspace = true, default-features = true }
 mctp = { workspace = true }
 smol = { workspace = true }
 

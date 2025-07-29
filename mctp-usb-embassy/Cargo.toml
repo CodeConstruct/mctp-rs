@@ -1,22 +1,22 @@
 [package]
 name = "mctp-usb-embassy"
 description = "MCTP over USB transport for embassy-usb"
-edition = "2021"
 version = "0.1.0"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/CodeConstruct/mctp-rs"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 categories = ["network-programming", "embedded", "no-std"]
 rust-version = "1.82"
 
 [dependencies]
-defmt = { version = "0.3", optional = true }
+defmt = { workspace = true, optional = true }
 embassy-futures = { version = "0.1" }
 embassy-usb-driver = { version = "0.2" }
-embassy-usb = { version = "0.5" }
-heapless = "0.8"
-log = { version = "0.4", optional = true }
-mctp-estack = { version = "0.1", path = "../mctp-estack", default-features = false }
-mctp = { version = "0.2", path = "../mctp", default-features = false }
+embassy-usb = { version = "0.5", default-features = false }
+heapless = { workspace = true }
+log = { workspace = true, optional = true }
+mctp-estack = { workspace = true }
+mctp = { workspace = true, default-features = false }
 
 [features]
 default = ["log"]
