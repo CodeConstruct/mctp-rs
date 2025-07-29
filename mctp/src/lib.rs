@@ -18,6 +18,11 @@
 
 use core::future::Future;
 
+// Currently there is no defmt::Format implementation for std::io::Error
+// (can't be derived). If needed that could be manually implemented.
+#[cfg(all(feature = "std", feature = "defmt"))]
+compile_error!("std and defmt features are currently mutually exclusive");
+
 /// MCTP endpoint ID
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

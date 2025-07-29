@@ -12,6 +12,8 @@ use log::{debug, error, info, trace, warn};
 
 #[cfg(not(any(feature = "log", feature = "defmt")))]
 compile_error!("Either log or defmt feature must be enabled");
+#[cfg(all(feature = "log", feature = "defmt"))]
+compile_error!("log and defmt features are mutually exclusive");
 
 use core::ops::Range;
 

@@ -45,6 +45,11 @@ use heapless::FnvIndexMap;
 
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
+#[cfg(not(any(feature = "log", feature = "defmt")))]
+compile_error!("Either log or defmt feature must be enabled");
+#[cfg(all(feature = "log", feature = "defmt"))]
+compile_error!("log and defmt features are mutually exclusive");
+
 pub mod control;
 pub mod fragment;
 pub mod i2c;
@@ -732,9 +737,6 @@ impl EventStamp {
         timeout.checked_sub(elapsed)
     }
 }
-
-#[cfg(not(any(feature = "log", feature = "defmt")))]
-compile_error!("Either log or defmt feature must be enabled");
 
 pub(crate) mod fmt {
     #[cfg(feature = "defmt")]
