@@ -9,25 +9,25 @@ categories = ["network-programming", "embedded", "hardware-support", "no-std"]
 rust-version = "1.82"
 
 [dependencies]
-mctp = { workspace = true }
-heapless = { workspace = true }
-log = { workspace = true, optional = true }
 crc = { workspace = true }
-embedded-io-async = { workspace = true }
 defmt = { workspace = true, optional = true }
 embassy-sync = "0.7"
+embedded-io-async = { workspace = true }
+heapless = { workspace = true }
+log = { workspace = true, optional = true }
+mctp = { workspace = true }
 smbus-pec = { version = "1.0", features = ["lookup-table"] }
 uuid = { workspace = true }
+
+[dev-dependencies]
+embedded-io-adapters = { workspace = true }
+env_logger =  { workspace = true }
+proptest = { workspace = true }
+simplelog = { workspace = true }
+smol = { workspace = true }
 
 [features]
 default = ["log"]
 std = ["mctp/std"]
 log = ["dep:log"]
 defmt = ["mctp/defmt", "dep:defmt" ]
-
-[dev-dependencies]
-proptest = { workspace = true }
-embedded-io-adapters = { workspace = true }
-simplelog = { workspace = true }
-env_logger =  { workspace = true }
-smol = { workspace = true }
