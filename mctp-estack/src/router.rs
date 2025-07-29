@@ -428,7 +428,12 @@ impl<'r> Router<'r> {
     /// of the `ports`  slice are used as `PortId` identifiers.
     ///
     /// `lookup` callbacks define the routing table for outbound packets.
-    pub fn new(stack: Stack, lookup: &'r dyn PortLookup) -> Self {
+    pub fn new(
+        own_eid: Eid,
+        lookup: &'r dyn PortLookup,
+        now_millis: u64,
+    ) -> Self {
+        let stack = Stack::new(own_eid, now_millis);
         let inner = RouterInner { stack, lookup };
 
         let app_listeners = BlockingMutex::new(RefCell::new(Vec::new()));
