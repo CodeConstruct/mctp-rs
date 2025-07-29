@@ -18,8 +18,8 @@ cargo check --all-targets --locked
 cargo clippy --all-targets
 
 # stable, std
-cargo build --release --features mctp-estack/log
-cargo test --features mctp-estack/log
+cargo build --release
+cargo test
 
 # stable, no_std
 NOSTD_CRATES="mctp pldm pldm-fw"
@@ -44,6 +44,6 @@ cargo build --target thumbv7em-none-eabihf --features defmt --no-default-feature
 cargo build --features log
 )
 
-cargo doc --features mctp-estack/log
+cargo doc
 
 echo success
