@@ -264,8 +264,9 @@ pub trait ReqChannel {
 
     /// Blocking receive
     ///
-    /// Returns a filled slice of `buf`, MCTP message type, and IC bit.
-    /// Will fail if used without a prior call to `send` or `send_vectored`.
+    /// Returns the MCTP message type, the IC bit, and the filled subslice of
+    /// `buf`. Will fail if used without a prior call to `send` or
+    /// `send_vectored`.
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
@@ -275,9 +276,9 @@ pub trait ReqChannel {
     fn remote_eid(&self) -> Eid;
 }
 
-#[allow(missing_docs)]
-/// Async equivalent of [`ReqChannel`]
+/// Async equivalent of [`ReqChannel`].
 pub trait AsyncReqChannel {
+    /// Async equivalent of [`ReqChannel::send_vectored`].
     fn send_vectored(
         &mut self,
         typ: MsgType,
@@ -285,6 +286,7 @@ pub trait AsyncReqChannel {
         bufs: &[&[u8]],
     ) -> impl Future<Output = Result<()>>;
 
+    /// Async equivalent of [`ReqChannel::send`].
     fn send(
         &mut self,
         typ: MsgType,
@@ -293,12 +295,13 @@ pub trait AsyncReqChannel {
         async move { self.send_vectored(typ, MsgIC(false), &[buf]).await }
     }
 
+    /// Async equivalent of [`ReqChannel::recv`].
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
     ) -> impl Future<Output = Result<(MsgType, MsgIC, &'f mut [u8])>>;
 
-    /// Return the remote Endpoint ID
+    /// Async equivalent of [`ReqChannel::remote_eid`].
     fn remote_eid(&self) -> Eid;
 }
 
@@ -347,49 +350,29 @@ pub trait RespChannel {
     fn req_channel(&self) -> Result<Self::ReqChannel>;
 }
 
-#[allow(missing_docs)]
 /// Async equivalent of [`RespChannel`]
 pub trait AsyncRespChannel {
-    /// `ReqChannel` type returned by [`req_channel`](Self::req_channel)
+    /// Async equivalent of [`RespChannel::ReqChannel`].
     type ReqChannel<'a>: AsyncReqChannel
     where
         Self: 'a;
 
-    /// Send a slice of buffers to this endpoint, blocking.
-    ///
-    /// The slice of buffers will be sent as a single message
-    /// (as if concatenated). Accepting multiple buffers allows
-    /// higher level protocols to more easily append their own
-    /// protocol headers to a payload without needing extra
-    /// buffer allocations.
-    ///
-    /// The sent message type will match that received by the
-    /// corresponding `AsyncListener`.
-    ///
-    /// The `integrity_check` argument is the MCTP header IC bit.
+    /// Async equivalent of [`RespChannel::send_vectored`].
     fn send_vectored(
         &mut self,
         integrity_check: MsgIC,
         bufs: &[&[u8]],
     ) -> impl Future<Output = Result<()>>;
 
-    /// Send a message to this endpoint, blocking.
-    ///
-    /// Transport implementations will typically use the trait provided method
-    /// that calls [`send_vectored`](Self::send_vectored).
-    ///
-    /// The sent message type will match that received by the
-    /// corresponding `AsyncListener`.
-    ///
-    /// IC bit is unset.
+    /// Async equivalent of [`RespChannel::send`].
     fn send(&mut self, buf: &[u8]) -> impl Future<Output = Result<()>> {
         async move { self.send_vectored(MsgIC(false), &[buf]).await }
     }
 
-    /// Return the remote Endpoint ID
+    /// Async equivalent of [`RespChannel::remote_eid`].
     fn remote_eid(&self) -> Eid;
 
-    /// Constructs a new ReqChannel to the same MCTP endpoint as this RespChannel.
+    /// Async equivalent of [`RespChannel::req_channel`].
     // TODO: should this be async?
     fn req_channel(&self) -> Result<Self::ReqChannel<'_>>;
 }
@@ -399,17 +382,16 @@ pub trait AsyncRespChannel {
 /// This will receive messages with TO=1. Platform-specific constructors
 /// will specify the MCTP message parameters (eg, message type) to listen for.
 pub trait Listener {
-    /// `RespChannel` type returned by this `Listener`
+    /// `RespChannel` type returned by this `Listener`.
     type RespChannel<'a>: RespChannel
     where
         Self: 'a;
 
     /// Blocking receive
     ///
-    /// This receives a single MCTP message matched by the `Listener`.
-    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `MsgIC`.
-    ///
-    /// The returned `RespChannel` should be used to send responses to the
+    /// This receives a single MCTP message matched by the `Listener`. Returns
+    /// the MCTP message type, the IC bit, the filled subslice of `buf`, and
+    /// the response channel that should be used to send responses to the
     /// request.
     fn recv<'f>(
         &mut self,
@@ -417,20 +399,14 @@ pub trait Listener {
     ) -> Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)>;
 }
 
-#[allow(missing_docs)]
-/// Async equivalent of [`Listener`]
+/// Async equivalent of [`Listener`].
 pub trait AsyncListener {
-    /// `RespChannel` type returned by this `Listener`
+    /// Async equivalent of [`Listener::RespChannel`].
     type RespChannel<'a>: AsyncRespChannel
     where
         Self: 'a;
 
-    /// Blocking receive
-    ///
-    /// This receives a single MCTP message matched by the `Listener`.
-    /// Returns a filled slice of `buf`, `RespChannel`, and IC bit `MsgIC`.
-    ///
-    /// The returned `RespChannel` should be used to send responses.
+    /// Async equivalent of [`Listener::recv`].
     fn recv<'f>(
         &mut self,
         buf: &'f mut [u8],
