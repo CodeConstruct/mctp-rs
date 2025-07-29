@@ -87,7 +87,8 @@ impl Fragmenter {
     /// Returns fragments for the MCTP payload
     ///
     /// The same input message `payload` should be passed to each `fragment()` call.
-    /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with packet contents.
+    /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with
+    /// packet contents.
     ///
     /// `out` must be at least as large as the specified `mtu`.
     pub fn fragment<'f>(

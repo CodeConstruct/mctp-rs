@@ -146,9 +146,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
             // Refill
             let l = match self.ep.read(&mut self.buf).await {
                 Ok(l) => l,
-                Err(_e) => {
-                    return None;
-                }
+                Err(_e) => return None,
             };
             self.remaining = Range { start: 0, end: l };
         }
@@ -158,9 +156,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         let rem = &self.buf[self.remaining.clone()];
         let (pkt, rem) = match MctpUsbHandler::decode(rem) {
             Ok(a) => a,
-            Err(e) => {
-                return Some(Err(e));
-            }
+            Err(e) => return Some(Err(e)),
         };
         self.remaining.start = self.remaining.end - rem.len();
         Some(Ok(pkt))
