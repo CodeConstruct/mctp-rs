@@ -9,12 +9,6 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/CodeConstruct/mctp-rs"
 
 [workspace.dependencies]
-mctp = { version = "0.2", path = "mctp", default-features = false }
-mctp-linux = { version = "0.2", path = "mctp-linux" }
-mctp-estack = { version = "0.1", path = "mctp-estack" }
-pldm = { version = "0.2", path = "pldm", default-features = false }
-pldm-fw = { version = "0.2", path = "pldm-fw", default-features = false }
-
 anyhow = "1.0.80"
 argh = "0.1.12"
 chrono = { version = "0.4", default-features = false }
@@ -26,8 +20,13 @@ enumset = "1.1"
 env_logger = "0.11.3"
 heapless = "0.8"
 log = "0.4"
+mctp-estack = { version = "0.1", path = "mctp-estack" }
+mctp-linux = { version = "0.2", path = "mctp-linux" }
+mctp = { version = "0.2", path = "mctp", default-features = false }
 num-derive = { version = "0.4", default-features = false }
 num-traits = { version = "0.2", default-features = false }
+pldm-fw = { version = "0.2", path = "pldm-fw", default-features = false }
+pldm = { version = "0.2", path = "pldm", default-features = false }
 proptest = "1.0.0"
 simplelog = "0.12"
 smol = "2.0"

@@ -8,21 +8,19 @@ repository.workspace = true
 categories = ["network-programming"]
 
 [dependencies]
-mctp = { workspace = true }
-mctp-estack = { workspace = true }
-
-log = { workspace = true }
 embedded-io-async = { workspace = true }
+log = { workspace = true }
+mctp-estack = { workspace = true }
+mctp = { workspace = true }
 smol = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
 argh = { workspace = true}
-simplelog = { workspace = true }
 embedded-io-adapters = { workspace = true }
 getrandom = "0.2"
-
 proptest = { workspace = true }
+simplelog = { workspace = true }
 
 [features]
 std = ["mctp/std", "embedded-io-adapters/std"]

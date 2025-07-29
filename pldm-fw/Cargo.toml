@@ -8,18 +8,18 @@ repository.workspace = true
 categories = ["network-programming", "embedded", "hardware-support"]
 
 [dependencies]
-pldm = { workspace = true }
+chrono = { workspace = true }
+crc = { workspace = true }
+enumset = { workspace = true }
+heapless = { workspace = true }
+log = { workspace = true }
 mctp = { workspace = true }
 nom = { version = "7.1", default-features = false }
-chrono = { workspace = true }
-enumset = { workspace = true }
-uuid = { workspace = true, features = ["v1"] }
-thiserror = { version = "1.0", optional = true }
-log = { workspace = true }
-crc = { workspace = true }
-heapless = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
+pldm = { workspace = true }
+thiserror = { version = "1.0", optional = true }
+uuid = { workspace = true, features = ["v1"] }
 
 [features]
 default = ["std"]
