@@ -417,6 +417,9 @@ pub struct RouterInner<'r> {
     /// Core MCTP stack
     stack: Stack,
 
+    /// Minimum receive deadline. u64::MAX when cleared.
+    recv_deadline: u64,
+
     lookup: &'r dyn PortLookup,
 }
 
@@ -436,7 +439,11 @@ impl<'r> Router<'r> {
         now_millis: u64,
     ) -> Self {
         let stack = Stack::new(own_eid, now_millis);
-        let inner = RouterInner { stack, lookup };
+        let inner = RouterInner {
+            stack,
+            recv_deadline: u64::MAX,
+            lookup,
+        };
 
         let app_listeners = BlockingMutex::new(RefCell::new(Vec::new()));
 
@@ -474,12 +481,21 @@ impl<'r> Router<'r> {
     /// be returned, currently a maximum of 100 ms.
     pub async fn update_time(&self, now_millis: u64) -> Result<u64> {
         let mut inner = self.inner.lock().await;
-        let (next, expired) = inner.stack.update(now_millis)?;
+        let (next, mut expired) = inner.stack.update(now_millis)?;
+
+        if inner.recv_deadline <= now_millis {
+            expired = true;
+            // app_recv() will update with next minimum deadline.
+            inner.recv_deadline = u64::MAX;
+        }
+
         if expired {
             // Wake pending receivers in case one was waiting on a now-expired response.
             // TODO something more efficient, maybe Reassembler should hold a waker?
+            trace!("update_time expired");
             self.recv_wakers.wake_all();
         }
+
         Ok(next)
     }
 
@@ -610,9 +626,12 @@ impl<'r> Router<'r> {
         &self,
         cookie: AppCookie,
         buf: &'f mut [u8],
+        timeout: Option<u64>,
     ) -> Result<(&'f mut [u8], Eid, MsgType, Tag, MsgIC)> {
         // buf can only be taken once
         let mut buf = Some(buf);
+
+        let mut deadline = None;
 
         // Wait for the message to arrive
         poll_fn(|cx| {
@@ -621,7 +640,28 @@ impl<'r> Router<'r> {
                 return Poll::Pending;
             };
 
+            // Convert timeout to a deadline on the first iteration
+            if deadline.is_none() {
+                if let Some(timeout) = timeout {
+                    deadline = Some(timeout + inner.stack.now())
+                }
+            }
+
+            let expired =
+                deadline.map(|d| inner.stack.now() >= d).unwrap_or(false);
+
+            if let Some(deadline) = deadline {
+                // Update the Router-wide deadline.
+                if !expired {
+                    inner.recv_deadline = inner.recv_deadline.min(deadline);
+                }
+            }
+
             let Some(msg) = inner.stack.get_deferred_bycookie(&[cookie]) else {
+                trace!("no message");
+                if expired {
+                    return Poll::Ready(Err(mctp::Error::TimedOut));
+                }
                 self.recv_wakers.register(cookie, cx.waker());
                 return Poll::Pending;
             };
@@ -716,6 +756,7 @@ impl<'r> Router<'r> {
         Ok(RouterAsyncListener {
             cookie,
             router: self,
+            timeout: None,
         })
     }
 
@@ -743,6 +784,7 @@ pub struct RouterAsyncReqChannel<'g, 'r> {
     router: &'g Router<'r>,
     tag_expires: bool,
     cookie: Option<AppCookie>,
+    timeout: Option<u64>,
 }
 
 impl<'g, 'r> RouterAsyncReqChannel<'g, 'r> {
@@ -753,6 +795,7 @@ impl<'g, 'r> RouterAsyncReqChannel<'g, 'r> {
             tag_expires: true,
             router,
             cookie: None,
+            timeout: None,
         }
     }
 
@@ -783,6 +826,13 @@ impl<'g, 'r> RouterAsyncReqChannel<'g, 'r> {
                 self.router.app_release_tag(self.eid, tag).await;
             }
         }
+    }
+
+    /// Set a timeout.
+    ///
+    /// Specified in milliseconds.
+    pub fn set_timeout(&mut self, timeout: Option<u64>) {
+        self.timeout = timeout;
     }
 }
 
@@ -867,7 +917,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_, '_> {
         };
         let recv_tag = Tag::Unowned(tv);
         let (buf, eid, typ, tag, ic) =
-            self.router.app_recv(cookie, buf).await?;
+            self.router.app_recv(cookie, buf, self.timeout).await?;
         debug_assert_eq!(tag, recv_tag);
         debug_assert_eq!(eid, self.eid);
 
@@ -943,6 +993,16 @@ impl<'g, 'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'g, 'r> {
 pub struct RouterAsyncListener<'g, 'r> {
     router: &'g Router<'r>,
     cookie: AppCookie,
+    timeout: Option<u64>,
+}
+
+impl RouterAsyncListener<'_, '_> {
+    /// Set a receive timeout.
+    ///
+    /// Specified in milliseconds.
+    pub fn set_timeout(&mut self, timeout: Option<u64>) {
+        self.timeout = timeout;
+    }
 }
 
 impl<'g, 'r> mctp::AsyncListener for RouterAsyncListener<'g, 'r> {
@@ -957,7 +1017,7 @@ impl<'g, 'r> mctp::AsyncListener for RouterAsyncListener<'g, 'r> {
     ) -> mctp::Result<(MsgType, MsgIC, &'f mut [u8], Self::RespChannel<'_>)>
     {
         let (msg, eid, typ, tag, ic) =
-            self.router.app_recv(self.cookie, buf).await?;
+            self.router.app_recv(self.cookie, buf, self.timeout).await?;
 
         let Tag::Owned(tv) = tag else {
             debug_assert!(false, "listeners only accept owned tags");
