@@ -76,3 +76,7 @@ There's a small example MCTP requester in
 ```
 
 There are also some MCTP over serial examples in [standalone/examples](standalone/examples).
+
+Contributing
+------------
+If you wish to contribute, please see the [contribution guidelines](CONTRIBUTING.md).
