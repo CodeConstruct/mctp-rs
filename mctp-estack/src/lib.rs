@@ -236,6 +236,13 @@ impl Stack {
         }
     }
 
+    /// Return the current internal timestamp.
+    ///
+    /// This is the time last set with `update_clock()`.
+    pub fn now(&self) -> u64 {
+        self.now.clock
+    }
+
     /// Updates timeouts and returns the next timeout in milliseconds
     ///
     /// Must be called regularly to update the current clock value.
