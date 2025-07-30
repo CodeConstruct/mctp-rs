@@ -773,7 +773,14 @@ impl<'r> Router<'r> {
     }
 }
 
+impl core::fmt::Debug for Router<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Router").finish_non_exhaustive()
+    }
+}
+
 /// A request channel.
+#[derive(Debug)]
 pub struct RouterAsyncReqChannel<'g, 'r> {
     /// Destination EID
     eid: Eid,
@@ -942,6 +949,7 @@ impl mctp::AsyncReqChannel for RouterAsyncReqChannel<'_, '_> {
 /// A response channel.
 ///
 /// Returned by [`RouterAsyncListener::recv`](mctp::AsyncListener::recv).
+#[derive(Debug)]
 pub struct RouterAsyncRespChannel<'g, 'r> {
     eid: Eid,
     tv: TagValue,
@@ -990,6 +998,7 @@ impl<'g, 'r> mctp::AsyncRespChannel for RouterAsyncRespChannel<'g, 'r> {
 /// A listener.
 ///
 /// Created with [`Router::listener()`](Router::listener).
+#[derive(Debug)]
 pub struct RouterAsyncListener<'g, 'r> {
     router: &'g Router<'r>,
     cookie: AppCookie,
