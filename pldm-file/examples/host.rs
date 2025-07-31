@@ -173,11 +173,6 @@ fn handle_get_pdr(
         .try_into()
         .context("File size > u32")?;
 
-    // null terminated filename
-    let mut file_name = FILENAME.as_bytes().to_vec();
-    file_name.push(0x00);
-    let file_name = pldm_platform::Vec::from_slice(&file_name).unwrap();
-
     let pdr_resp = GetPDRResp::new_single(
         PDR_HANDLE,
         PdrRecord::FileDescriptor(FileDescriptorPdr {
@@ -196,7 +191,7 @@ fn handle_get_pdr(
             file_max_size,
             // TODO
             file_max_desc_count: 1,
-            file_name: file_name.into(),
+            file_name: FILENAME.try_into().expect("Filename too long"),
             oem_file_name: Default::default(),
         }),
     )?;
