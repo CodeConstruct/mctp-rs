@@ -196,7 +196,6 @@ fn handle_get_pdr(
             file_max_size,
             // TODO
             file_max_desc_count: 1,
-            file_name_length: file_name.len() as u8,
             file_name: file_name.into(),
             oem_file_name: Default::default(),
         }),
