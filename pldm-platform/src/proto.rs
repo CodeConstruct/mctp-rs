@@ -598,7 +598,7 @@ pub enum PdrRecord {
 }
 
 impl PdrRecord {
-    fn pdr_type(&self) -> u8 {
+    pub fn pdr_type(&self) -> u8 {
         match self {
             Self::FileDescriptor(_) => 30,
         }

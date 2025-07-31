@@ -212,6 +212,7 @@ pub async fn set_simple_state_sensor_enables(
     Ok(())
 }
 
+/// Get PDR Repository Info
 pub async fn get_pdr_repository_info(
     comm: &mut impl mctp::AsyncReqChannel,
 ) -> Result<GetPDRRepositoryInfoResp> {
@@ -237,68 +238,127 @@ pub async fn get_pdr_repository_info(
     Ok(ret)
 }
 
-pub async fn get_pdr(
-    comm: &mut impl mctp::AsyncReqChannel,
-    record_handle: u32,
-) -> Result<PdrRecord> {
-    // TODO: callers pass a buffer? might be nice to
-    // reuse between tx/rx.
-    let mut rxbuf = [0; 200];
+/// An iterator over PDR records, returned by [`get_pdr`].
+pub struct GetPdrIter<'a, C: mctp::AsyncReqChannel> {
+    next_handle: u32,
+    done: bool,
+    comm: &'a mut C,
+}
 
-    let getpdr = GetPDRReq {
-        record_handle,
-        data_transfer_handle: 0,
-        transfer_operation_flag: TransferOperationFlag::FirstPart,
-        // subtract 4 bytes pldm header, 12 bytes PDR header/crc
-        request_count: (rxbuf.len() - 4 - 12) as u16,
-        record_change_number: 0,
-    };
-    let mut txdata = [0; 50];
-    let l = getpdr.to_slice(&mut txdata)?;
-    let txdata = &txdata[..l];
-    let req = PldmRequest::new_borrowed(
-        PLDM_TYPE_PLATFORM,
-        Cmd::GetPDR as u8,
-        txdata,
-    );
-
-    let resp = pldm_xfer_buf_async(comm, req, &mut rxbuf).await?;
-    let ((rest, _), pdrrsp) =
-        GetPDRResp::from_bytes((&resp.data, 0)).map_err(|e| {
-            trace!("GetPDR parse error {e:?}");
-            proto_error!("Bad GetPDR response")
-        })?;
-    if !rest.is_empty() {
-        return Err(proto_error!("Extra response"));
+impl<'a, C: mctp::AsyncReqChannel> GetPdrIter<'a, C> {
+    fn new(comm: &'a mut C) -> Self {
+        Self {
+            next_handle: 0,
+            done: false,
+            comm,
+        }
     }
 
-    if pdrrsp.transfer_flag != xfer_flag::START_AND_END {
-        return Err(proto_error!("Can't handle multipart"));
+    /// Return the next PDR from the host.
+    ///
+    /// `None` will be returned after the last record.
+    /// `Some(Err)` may be returned on error, further calls to next() may still
+    /// return more records successfully.
+    pub async fn next(&mut self) -> Option<Result<PdrRecord>> {
+        self.next_inner().await.transpose()
     }
 
-    let ((rest, _), pdr) =
-        Pdr::from_bytes((&pdrrsp.record_data, 0)).map_err(|e| {
-            trace!("GetSensorReading parse error {e}");
-            proto_error!("Bad GetSensorReading response")
-        })?;
-    if !rest.is_empty() {
-        return Err(proto_error!("Extra PDR response"));
-    }
+    // Inner function to use `?`.
+    async fn next_inner(&mut self) -> Result<Option<PdrRecord>> {
+        if self.done {
+            return Ok(None);
+        }
 
-    if pdr.record_handle != record_handle {
-        return Err(proto_error!("PDR record handle mismatch"));
-    }
-    if pdr.pdr_header_version != PDR_VERSION_1 {
-        return Err(proto_error!("PDR unknown version"));
-    }
+        // TODO: callers pass a buffer? might be nice to
+        // reuse between tx/rx.
+        let mut rxbuf = [0; 200];
 
-    let expect_len = pdrrsp.record_data.len() - 10;
-    if pdr.data_length as usize != expect_len {
-        warn!(
-            "Incorrect PDR data_length, got {}, expect {}",
-            pdr.data_length, expect_len
+        let getpdr = GetPDRReq {
+            record_handle: self.next_handle,
+            data_transfer_handle: 0,
+            transfer_operation_flag: TransferOperationFlag::FirstPart,
+            // subtract 4 bytes pldm header, 12 bytes PDR header/crc
+            request_count: (rxbuf.len() - 4 - 12) as u16,
+            record_change_number: 0,
+        };
+        let mut txdata = [0; 13];
+        let l = getpdr.to_slice(&mut txdata)?;
+        let txdata = &txdata[..l];
+        let req = PldmRequest::new_borrowed(
+            PLDM_TYPE_PLATFORM,
+            Cmd::GetPDR as u8,
+            txdata,
         );
-    }
 
-    Ok(pdr.record)
+        // Failure prior to parsing a next_handle should stop the iterator,
+        // setting self.done and returning the failure Result.
+        // Other errors don't stop the iterator, they are just returned as a Result.
+
+        let resp = pldm_xfer_buf_async(self.comm, req, &mut rxbuf)
+            .await
+            .inspect_err(|_| self.done = true)?;
+        let ((rest, _), pdrrsp) = GetPDRResp::from_bytes((&resp.data, 0))
+            .map_err(|e| {
+                trace!("GetPDR parse error {e:?}");
+                self.done = true;
+                proto_error!("Bad GetPDR response")
+            })?;
+        if !rest.is_empty() {
+            self.done = true;
+            return Err(proto_error!("Extra response"));
+        }
+
+        if pdrrsp.next_record_handle == 0 {
+            // Last handle
+            self.done = true
+        }
+        self.next_handle = pdrrsp.next_record_handle;
+
+        if pdrrsp.record_data.len() > getpdr.request_count as usize {
+            return Err(proto_error!(
+                "Get PDR returned extra record data",
+                "Requested {}, got {}",
+                getpdr.request_count,
+                pdrrsp.record_data.len()
+            ));
+        }
+
+        // This is a current limitation of this implementation,
+        // not a problem with the response. We can't attempt
+        // to parse the record_data since it will be incomplete.
+        if pdrrsp.transfer_flag != xfer_flag::START_AND_END {
+            return Err(proto_error!("Can't handle multipart"));
+        }
+
+        let ((rest, _), pdr) = Pdr::from_bytes((&pdrrsp.record_data, 0))
+            .map_err(|e| {
+                trace!("GetPDR parse error {e}");
+                proto_error!("Bad GetPDR response")
+            })?;
+        if !rest.is_empty() {
+            return Err(proto_error!("Extra PDR response"));
+        }
+
+        let expect_len = pdrrsp.record_data.len() - 10;
+        if pdr.data_length as usize != expect_len {
+            warn!(
+                "Incorrect PDR data_length, got {}, expect {}",
+                pdr.data_length, expect_len
+            );
+        }
+
+        if pdr.pdr_header_version != PDR_VERSION_1 {
+            return Err(proto_error!("PDR unknown version"));
+        }
+
+        Ok(Some(pdr.record))
+    }
+}
+
+/// Return a `GetPdrIter` to iterate over Get PDR requests.
+pub fn get_pdr<C>(comm: &mut C) -> GetPdrIter<'_, C>
+where
+    C: mctp::AsyncReqChannel,
+{
+    GetPdrIter::new(comm)
 }
