@@ -260,6 +260,97 @@ where
     }
 }
 
+/// A null terminated ascii string.
+#[derive(DekuWrite, Default, Clone)]
+pub struct AsciiString<const N: usize>(pub VecWrap<u8, N>);
+
+impl<const N: usize> AsciiString<N> {
+    /// Return the length of the string
+    ///
+    /// Null terminator is included.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns whether `len() == 0`.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Return the underlying bytes.
+    ///
+    /// This includes any null terminator.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl<const N: usize> core::fmt::Debug for AsciiString<N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "\"")?;
+        for c in self.0.escape_ascii() {
+            write!(f, "{}", char::from(c))?;
+        }
+        write!(f, "\"")?;
+        if !self.0.is_empty() && !self.0.ends_with(&[0x00]) {
+            write!(f, " (missing null terminator)")?;
+        }
+        Ok(())
+    }
+}
+
+impl<const N: usize> TryFrom<&[u8]> for AsciiString<N> {
+    type Error = ();
+
+    /// Convert from a byte slice.
+    ///
+    /// No null terminating byte is added, it should be provided by the caller.
+    fn try_from(v: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(VecWrap(heapless::Vec::from_slice(v)?)))
+    }
+}
+
+impl<const N: usize> TryFrom<&str> for AsciiString<N> {
+    type Error = ();
+
+    /// Convert from a `str`.
+    ///
+    /// A null terminating byte is added.
+    fn try_from(v: &str) -> Result<Self, Self::Error> {
+        let mut h = heapless::Vec::from_slice(v.as_bytes())?;
+        h.push(0x00).map_err(|_| ())?;
+        Ok(Self(VecWrap(h)))
+    }
+}
+
+impl<'a, Predicate, const N: usize> DekuReader<'a, (Limit<u8, Predicate>, ())>
+    for AsciiString<N>
+where
+    Predicate: FnMut(&u8) -> bool,
+{
+    fn from_reader_with_ctx<
+        R: deku::no_std_io::Read + deku::no_std_io::Seek,
+    >(
+        reader: &mut deku::reader::Reader<R>,
+        (limit, _ctx): (Limit<u8, Predicate>, ()),
+    ) -> core::result::Result<Self, DekuError> {
+        let Limit::Count(count) = limit else {
+            return Err(DekuError::Assertion(
+                "Only count implemented for heapless::Vec".into(),
+            ));
+        };
+
+        let mut v = heapless::Vec::new();
+        for _ in 0..count {
+            v.push(u8::from_reader_with_ctx(reader, ())?).map_err(|_| {
+                DekuError::InvalidParam("Too many elements".into())
+            })?
+        }
+
+        Ok(AsciiString(VecWrap(v)))
+    }
+}
+
 #[derive(Debug, DekuRead, DekuWrite, PartialEq, Eq, Clone, Copy)]
 #[deku(endian = "little")]
 pub struct SensorId(pub u16);
@@ -659,17 +750,15 @@ pub struct FileDescriptorPdr {
     /// File name.
     ///
     /// A null terminated string.
-    // TODO: null terminated string type
     // TODO: max length
     #[deku(count = "file_name_len")]
-    pub file_name: VecWrap<u8, MAX_PDR_TRANSFER>,
+    pub file_name: AsciiString<MAX_PDR_TRANSFER>,
 
     #[deku(temp, temp_value = "self.oem_file_name.len() as u8")]
     pub oem_file_name_len: u8,
     /// OEM file name.
     ///
-    /// A null terminated string.
-    // TODO: null terminated string type
+    /// A null terminated string. Must be empty if `oem_file_classification == 0`.
     #[deku(count = "oem_file_name_len")]
-    pub oem_file_name: VecWrap<u8, MAX_PDR_TRANSFER>,
+    pub oem_file_name: AsciiString<MAX_PDR_TRANSFER>,
 }
