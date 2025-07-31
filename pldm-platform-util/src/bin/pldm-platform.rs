@@ -126,11 +126,7 @@ struct PdrRepositoryCommand {}
 
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "get-pdr", description = "Get PDR")]
-struct GetPdrCommand {
-    /// PDR record
-    #[argh(positional)]
-    record: u32,
-}
+struct GetPdrCommand {}
 
 fn enable_command_op(op_state: &str) -> Result<SetSensorOperationalState> {
     Ok(if op_state.starts_with("en") {
@@ -243,10 +239,15 @@ async fn async_main() -> anyhow::Result<()> {
             let pdr_info = get_pdr_repository_info(&mut ep).await?;
             println!("PDR Repository Info: {pdr_info:#x?}");
         }
-        Command::GetPdr(s) => {
+        Command::GetPdr(_) => {
             let mut ep = args.addr.create_req_async()?;
-            let pdr = get_pdr(&mut ep, s.record).await?;
-            println!("PDR: {pdr:#x?}");
+            let mut p = get_pdr(&mut ep);
+            while let Some(r) = p.next().await {
+                match r {
+                    Ok(pdr) => println!("PDR: {pdr:#x?}"),
+                    Err(e) => println!("Error fetching PDR: {e}"),
+                }
+            }
         }
     }
     Ok(())
