@@ -653,7 +653,6 @@ pub struct FileDescriptorPdr {
     pub file_version: u32,
     pub file_max_size: u32,
     pub file_max_desc_count: u8,
-    pub file_name_length: u8,
 
     #[deku(temp, temp_value = "self.file_name.len() as u8")]
     pub file_name_len: u8,
