@@ -16,6 +16,7 @@ struct Host {
 }
 
 const FILENAME: &str = "pldm-file-host.bin";
+// Arbitrary, 0 is reserved.
 const PDR_HANDLE: u32 = 1;
 
 impl Host {
@@ -146,8 +147,8 @@ fn handle_get_pdr(
         bail!("Extra Get PDR Request bytes");
     }
 
-    if pdr_req.record_handle != PDR_HANDLE {
-        warn!("Wrong PDR handle");
+    if pdr_req.record_handle != 0 {
+        warn!("Only support first PDR Handle");
         return Ok(plat_codes::INVALID_RECORD_HANDLE);
     }
     if pdr_req.data_transfer_handle != 0 {
@@ -178,7 +179,7 @@ fn handle_get_pdr(
     let file_name = pldm_platform::Vec::from_slice(&file_name).unwrap();
 
     let pdr_resp = GetPDRResp::new_single(
-        pdr_req.record_handle,
+        PDR_HANDLE,
         PdrRecord::FileDescriptor(FileDescriptorPdr {
             terminus_handle: 0,
             file_identifier: 0,
