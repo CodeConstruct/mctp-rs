@@ -192,7 +192,7 @@ fn handle_get_pdr(
             // TODO
             file_max_desc_count: 1,
             file_name: FILENAME.try_into().expect("Filename too long"),
-            oem_file_name: Default::default(),
+            oem_file_classification_name: Default::default(),
         }),
     )?;
     let enc = pdr_resp.to_bytes().context("Encoding failed")?;

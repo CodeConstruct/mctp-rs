@@ -739,6 +739,10 @@ pub struct FileDescriptorPdr {
     pub container_id: u16,
     pub superior_directory: u16,
     pub file_classification: FileClassification,
+    /// OEM File Classification
+    ///
+    /// `oem_file_classification_name` must be `Some` if this is
+    /// non-zero (may be an empty string).
     pub oem_file_classification: u8,
     pub capabilities: u16,
     pub file_version: u32,
@@ -754,11 +758,20 @@ pub struct FileDescriptorPdr {
     #[deku(count = "file_name_len")]
     pub file_name: AsciiString<MAX_PDR_TRANSFER>,
 
-    #[deku(temp, temp_value = "self.oem_file_name.len() as u8")]
+    #[deku(skip, cond = "*oem_file_classification == 0")]
+    #[deku(
+        temp,
+        temp_value = "self.oem_file_classification_name.as_ref().map(|f| f.len()).unwrap_or(0) as u8"
+    )]
     pub oem_file_name_len: u8,
-    /// OEM file name.
+
+    /// OEM file classification name.
     ///
-    /// A null terminated string. Must be empty if `oem_file_classification == 0`.
+    /// A null terminated string. Must be `None` if `oem_file_classification == 0`.
+    #[deku(skip, cond = "*oem_file_classification == 0")]
+    #[deku(
+        assert = "(*oem_file_classification > 0) == oem_file_classification_name.is_some()"
+    )]
     #[deku(count = "oem_file_name_len")]
-    pub oem_file_name: AsciiString<MAX_PDR_TRANSFER>,
+    pub oem_file_classification_name: Option<AsciiString<MAX_PDR_TRANSFER>>,
 }
