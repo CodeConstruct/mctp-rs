@@ -1067,6 +1067,7 @@ name = "pldm-file"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "crc",
  "deku",
  "enumset",
@@ -1118,6 +1119,7 @@ dependencies = [
 name = "pldm-platform"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "deku",
  "heapless",
  "log",
