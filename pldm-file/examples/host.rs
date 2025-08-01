@@ -105,12 +105,16 @@ async fn handle_platform<R: AsyncRespChannel>(
 
     let mut resp = req.response();
 
+    let update_time =
+        Timestamp104::try_from(&chrono::Local::now().fixed_offset())
+            .unwrap_or_default();
+
     resp.cc = match Cmd::try_from(req.cmd)? {
         Cmd::GetPDRRepositoryInfo => {
             let pdrinfo = GetPDRRepositoryInfoResp {
                 state: PDRRepositoryState::Available,
-                update_time: [0u8; 13],
-                oem_update_time: [0u8; 13],
+                update_time,
+                oem_update_time: Default::default(),
                 record_count: 1,
                 // TODO. "An implementation is allowed to round this number up to the nearest kilobyte (1024 bytes)."
                 repository_size: 1024,
@@ -173,11 +177,6 @@ fn handle_get_pdr(
         .try_into()
         .context("File size > u32")?;
 
-    // null terminated filename
-    let mut file_name = FILENAME.as_bytes().to_vec();
-    file_name.push(0x00);
-    let file_name = pldm_platform::Vec::from_slice(&file_name).unwrap();
-
     let pdr_resp = GetPDRResp::new_single(
         PDR_HANDLE,
         PdrRecord::FileDescriptor(FileDescriptorPdr {
@@ -196,8 +195,8 @@ fn handle_get_pdr(
             file_max_size,
             // TODO
             file_max_desc_count: 1,
-            file_name: file_name.into(),
-            oem_file_name: Default::default(),
+            file_name: FILENAME.try_into().expect("Filename too long"),
+            oem_file_classification_name: Default::default(),
         }),
     )?;
     let enc = pdr_resp.to_bytes().context("Encoding failed")?;

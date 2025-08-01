@@ -13,6 +13,8 @@ use deku::{
     DekuReader, DekuUpdate, DekuWrite, DekuWriter,
 };
 
+use chrono::{DateTime, Datelike, FixedOffset, TimeDelta, TimeZone, Timelike};
+
 use pldm::control::xfer_flag;
 use pldm::{proto_error, PldmError, PldmResult};
 
@@ -192,7 +194,7 @@ pub enum SensorState {
     UpperFatal,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct VecWrap<T, const N: usize>(pub heapless::Vec<T, N>);
 
 impl<T, const N: usize> From<heapless::Vec<T, N>> for VecWrap<T, N> {
@@ -260,6 +262,97 @@ where
     }
 }
 
+/// A null terminated ascii string.
+#[derive(DekuWrite, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AsciiString<const N: usize>(pub VecWrap<u8, N>);
+
+impl<const N: usize> AsciiString<N> {
+    /// Return the length of the string
+    ///
+    /// Null terminator is included.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns whether `len() == 0`.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Return the underlying bytes.
+    ///
+    /// This includes any null terminator.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl<const N: usize> core::fmt::Debug for AsciiString<N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "\"")?;
+        for c in self.0.escape_ascii() {
+            write!(f, "{}", char::from(c))?;
+        }
+        write!(f, "\"")?;
+        if !self.0.is_empty() && !self.0.ends_with(&[0x00]) {
+            write!(f, " (missing null terminator)")?;
+        }
+        Ok(())
+    }
+}
+
+impl<const N: usize> TryFrom<&[u8]> for AsciiString<N> {
+    type Error = ();
+
+    /// Convert from a byte slice.
+    ///
+    /// No null terminating byte is added, it should be provided by the caller.
+    fn try_from(v: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(VecWrap(heapless::Vec::from_slice(v)?)))
+    }
+}
+
+impl<const N: usize> TryFrom<&str> for AsciiString<N> {
+    type Error = ();
+
+    /// Convert from a `str`.
+    ///
+    /// A null terminating byte is added.
+    fn try_from(v: &str) -> Result<Self, Self::Error> {
+        let mut h = heapless::Vec::from_slice(v.as_bytes())?;
+        h.push(0x00).map_err(|_| ())?;
+        Ok(Self(VecWrap(h)))
+    }
+}
+
+impl<'a, Predicate, const N: usize> DekuReader<'a, (Limit<u8, Predicate>, ())>
+    for AsciiString<N>
+where
+    Predicate: FnMut(&u8) -> bool,
+{
+    fn from_reader_with_ctx<
+        R: deku::no_std_io::Read + deku::no_std_io::Seek,
+    >(
+        reader: &mut deku::reader::Reader<R>,
+        (limit, _ctx): (Limit<u8, Predicate>, ()),
+    ) -> core::result::Result<Self, DekuError> {
+        let Limit::Count(count) = limit else {
+            return Err(DekuError::Assertion(
+                "Only count implemented for heapless::Vec".into(),
+            ));
+        };
+
+        let mut v = heapless::Vec::new();
+        for _ in 0..count {
+            v.push(u8::from_reader_with_ctx(reader, ())?).map_err(|_| {
+                DekuError::InvalidParam("Too many elements".into())
+            })?
+        }
+
+        Ok(AsciiString(VecWrap(v)))
+    }
+}
+
 #[derive(Debug, DekuRead, DekuWrite, PartialEq, Eq, Clone, Copy)]
 #[deku(endian = "little")]
 pub struct SensorId(pub u16);
@@ -282,7 +375,7 @@ pub struct GetSensorReadingReq {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetSensorReadingResp {
     #[deku(temp, temp_value = "reading.deku_id().unwrap()")]
     data_size: u8,
@@ -296,7 +389,7 @@ pub struct GetSensorReadingResp {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetStateSensorReadingsReq {
     pub sensor: SensorId,
     pub rearm: u8,
@@ -304,7 +397,7 @@ pub struct GetStateSensorReadingsReq {
     rsvd: u8,
 }
 
-#[derive(Debug, DekuRead, DekuWrite, Clone)]
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
 pub struct StateField {
     pub op_state: SensorOperationalState,
     pub present_state: u8,
@@ -396,7 +489,7 @@ impl Debug for StateFieldDebug<'_> {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetStateSensorReadingsResp {
     #[deku(temp, temp_value = "self.fields.len() as u8")]
     pub composite_sensor_count: u8,
@@ -404,21 +497,21 @@ pub struct GetStateSensorReadingsResp {
     pub fields: VecWrap<StateField, 8>,
 }
 
-#[derive(Debug, DekuRead, DekuWrite, Clone)]
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
 pub struct SetNumericSensorEnableReq {
     pub sensor: SensorId,
     pub set_op_state: SetSensorOperationalState,
     pub event_enable: SensorEventMessageEnable,
 }
 
-#[derive(Debug, DekuRead, DekuWrite, Clone)]
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
 pub struct SetEnableField {
     pub set_op_state: SetSensorOperationalState,
     pub event_enable: SensorEventMessageEnable,
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetStateSensorEnablesReq {
     pub sensor: SensorId,
 
@@ -440,10 +533,80 @@ pub enum PDRRepositoryState {
 }
 
 // TODO
-pub type Timestamp104 = [u8; 13];
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct Timestamp104(pub [u8; 13]);
+
+impl core::fmt::Debug for Timestamp104 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Ok(dt) = DateTime::<FixedOffset>::try_from(self) {
+            write!(f, "Timestamp104({dt:?})")
+        } else {
+            write!(f, "Timestamp104(invalid {:?})", self.0)
+        }
+    }
+}
+
+impl TryFrom<&Timestamp104> for DateTime<FixedOffset> {
+    type Error = ();
+
+    fn try_from(t: &Timestamp104) -> Result<Self, Self::Error> {
+        let t = &t.0;
+        let tz = i16::from_le_bytes(t[..=1].try_into().unwrap());
+        let tz = FixedOffset::east_opt(tz as i32 * 60).ok_or_else(|| {
+            trace!("Bad timezone {tz}");
+        })?;
+        let year = u16::from_le_bytes(t[10..=11].try_into().unwrap());
+        let dt = tz
+            .with_ymd_and_hms(
+                year as i32,
+                t[9] as u32,
+                t[8] as u32,
+                t[7] as u32,
+                t[6] as u32,
+                t[5] as u32,
+            )
+            .earliest()
+            .ok_or_else(|| {
+                trace!("Bad timestamp");
+            })?;
+        // read a u32 and mask to 24 bit
+        let micros =
+            u32::from_le_bytes(t[2..=5].try_into().unwrap()) & 0xffffff;
+        let dt = dt + TimeDelta::microseconds(micros as i64);
+        Ok(dt)
+    }
+}
+
+impl TryFrom<&DateTime<FixedOffset>> for Timestamp104 {
+    type Error = ();
+
+    fn try_from(dt: &DateTime<FixedOffset>) -> Result<Self, Self::Error> {
+        let mut t = [0; 13];
+        let off = dt.offset().local_minus_utc() as u16;
+        t[0..=1].copy_from_slice(&off.to_le_bytes());
+
+        let date = dt.date_naive();
+        let time = dt.time();
+        // can be > 1e9 for leap seconds, discard that.
+        let micros = (time.nanosecond() % 1_000_000_000) / 1000;
+        t[2..=4].copy_from_slice(&micros.to_le_bytes()[..3]);
+        t[5] = time.second() as u8;
+        t[6] = time.minute() as u8;
+        t[7] = time.hour() as u8;
+        t[8] = date.day() as u8;
+        t[9] = date.month() as u8;
+        let year: u16 = date.year().try_into().map_err(|_| {
+            trace!("Year out of range");
+        })?;
+        t[10..=11].copy_from_slice(&year.to_le_bytes());
+
+        Ok(Timestamp104(t))
+    }
+}
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPDRRepositoryInfoResp {
     pub state: PDRRepositoryState,
     pub update_time: Timestamp104,
@@ -455,7 +618,7 @@ pub struct GetPDRRepositoryInfoResp {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum TransferOperationFlag {
@@ -464,7 +627,7 @@ pub enum TransferOperationFlag {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPDRReq {
     pub record_handle: u32,
     pub data_transfer_handle: u32,
@@ -476,7 +639,7 @@ pub struct GetPDRReq {
 const MAX_PDR_TRANSFER: usize = 100;
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPDRResp {
     pub next_record_handle: u32,
     pub next_data_transfer_handle: u32,
@@ -574,7 +737,7 @@ impl deku::no_std_io::Seek for &mut Length {
 pub const PDR_VERSION_1: u8 = 1;
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pdr {
     pub record_handle: u32,
     pub pdr_header_version: u8,
@@ -590,7 +753,7 @@ pub struct Pdr {
 
 #[non_exhaustive]
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[deku(ctx = "pdr_type: u8", id = "pdr_type")]
 pub enum PdrRecord {
     #[deku(id = 30)]
@@ -606,7 +769,7 @@ impl PdrRecord {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum FileClassification {
@@ -639,7 +802,7 @@ pub mod file_capabilities {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDescriptorPdr {
     pub terminus_handle: u16,
     pub file_identifier: u16,
@@ -659,17 +822,24 @@ pub struct FileDescriptorPdr {
     /// File name.
     ///
     /// A null terminated string.
-    // TODO: null terminated string type
     // TODO: max length
     #[deku(count = "file_name_len")]
-    pub file_name: VecWrap<u8, MAX_PDR_TRANSFER>,
+    pub file_name: AsciiString<MAX_PDR_TRANSFER>,
 
-    #[deku(temp, temp_value = "self.oem_file_name.len() as u8")]
+    #[deku(skip, cond = "*oem_file_classification == 0")]
+    #[deku(
+        temp,
+        temp_value = "self.oem_file_classification_name.as_ref().map(|f| f.len()).unwrap_or(0) as u8"
+    )]
     pub oem_file_name_len: u8,
-    /// OEM file name.
+
+    /// OEM file classification name.
     ///
-    /// A null terminated string.
-    // TODO: null terminated string type
+    /// A null terminated string. Must be empty if `oem_file_classification == 0`.
+    #[deku(skip, cond = "*oem_file_classification == 0")]
+    #[deku(
+        assert = "(*oem_file_classification > 0) == oem_file_classification_name.is_some()"
+    )]
     #[deku(count = "oem_file_name_len")]
-    pub oem_file_name: VecWrap<u8, MAX_PDR_TRANSFER>,
+    pub oem_file_classification_name: Option<AsciiString<MAX_PDR_TRANSFER>>,
 }

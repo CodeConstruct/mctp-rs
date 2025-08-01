@@ -8,6 +8,7 @@ repository.workspace = true
 categories = ["network-programming", "embedded", "hardware-support"]
 
 [dependencies]
+chrono = { workspace = true }
 deku = { workspace = true }
 heapless = { workspace = true }
 log = { workspace = true }
