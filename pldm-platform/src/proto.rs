@@ -13,6 +13,8 @@ use deku::{
     DekuReader, DekuUpdate, DekuWrite, DekuWriter,
 };
 
+use chrono::{DateTime, Datelike, FixedOffset, TimeDelta, TimeZone, Timelike};
+
 use pldm::control::xfer_flag;
 use pldm::{proto_error, PldmError, PldmResult};
 
@@ -531,7 +533,77 @@ pub enum PDRRepositoryState {
 }
 
 // TODO
-pub type Timestamp104 = [u8; 13];
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct Timestamp104(pub [u8; 13]);
+
+impl core::fmt::Debug for Timestamp104 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Ok(dt) = DateTime::<FixedOffset>::try_from(self) {
+            write!(f, "Timestamp104({dt:?})")
+        } else {
+            write!(f, "Timestamp104(invalid {:?})", self.0)
+        }
+    }
+}
+
+impl TryFrom<&Timestamp104> for DateTime<FixedOffset> {
+    type Error = ();
+
+    fn try_from(t: &Timestamp104) -> Result<Self, Self::Error> {
+        let t = &t.0;
+        let tz = i16::from_le_bytes(t[..=1].try_into().unwrap());
+        let tz = FixedOffset::east_opt(tz as i32 * 60).ok_or_else(|| {
+            trace!("Bad timezone {tz}");
+        })?;
+        let year = u16::from_le_bytes(t[10..=11].try_into().unwrap());
+        let dt = tz
+            .with_ymd_and_hms(
+                year as i32,
+                t[9] as u32,
+                t[8] as u32,
+                t[7] as u32,
+                t[6] as u32,
+                t[5] as u32,
+            )
+            .earliest()
+            .ok_or_else(|| {
+                trace!("Bad timestamp");
+            })?;
+        // read a u32 and mask to 24 bit
+        let micros =
+            u32::from_le_bytes(t[2..=5].try_into().unwrap()) & 0xffffff;
+        let dt = dt + TimeDelta::microseconds(micros as i64);
+        Ok(dt)
+    }
+}
+
+impl TryFrom<&DateTime<FixedOffset>> for Timestamp104 {
+    type Error = ();
+
+    fn try_from(dt: &DateTime<FixedOffset>) -> Result<Self, Self::Error> {
+        let mut t = [0; 13];
+        let off = dt.offset().local_minus_utc() as u16;
+        t[0..=1].copy_from_slice(&off.to_le_bytes());
+
+        let date = dt.date_naive();
+        let time = dt.time();
+        // can be > 1e9 for leap seconds, discard that.
+        let micros = (time.nanosecond() % 1_000_000_000) / 1000;
+        t[2..=4].copy_from_slice(&micros.to_le_bytes()[..3]);
+        t[5] = time.second() as u8;
+        t[6] = time.minute() as u8;
+        t[7] = time.hour() as u8;
+        t[8] = date.day() as u8;
+        t[9] = date.month() as u8;
+        let year: u16 = date.year().try_into().map_err(|_| {
+            trace!("Year out of range");
+        })?;
+        t[10..=11].copy_from_slice(&year.to_le_bytes());
+
+        Ok(Timestamp104(t))
+    }
+}
 
 #[deku_derive(DekuRead, DekuWrite)]
 #[derive(Debug, Clone, PartialEq, Eq)]

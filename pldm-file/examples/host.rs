@@ -105,12 +105,16 @@ async fn handle_platform<R: AsyncRespChannel>(
 
     let mut resp = req.response();
 
+    let update_time =
+        Timestamp104::try_from(&chrono::Local::now().fixed_offset())
+            .unwrap_or_default();
+
     resp.cc = match Cmd::try_from(req.cmd)? {
         Cmd::GetPDRRepositoryInfo => {
             let pdrinfo = GetPDRRepositoryInfoResp {
                 state: PDRRepositoryState::Available,
-                update_time: [0u8; 13],
-                oem_update_time: [0u8; 13],
+                update_time,
+                oem_update_time: Default::default(),
                 record_count: 1,
                 // TODO. "An implementation is allowed to round this number up to the nearest kilobyte (1024 bytes)."
                 repository_size: 1024,
