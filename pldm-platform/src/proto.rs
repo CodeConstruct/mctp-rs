@@ -192,7 +192,7 @@ pub enum SensorState {
     UpperFatal,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct VecWrap<T, const N: usize>(pub heapless::Vec<T, N>);
 
 impl<T, const N: usize> From<heapless::Vec<T, N>> for VecWrap<T, N> {
@@ -261,7 +261,7 @@ where
 }
 
 /// A null terminated ascii string.
-#[derive(DekuWrite, Default, Clone)]
+#[derive(DekuWrite, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AsciiString<const N: usize>(pub VecWrap<u8, N>);
 
 impl<const N: usize> AsciiString<N> {
@@ -373,7 +373,7 @@ pub struct GetSensorReadingReq {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetSensorReadingResp {
     #[deku(temp, temp_value = "reading.deku_id().unwrap()")]
     data_size: u8,
@@ -387,7 +387,7 @@ pub struct GetSensorReadingResp {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetStateSensorReadingsReq {
     pub sensor: SensorId,
     pub rearm: u8,
@@ -395,7 +395,7 @@ pub struct GetStateSensorReadingsReq {
     rsvd: u8,
 }
 
-#[derive(Debug, DekuRead, DekuWrite, Clone)]
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
 pub struct StateField {
     pub op_state: SensorOperationalState,
     pub present_state: u8,
@@ -487,7 +487,7 @@ impl Debug for StateFieldDebug<'_> {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetStateSensorReadingsResp {
     #[deku(temp, temp_value = "self.fields.len() as u8")]
     pub composite_sensor_count: u8,
@@ -495,21 +495,21 @@ pub struct GetStateSensorReadingsResp {
     pub fields: VecWrap<StateField, 8>,
 }
 
-#[derive(Debug, DekuRead, DekuWrite, Clone)]
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
 pub struct SetNumericSensorEnableReq {
     pub sensor: SensorId,
     pub set_op_state: SetSensorOperationalState,
     pub event_enable: SensorEventMessageEnable,
 }
 
-#[derive(Debug, DekuRead, DekuWrite, Clone)]
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
 pub struct SetEnableField {
     pub set_op_state: SetSensorOperationalState,
     pub event_enable: SensorEventMessageEnable,
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetStateSensorEnablesReq {
     pub sensor: SensorId,
 
@@ -534,7 +534,7 @@ pub enum PDRRepositoryState {
 pub type Timestamp104 = [u8; 13];
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPDRRepositoryInfoResp {
     pub state: PDRRepositoryState,
     pub update_time: Timestamp104,
@@ -546,7 +546,7 @@ pub struct GetPDRRepositoryInfoResp {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum TransferOperationFlag {
@@ -555,7 +555,7 @@ pub enum TransferOperationFlag {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPDRReq {
     pub record_handle: u32,
     pub data_transfer_handle: u32,
@@ -567,7 +567,7 @@ pub struct GetPDRReq {
 const MAX_PDR_TRANSFER: usize = 100;
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPDRResp {
     pub next_record_handle: u32,
     pub next_data_transfer_handle: u32,
@@ -665,7 +665,7 @@ impl deku::no_std_io::Seek for &mut Length {
 pub const PDR_VERSION_1: u8 = 1;
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pdr {
     pub record_handle: u32,
     pub pdr_header_version: u8,
@@ -681,7 +681,7 @@ pub struct Pdr {
 
 #[non_exhaustive]
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[deku(ctx = "pdr_type: u8", id = "pdr_type")]
 pub enum PdrRecord {
     #[deku(id = 30)]
@@ -697,7 +697,7 @@ impl PdrRecord {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum FileClassification {
@@ -730,7 +730,7 @@ pub mod file_capabilities {
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDescriptorPdr {
     pub terminus_handle: u16,
     pub file_identifier: u16,
