@@ -19,7 +19,6 @@ anyhow = { workspace = true }
 argh = { workspace = true}
 embedded-io-adapters = { workspace = true }
 getrandom = "0.2"
-proptest = { workspace = true }
 simplelog = { workspace = true }
 
 [features]
