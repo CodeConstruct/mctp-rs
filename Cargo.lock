@@ -901,7 +901,6 @@ dependencies = [
  "log",
  "mctp",
  "proptest",
- "simplelog",
  "smbus-pec",
  "smol",
  "uuid",
@@ -928,7 +927,6 @@ dependencies = [
  "log",
  "mctp",
  "mctp-estack",
- "proptest",
  "simplelog",
  "smol",
 ]

@@ -23,7 +23,6 @@ uuid = { workspace = true }
 embedded-io-adapters = { workspace = true }
 env_logger =  { workspace = true }
 proptest = { workspace = true }
-simplelog = { workspace = true }
 smol = { workspace = true }
 
 [features]
