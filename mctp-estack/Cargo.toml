@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 categories = ["network-programming", "embedded", "hardware-support", "no-std"]
-rust-version = "1.82"
+rust-version = "1.85"
 
 [dependencies]
 crc = { workspace = true }
