@@ -21,14 +21,14 @@ pub enum VecOrSlice<'a, V> {
     Borrowed(&'a [V]),
 }
 
-impl<'a, V> core::ops::Deref for VecOrSlice<'a, V> {
+impl<V> core::ops::Deref for VecOrSlice<'_, V> {
     type Target = [V];
     fn deref(&self) -> &[V] {
         self.as_ref()
     }
 }
 
-impl<'a, V> AsRef<[V]> for VecOrSlice<'a, V> {
+impl<V> AsRef<[V]> for VecOrSlice<'_, V> {
     fn as_ref(&self) -> &[V] {
         match self {
             #[cfg(feature = "alloc")]

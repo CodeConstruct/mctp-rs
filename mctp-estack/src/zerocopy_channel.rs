@@ -331,7 +331,7 @@ pub struct Sender<'a, M: RawMutex, T> {
     channel: &'a ChannelInner<M, T>,
 }
 
-impl<'a, M: RawMutex, T> Sender<'a, M, T> {
+impl<M: RawMutex, T> Sender<'_, M, T> {
     /// Creates one further [`Sender`] over the same channel.
     pub fn borrow(&mut self) -> Sender<'_, M, T> {
         Sender { channel: self.channel }
@@ -420,7 +420,7 @@ pub struct Receiver<'a, M: RawMutex, T> {
     channel: &'a ChannelInner<M, T>,
 }
 
-impl<'a, M: RawMutex, T> Receiver<'a, M, T> {
+impl<M: RawMutex, T> Receiver<'_, M, T> {
     /// Creates one further [`Receiver`] over the same channel.
     pub fn borrow(&mut self) -> Receiver<'_, M, T> {
         Receiver { channel: self.channel }
