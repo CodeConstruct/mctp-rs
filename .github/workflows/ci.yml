@@ -17,9 +17,9 @@ jobs:
         include:
           - rust_version: stable
 
-          # 1.82 is the earliest version that will build. Notice if it breaks,
+          # 1.85 is the earliest version that will build. Notice if it breaks,
           # though MSRV may be bumped as needed.
-          - rust_version: 1.82
+          - rust_version: 1.85
             no_clippy: yes
 
           - rust_version: nightly
