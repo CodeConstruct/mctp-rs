@@ -735,9 +735,7 @@ impl<'r> Router<'r> {
         let Tag::Owned(tv) = tag else { unreachable!() };
         let mut inner = self.inner.lock().await;
 
-        if let Err(e) = inner.stack.cancel_flow(eid, tv) {
-            warn!("flow cancel failed {}", e);
-        }
+        inner.stack.cancel_flow(eid, tv);
     }
 
     /// Create a `AsyncReqChannel` instance.
