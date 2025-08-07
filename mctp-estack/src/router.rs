@@ -11,6 +11,7 @@ use crate::fmt::{debug, error, info, trace, warn};
 use core::cell::RefCell;
 use core::debug_assert;
 use core::future::{poll_fn, Future};
+use core::mem::take;
 use core::pin::pin;
 use core::task::{Poll, Waker};
 
@@ -300,8 +301,17 @@ impl Port<'_> {
 
 #[derive(Default)]
 struct WakerPoolInner {
-    pool: FnvIndexMap<AppCookie, WakerRegistration, MAX_CHANNELS>,
+    // Value is None for AppCookies that are pending deallocation.
+    // Deallocation is deferred since it needs an async lock on the stack.
+    pool: FnvIndexMap<AppCookie, Option<WakerRegistration>, MAX_CHANNELS>,
+
+    /// Next AppCookie to allocate. Arbitrary, but incrementing
+    /// values are nicer for debugging.
     next: usize,
+
+    /// Set when remove() is called, lets cleanup() avoid scanning the
+    /// whole pool if not necessary.
+    need_cleanup: bool,
 }
 
 struct WakerPool {
@@ -320,29 +330,37 @@ impl WakerPool {
     fn wake(&self, cookie: AppCookie) {
         self.inner.lock(|i| {
             let mut i = i.borrow_mut();
-            if let Some(w) = i.pool.get_mut(&cookie) {
+            if let Some(Some(w)) = i.pool.get_mut(&cookie) {
                 w.wake()
             } else {
-                // This can currently happen if a ReqChannel is dropped but the core stack
-                // subsequently receives a response message corresponding to that cookie.
-                // TODO fix expiring from the stack (?) and make this a debug_assertion.
-                // We can't expire in the ReqChannel drop handler since it needs async
-                // for locking.
+                // Some(None) case is when .remove() has removed the slot, but cleanup()
+                // hasn't run yet.
+                //
+                // None case is when a ReqChannel is dropped but the core stack
+                // subsequently receives a response message corresponding to that cookie,
+                // prior to cleanup().
+                //
+                // In both cases we do nothing, a subsequent cleanup will handle it.
             }
         })
     }
 
     fn wake_all(&self) {
         self.inner.lock(|i| {
-            for w in i.borrow_mut().pool.values_mut() {
+            for w in i.borrow_mut().pool.values_mut().flatten() {
                 w.wake()
             }
         })
     }
 
     fn register(&self, cookie: AppCookie, waker: &Waker) {
-        self.inner
-            .lock(|i| i.borrow_mut().pool[&cookie].register(waker))
+        self.inner.lock(|i| {
+            if let Some(w) = i.borrow_mut().pool[&cookie].as_mut() {
+                w.register(waker);
+            } else {
+                debug_assert!(false, "register called after remove");
+            }
+        });
     }
 
     /// Returns `Error::NoSpace` if all slots are occupied.
@@ -360,7 +378,7 @@ impl WakerPool {
                     continue;
                 };
 
-                break if entry.insert(WakerRegistration::new()).is_err() {
+                break if entry.insert(Some(WakerRegistration::new())).is_err() {
                     // Map is full
                     Err(Error::NoSpace)
                 } else {
@@ -370,11 +388,38 @@ impl WakerPool {
         })
     }
 
+    // Marks the cookie as unused. It will later be fully cleared by a call
+    // to cleanup(). They are split so that remove() can call from drop handlers
+    // (no async lock possible), while cleanup() can run later holding an async lock.
     fn remove(&self, cookie: AppCookie) {
         self.inner.lock(|i| {
-            let e = i.borrow_mut().pool.remove(&cookie);
-            debug_assert!(e.is_some());
+            let mut i = i.borrow_mut();
+            if let Some(e) = i.pool.get_mut(&cookie) {
+                debug_assert!(e.is_some(), "remove called twice");
+                *e = None;
+                i.need_cleanup = true;
+            }
         });
+    }
+
+    // Finalises items previously remove()d, calling a closure with the cookie.
+    //
+    // Does nothing if no cleanup is necessary.
+    fn cleanup<F>(&self, mut f: F)
+    where
+        F: FnMut(AppCookie),
+    {
+        self.inner.lock(|i| {
+            let mut i = i.borrow_mut();
+            if take(&mut i.need_cleanup) {
+                i.pool.retain(|cookie, w| {
+                    if w.is_none() {
+                        f(*cookie);
+                    }
+                    w.is_some()
+                })
+            }
+        })
     }
 }
 
@@ -514,6 +559,14 @@ impl<'r> Router<'r> {
 
         // Handle locally if possible
         if inner.stack.is_local_dest(pkt) {
+            // Clean up any outstanding reassembly slots, to ensure
+            // they don't prevent the new packet being received.
+            // This is cheap.
+            self.recv_wakers.cleanup(|cookie| {
+                inner.stack.cancel_flow_bycookie(cookie);
+                while inner.stack.get_deferred_bycookie(&[cookie]).is_some() {}
+            });
+
             match inner.stack.receive(pkt) {
                 // Complete message
                 Ok(Some(msg)) => {
@@ -728,16 +781,6 @@ impl<'r> Router<'r> {
         top.send_message(&mut fragmenter, buf, &mut work_msg).await
     }
 
-    /// Only needs to be called for tags allocated with tag_expires=false
-    ///
-    /// Must only be called for owned tags.
-    async fn app_release_tag(&self, eid: Eid, tag: Tag) {
-        let Tag::Owned(tv) = tag else { unreachable!() };
-        let mut inner = self.inner.lock().await;
-
-        inner.stack.cancel_flow(eid, tv);
-    }
-
     /// Create a `AsyncReqChannel` instance.
     pub fn req(&self, eid: Eid) -> RouterAsyncReqChannel<'_, 'r> {
         RouterAsyncReqChannel::new(eid, self)
@@ -806,8 +849,6 @@ impl<'g, 'r> RouterAsyncReqChannel<'g, 'r> {
 
     /// Set the tag to not expire. That allows multiple calls to `send()`.
     ///
-    /// `async_drop` must be called prior to drop.
-    ///
     /// Should be called prior to any `send()` and may only be called once
     /// for a `RouterAsyncReqChannel`.
     /// This can also be called after the `recv()` has completed.
@@ -817,20 +858,6 @@ impl<'g, 'r> RouterAsyncReqChannel<'g, 'r> {
         }
         self.tag_expires = false;
         Ok(())
-    }
-
-    /// This must be called prior to drop whenever `tag_noexpire()` is used.
-    ///
-    /// Failure to call will result in leaking tags in the Router.
-    ///
-    /// This is a workaround until async drop is implemented in Rust itself.
-    /// <https://github.com/rust-lang/rust/issues/126482>
-    pub async fn async_drop(mut self) {
-        if !self.tag_expires {
-            if let Some(tag) = self.last_tag.take() {
-                self.router.app_release_tag(self.eid, tag).await;
-            }
-        }
     }
 
     /// Set a timeout.
@@ -844,8 +871,10 @@ impl<'g, 'r> RouterAsyncReqChannel<'g, 'r> {
 impl Drop for RouterAsyncReqChannel<'_, '_> {
     fn drop(&mut self) {
         if !self.tag_expires && self.last_tag.is_some() {
-            warn!("Didn't call async_drop()");
+            // tag cleanup will require a cookie
+            debug_assert!(self.cookie.is_some());
         }
+
         if let Some(c) = self.cookie {
             self.router.recv_wakers.remove(c);
         }
