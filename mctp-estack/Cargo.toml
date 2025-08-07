@@ -20,6 +20,7 @@ smbus-pec = { version = "1.0", features = ["lookup-table"] }
 uuid = { workspace = true }
 
 [dev-dependencies]
+critical-section = { version = "1.2.0", features = ["std"] }
 embedded-io-adapters = { workspace = true }
 env_logger =  { workspace = true }
 proptest = { workspace = true }

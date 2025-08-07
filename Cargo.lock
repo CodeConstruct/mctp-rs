@@ -892,6 +892,7 @@ name = "mctp-estack"
 version = "0.1.0"
 dependencies = [
  "crc",
+ "critical-section",
  "defmt",
  "embassy-sync",
  "embedded-io-adapters",
