@@ -85,11 +85,6 @@ pub(crate) use proto::MctpHeader;
 /// In milliseconds.
 const REASSEMBLY_EXPIRY_TIMEOUT: u32 = 6000;
 
-/// Timeout for calling [`get_deferred()`](Stack::get_deferred).
-///
-/// See documentation for [`MctpMessage`].
-pub const DEFERRED_TIMEOUT: u32 = 6000;
-
 /// Timeout granularity.
 ///
 /// Timeouts will be checked no more often than this interval (in milliseconds).
@@ -269,18 +264,16 @@ impl Stack {
         // Check reassembler expiry for incomplete packets
         for (re, _buf) in self.reassemblers.iter_mut() {
             if !re.is_unused() {
-                match re.check_expired(
-                    &self.now,
-                    REASSEMBLY_EXPIRY_TIMEOUT,
-                    DEFERRED_TIMEOUT,
-                ) {
-                    None => {
+                match re.check_expired(&self.now, REASSEMBLY_EXPIRY_TIMEOUT) {
+                    Some(0) => {
                         trace!("Expired");
                         any_expired = true;
                         re.set_unused();
                     }
                     // Not expired, update the timeout
                     Some(t) => timeout = timeout.min(t),
+                    // No timeout
+                    None => (),
                 }
             }
         }
@@ -295,11 +288,11 @@ impl Stack {
                         .check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT)
                     {
                         // expired, remove it
-                        None => {
+                        0 => {
                             any_expired = true;
                             false
                         }
-                        Some(t) => {
+                        t => {
                             // still time left
                             timeout = timeout.min(t);
                             true
@@ -435,10 +428,6 @@ impl Stack {
     ///
     /// Messages are selected by `(source_eid, tag)`.
     /// If multiple match the earliest is returned.
-    ///
-    /// Messages are only available for [`DEFERRED_TIMEOUT`], after
-    /// that time they will be discarded and the message slot/tag may
-    /// be reused.
     pub fn get_deferred(
         &mut self,
         source: Eid,
@@ -464,10 +453,6 @@ impl Stack {
     ///
     /// If multiple match the earliest is returned.
     /// Multiple cookies to match may be provided.
-    ///
-    /// Messages are only available for [`DEFERRED_TIMEOUT`], after
-    /// that time they will be discarded and the message slot may
-    /// be reused.
     pub fn get_deferred_bycookie(
         &mut self,
         cookies: &[AppCookie],
@@ -670,9 +655,10 @@ impl Stack {
 /// If the the message is going to be retrieved again using
 /// [`get_deferred()`](Stack::get_deferred) or
 /// [`get_deferred_bycookie()`](Stack::get_deferred_bycookie), the caller must
-/// call [`retain()`](Self::retain). In that case the MCTP stack will keep the message
-/// buffer available until [`DEFERRED_TIMEOUT`] (measured from when the final packet
-/// of the message was received).
+/// call [`retain()`](Self::retain).
+///
+/// After `retain()` a caller must ensure that the packet is eventually retrieved,
+/// otherwise it will forever consume a reassembly slot in the `Stack`.
 pub struct MctpMessage<'a> {
     pub source: Eid,
     pub dest: Eid,
@@ -761,20 +747,19 @@ impl EventStamp {
 
     /// Check timeout
     ///
-    /// Returns `None` if expired, or `Some(time_remaining)`.
+    /// Returns 0 if expired, otherwise `time_remaining`.
     /// Times are in milliseconds.
-    pub fn check_timeout(&self, now: &EventStamp, timeout: u32) -> Option<u32> {
+    pub fn check_timeout(&self, now: &EventStamp, timeout: u32) -> u32 {
         let Some(elapsed) = now.clock.checked_sub(self.clock) else {
             debug_assert!(false, "Timestamp backwards");
-            return None;
+            return 0;
         };
         let Ok(elapsed) = u32::try_from(elapsed) else {
             // Longer than 49 days elapsed. It's expired.
-            return None;
+            return 0;
         };
 
-        // zero time_remaining should return None.
-        (elapsed < timeout).then(|| timeout - elapsed)
+        timeout.saturating_sub(elapsed)
     }
 }
 
