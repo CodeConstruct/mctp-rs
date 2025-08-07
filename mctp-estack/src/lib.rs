@@ -769,7 +769,8 @@ impl EventStamp {
             return None;
         };
 
-        timeout.checked_sub(elapsed)
+        // zero time_remaining should return None.
+        (elapsed < timeout).then(|| timeout - elapsed)
     }
 }
 
