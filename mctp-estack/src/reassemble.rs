@@ -222,25 +222,29 @@ impl Reassembler {
 
     /// Check timeouts
     ///
-    /// Returns `None` if timed out, `Some(remaining)` otherwise.
+    /// Returns `None` if no timeout, `Some(remaining)` otherwise.
+    /// `Some(0)` is expired.
     pub fn check_expired(
         &self,
         now: &EventStamp,
         reassemble_timeout: u32,
-        done_timeout: u32,
     ) -> Option<u32> {
         let timeout = match self.state {
             State::Active { .. } => reassemble_timeout,
-            State::Done { .. } => done_timeout,
+            State::Done { .. } => {
+                // Done reassemblers don't expire, they will be
+                // cleared when a MctpMessage is dropped without retain().
+                return None;
+            }
             State::New | State::Bad => {
                 // Bad ones should have been cleaned up, New ones should
                 // have moved to Active prior to check_expired().
                 debug_assert!(false, "Bad or new reassembler");
-                return None;
+                return Some(0);
             }
-            State::Unused => return None,
+            State::Unused => return Some(0),
         };
-        self.stamp.check_timeout(now, timeout)
+        Some(self.stamp.check_timeout(now, timeout))
     }
 
     pub(crate) fn set_cookie(&mut self, cookie: Option<AppCookie>) {
