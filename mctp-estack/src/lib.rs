@@ -638,23 +638,27 @@ impl Stack {
         self.flows.get(&(peer, tv))
     }
 
-    pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) -> Result<()> {
+    pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) {
         trace!("cancel flow {}", source);
         let tag = Tag::Unowned(tv);
-        let mut removed = false;
         for (re, _buf) in self.reassemblers.iter_mut() {
             if !re.is_unused() && re.tag == tag && re.peer == source {
                 re.set_unused();
-                removed = true;
             }
         }
 
-        trace!("removed flow");
-        let r = self.flows.remove(&(source, tv));
-        if removed {
-            debug_assert!(r.is_some());
+        self.flows.remove(&(source, tv));
+    }
+
+    pub fn cancel_flow_bycookie(&mut self, cookie: AppCookie) {
+        trace!("cancel flow bycookie {:?}", cookie);
+        for (re, _buf) in self.reassemblers.iter_mut() {
+            if !re.is_unused() && re.cookie == Some(cookie) {
+                re.set_unused();
+            }
         }
-        Ok(())
+
+        self.flows.retain(|_, f| f.cookie != Some(cookie));
     }
 }
 
