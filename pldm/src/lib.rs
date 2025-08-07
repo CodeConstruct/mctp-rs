@@ -203,7 +203,7 @@ pub struct PldmRequest<'a> {
     pub data: VecOrSlice<'a, u8>,
 }
 
-impl<'a> Debug for PldmRequest<'a> {
+impl Debug for PldmRequest<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let vs = match self.data {
             #[cfg(feature = "alloc")]
@@ -222,7 +222,7 @@ impl<'a> Debug for PldmRequest<'a> {
 }
 
 #[cfg(feature = "alloc")]
-impl<'a> PldmRequest<'a> {
+impl PldmRequest<'_> {
     /// Converts any `PldmRequest` into one with allocated storage
     pub fn make_owned(self) -> PldmRequest<'static> {
         let d = match self.data {
@@ -347,7 +347,7 @@ pub struct PldmResponse<'a> {
     pub data: VecOrSlice<'a, u8>,
 }
 
-impl<'a> Debug for PldmResponse<'a> {
+impl Debug for PldmResponse<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let vs = match self.data {
             #[cfg(feature = "alloc")]
@@ -367,7 +367,7 @@ impl<'a> Debug for PldmResponse<'a> {
 }
 
 #[cfg(feature = "alloc")]
-impl<'a> PldmResponse<'a> {
+impl PldmResponse<'_> {
     /// Set the data payload for this response
     pub fn set_data(&mut self, data: Vec<u8>) {
         self.data = data.into()

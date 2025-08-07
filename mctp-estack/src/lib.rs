@@ -677,7 +677,7 @@ pub struct MctpMessage<'a> {
     retain: bool,
 }
 
-impl<'a> MctpMessage<'a> {
+impl MctpMessage<'_> {
     /// Retrieve the message's cookie.
     ///
     /// For response messages with `tag.is_owner() == false` this will be
@@ -704,7 +704,7 @@ impl<'a> MctpMessage<'a> {
     }
 }
 
-impl<'a> Drop for MctpMessage<'a> {
+impl Drop for MctpMessage<'_> {
     fn drop(&mut self) {
         if !self.retain {
             self.reassembler.set_unused()
