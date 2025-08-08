@@ -31,8 +31,7 @@ struct Inner<S: Read + Write> {
 impl<S: Read + Write> Inner<S> {
     fn new(own_eid: Eid, serial: S) -> Self {
         let start_time = Instant::now();
-        let todo_mtu = 64;
-        let mctp = Stack::new(own_eid, todo_mtu, 0);
+        let mctp = Stack::new(own_eid, 0);
         let mctpserial = MctpSerialHandler::new();
         Self {
             mctp,

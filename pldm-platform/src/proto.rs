@@ -325,7 +325,7 @@ impl<const N: usize> TryFrom<&str> for AsciiString<N> {
     }
 }
 
-impl<'a, Predicate, const N: usize> DekuReader<'a, (Limit<u8, Predicate>, ())>
+impl<Predicate, const N: usize> DekuReader<'_, (Limit<u8, Predicate>, ())>
     for AsciiString<N>
 where
     Predicate: FnMut(&u8) -> bool,

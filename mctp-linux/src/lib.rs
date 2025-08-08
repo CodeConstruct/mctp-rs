@@ -707,7 +707,7 @@ pub struct MctpLinuxAsyncResp<'l> {
     typ: MsgType,
 }
 
-impl<'l> mctp::AsyncRespChannel for MctpLinuxAsyncResp<'l> {
+impl mctp::AsyncRespChannel for MctpLinuxAsyncResp<'_> {
     type ReqChannel<'a>
         = MctpLinuxAsyncReq
     where

@@ -26,7 +26,9 @@
 //! These can be configured at build time, see [`config`]
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// Temporarily relaxed for zerocopy_channel vendored code.
+#![deny(unsafe_code)]
+// #![forbid(unsafe_code)]
 #![allow(clippy::int_plus_one)]
 #![allow(clippy::too_many_arguments)]
 // defmt does not currently allow inline format arguments, so we don't want
@@ -45,7 +47,7 @@ extern crate std;
 /// released.
 pub use heapless::Vec;
 
-use heapless::FnvIndexMap;
+use heapless::{Entry, FnvIndexMap};
 
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
@@ -65,6 +67,10 @@ pub mod usb;
 mod util;
 mod proto;
 
+#[rustfmt::skip]
+#[allow(clippy::needless_lifetimes)]
+mod zerocopy_channel;
+
 use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
 pub use router::Router;
@@ -78,11 +84,6 @@ pub(crate) use proto::MctpHeader;
 ///
 /// In milliseconds.
 const REASSEMBLY_EXPIRY_TIMEOUT: u32 = 6000;
-
-/// Timeout for calling [`get_deferred()`](Stack::get_deferred).
-///
-/// See documentation for [`MctpMessage`].
-pub const DEFERRED_TIMEOUT: u32 = 6000;
 
 /// Timeout granularity.
 ///
@@ -113,6 +114,8 @@ pub mod config {
     /// Customise with `MCTP_ESTACK_NUM_RECEIVE` environment variable.
     /// Number of outstanding waiting responses, default 64
     pub const NUM_RECEIVE: usize = get_build_var!("MCTP_ESTACK_NUM_RECEIVE", 4);
+
+    /// Maximum number of incoming flows, default 64.
     ///
     /// After a message is sent with Tag Owner (TO) bit set, the stack will accept
     /// response messages with the same tag and TO _unset_. `FLOWS` defines
@@ -130,6 +133,20 @@ pub mod config {
     pub const MAX_MTU: usize = get_build_var!("MCTP_ESTACK_MAX_MTU", 255);
     const _: () =
         assert!(MAX_MTU >= crate::MctpHeader::LEN + 1, "MAX_MTU too small");
+
+    /// Per-port transmit queue length, default 4.
+    ///
+    /// This applies to [`Router`](crate::Router).
+    /// Each port will use `PORT_TXQUEUE` * `MAX_MTU` buffer space.
+    ///
+    /// Customise with `MCTP_ESTACK_PORT_TXQUEUE` environment variable.
+    pub const PORT_TXQUEUE: usize =
+        get_build_var!("MCTP_ESTACK_PORT_TXQUEUE", 4);
+
+    /// Maximum number of ports for [`Router`](crate::Router), default 1.
+    ///
+    /// Customise with `MCTP_ESTACK_MAX_PORTS` environment variable.
+    pub const MAX_PORTS: usize = get_build_var!("MCTP_ESTACK_MAX_PORTS", 2);
 }
 
 #[derive(Debug)]
@@ -164,8 +181,6 @@ pub struct Stack {
     /// cached next expiry time from update()
     next_timeout: u64,
 
-    mtu: usize,
-
     // Arbitrary counter to make tag allocation more variable.
     next_tag: u8,
 
@@ -180,22 +195,15 @@ impl Stack {
     ///
     /// `now_millis` is the current timestamp, the same style as would be
     /// passed to `update_clock()`.
-    ///
-    /// `mtu` is the default MTU of the stack. Specific [`start_send()`](Self::start_send)
-    /// calls may use a smaller MTU if needed (for example a per-link or per-EID MTU).
-    /// `new()` will panic if a MTU smaller than 5 is given (minimum MCTP header and type byte).
-    pub fn new(own_eid: Eid, mtu: usize, now_millis: u64) -> Self {
+    pub fn new(own_eid: Eid, now_millis: u64) -> Self {
         let now = EventStamp {
             clock: now_millis,
             counter: 0,
         };
-        assert!(mtu >= MctpHeader::LEN + 1);
-
         Self {
             own_eid,
             now,
             next_timeout: 0,
-            mtu,
             flows: Default::default(),
             reassemblers: Default::default(),
             next_tag: 0,
@@ -221,6 +229,13 @@ impl Stack {
             }
             Ok(())
         }
+    }
+
+    /// Return the current internal timestamp.
+    ///
+    /// This is the time last set with `update_clock()`.
+    pub fn now(&self) -> u64 {
+        self.now.clock
     }
 
     /// Updates timeouts and returns the next timeout in milliseconds
@@ -249,18 +264,16 @@ impl Stack {
         // Check reassembler expiry for incomplete packets
         for (re, _buf) in self.reassemblers.iter_mut() {
             if !re.is_unused() {
-                match re.check_expired(
-                    &self.now,
-                    REASSEMBLY_EXPIRY_TIMEOUT,
-                    DEFERRED_TIMEOUT,
-                ) {
-                    None => {
+                match re.check_expired(&self.now, REASSEMBLY_EXPIRY_TIMEOUT) {
+                    Some(0) => {
                         trace!("Expired");
                         any_expired = true;
                         re.set_unused();
                     }
                     // Not expired, update the timeout
                     Some(t) => timeout = timeout.min(t),
+                    // No timeout
+                    None => (),
                 }
             }
         }
@@ -275,11 +288,11 @@ impl Stack {
                         .check_timeout(&self.now, REASSEMBLY_EXPIRY_TIMEOUT)
                     {
                         // expired, remove it
-                        None => {
+                        0 => {
                             any_expired = true;
                             false
                         }
-                        Some(t) => {
+                        t => {
                             // still time left
                             timeout = timeout.min(t);
                             true
@@ -298,7 +311,7 @@ impl Stack {
     ///
     /// Returns a [`Fragmenter`] that will packetize the message.
     ///
-    /// `mtu` is an optional override, will be the min of the stack MTU and the argument.
+    /// `mtu` is optional, the default and minimum is 64 (MCTP protocol minimum).
     ///
     /// The provided cookie will be returned when `send_fill()` completes.
     ///
@@ -330,10 +343,8 @@ impl Stack {
             Some(Tag::Unowned(tv)) => Tag::Unowned(tv),
         };
 
-        let mut frag_mtu = self.mtu;
-        if let Some(m) = mtu {
-            frag_mtu = frag_mtu.min(m);
-        }
+        let frag_mtu = mtu.unwrap_or(mctp::MCTP_MIN_MTU);
+        // mtu size checked by Fragmenter::new()
 
         // Vary the starting seq
         self.next_seq = (self.next_seq + 1) & mctp::MCTP_SEQ_MASK;
@@ -385,13 +396,21 @@ impl Stack {
         match re.receive(packet, buf, self.now.increment()) {
             // Received a complete message
             Ok(Some(mut msg)) => {
-                // Have received a "response", flow is finished.
-                // TODO preallocated tags won't remove the flow.
+                // Have received a "response", flow may be finished.
                 let re = &mut msg.reassembler;
                 if !re.tag.is_owner() {
-                    trace!("remove flow");
-                    let r = self.flows.remove(&(re.peer, re.tag.tag()));
-                    debug_assert!(r.is_some(), "non-existent remove_flow");
+                    let e = self.flows.entry((re.peer, re.tag.tag()));
+                    match e {
+                        Entry::Occupied(e) => {
+                            if e.get().expiry_stamp.is_some() {
+                                trace!("remove flow");
+                                e.remove();
+                            }
+                        }
+                        Entry::Vacant(_) => {
+                            debug_assert!(false, "non-existent remove_flow")
+                        }
+                    }
                 }
 
                 Ok(Some(msg))
@@ -409,10 +428,6 @@ impl Stack {
     ///
     /// Messages are selected by `(source_eid, tag)`.
     /// If multiple match the earliest is returned.
-    ///
-    /// Messages are only available for [`DEFERRED_TIMEOUT`], after
-    /// that time they will be discarded and the message slot/tag may
-    /// be reused.
     pub fn get_deferred(
         &mut self,
         source: Eid,
@@ -438,10 +453,6 @@ impl Stack {
     ///
     /// If multiple match the earliest is returned.
     /// Multiple cookies to match may be provided.
-    ///
-    /// Messages are only available for [`DEFERRED_TIMEOUT`], after
-    /// that time they will be discarded and the message slot may
-    /// be reused.
     pub fn get_deferred_bycookie(
         &mut self,
         cookies: &[AppCookie],
@@ -612,23 +623,27 @@ impl Stack {
         self.flows.get(&(peer, tv))
     }
 
-    pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) -> Result<()> {
+    pub fn cancel_flow(&mut self, source: Eid, tv: TagValue) {
         trace!("cancel flow {}", source);
         let tag = Tag::Unowned(tv);
-        let mut removed = false;
         for (re, _buf) in self.reassemblers.iter_mut() {
             if !re.is_unused() && re.tag == tag && re.peer == source {
                 re.set_unused();
-                removed = true;
             }
         }
 
-        trace!("removed flow");
-        let r = self.flows.remove(&(source, tv));
-        if removed {
-            debug_assert!(r.is_some());
+        self.flows.remove(&(source, tv));
+    }
+
+    pub fn cancel_flow_bycookie(&mut self, cookie: AppCookie) {
+        trace!("cancel flow bycookie {:?}", cookie);
+        for (re, _buf) in self.reassemblers.iter_mut() {
+            if !re.is_unused() && re.cookie == Some(cookie) {
+                re.set_unused();
+            }
         }
-        Ok(())
+
+        self.flows.retain(|_, f| f.cookie != Some(cookie));
     }
 }
 
@@ -640,9 +655,10 @@ impl Stack {
 /// If the the message is going to be retrieved again using
 /// [`get_deferred()`](Stack::get_deferred) or
 /// [`get_deferred_bycookie()`](Stack::get_deferred_bycookie), the caller must
-/// call [`retain()`](Self::retain). In that case the MCTP stack will keep the message
-/// buffer available until [`DEFERRED_TIMEOUT`] (measured from when the final packet
-/// of the message was received).
+/// call [`retain()`](Self::retain).
+///
+/// After `retain()` a caller must ensure that the packet is eventually retrieved,
+/// otherwise it will forever consume a reassembly slot in the `Stack`.
 pub struct MctpMessage<'a> {
     pub source: Eid,
     pub dest: Eid,
@@ -661,7 +677,7 @@ pub struct MctpMessage<'a> {
     retain: bool,
 }
 
-impl<'a> MctpMessage<'a> {
+impl MctpMessage<'_> {
     /// Retrieve the message's cookie.
     ///
     /// For response messages with `tag.is_owner() == false` this will be
@@ -688,7 +704,7 @@ impl<'a> MctpMessage<'a> {
     }
 }
 
-impl<'a> Drop for MctpMessage<'a> {
+impl Drop for MctpMessage<'_> {
     fn drop(&mut self) {
         if !self.retain {
             self.reassembler.set_unused()
@@ -731,19 +747,19 @@ impl EventStamp {
 
     /// Check timeout
     ///
-    /// Returns `None` if expired, or `Some(time_remaining)`.
+    /// Returns 0 if expired, otherwise `time_remaining`.
     /// Times are in milliseconds.
-    pub fn check_timeout(&self, now: &EventStamp, timeout: u32) -> Option<u32> {
+    pub fn check_timeout(&self, now: &EventStamp, timeout: u32) -> u32 {
         let Some(elapsed) = now.clock.checked_sub(self.clock) else {
             debug_assert!(false, "Timestamp backwards");
-            return None;
+            return 0;
         };
         let Ok(elapsed) = u32::try_from(elapsed) else {
             // Longer than 49 days elapsed. It's expired.
-            return None;
+            return 0;
         };
 
-        timeout.checked_sub(elapsed)
+        timeout.saturating_sub(elapsed)
     }
 }
 
