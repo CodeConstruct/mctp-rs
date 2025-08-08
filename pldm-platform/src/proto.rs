@@ -669,7 +669,6 @@ impl GetPDRResp {
             record,
         };
         pdr.update()?;
-        info!("pdr after update {pdr:#x?}");
 
         let mut s = GetPDRResp {
             next_record_handle: 0,
@@ -698,14 +697,12 @@ impl Length {
         let mut l = Length::default();
         let mut w = deku::writer::Writer::new(&mut l);
         c.to_writer(&mut w, ctx)?;
-        info!("len {}", l.len);
         Ok(l.len)
     }
 }
 
 impl deku::no_std_io::Write for &mut Length {
     fn write(&mut self, buf: &[u8]) -> deku::no_std_io::Result<usize> {
-        info!("wr {}", buf.len());
         self.pos += buf.len() as i64;
         self.len = self.len.max(self.pos as u64);
         Ok(buf.len())
