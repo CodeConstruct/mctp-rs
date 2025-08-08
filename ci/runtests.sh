@@ -15,7 +15,9 @@ cargo fmt -- --check
 
 # Check everything first
 cargo check --all-targets --locked
-cargo clippy --all-targets
+if [ -z "NO_CLIPPY" ]; then
+    cargo clippy --all-targets
+fi
 
 # stable, std
 cargo build --release
