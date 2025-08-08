@@ -122,7 +122,18 @@ impl<const N: usize> Responder<N> {
             0,
             0xf1f1f000,
             None,
-            &[Cmd::SetTID as u8, Cmd::GetTID as u8],
+            &[
+                Cmd::SetTID,
+                Cmd::GetTID,
+                Cmd::GetPLDMVersion,
+                Cmd::GetPLDMTypes,
+                Cmd::GetPLDMCommands,
+                Cmd::NegotiateTransferParameters,
+                // May be handled by PLDM subtypes
+                Cmd::MultipartSend,
+                Cmd::MultipartReceive,
+            ]
+            .map(|c| c as u8),
         );
         let _ = r.types.push(t);
         r
