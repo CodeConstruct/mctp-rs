@@ -14,9 +14,15 @@ jobs:
   ci:
     strategy:
       matrix:
-        # 1.82 is the earliest version that will build. Notice if it breaks,
-        # though MSRV may be bumped as needed.
-        rust_version: [stable, 1.82, nightly]
+        include:
+          - rust_version: stable
+
+          # 1.82 is the earliest version that will build. Notice if it breaks,
+          # though MSRV may be bumped as needed.
+          - rust_version: 1.82
+            no_clippy: yes
+
+          - rust_version: nightly
 
     runs-on: ubuntu-latest
 
@@ -41,4 +47,7 @@ jobs:
           rustup override set ${{ matrix.rust_version }}
 
       - name: Build and test ${{ matrix.rust_version }}
+        env:
+          # Older clippy has some unwanted lints, ignore them.
+          NO_CLIPPY: ${{ matrix.no_clippy }}
         run: ./ci/runtests.sh
