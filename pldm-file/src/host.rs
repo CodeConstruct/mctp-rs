@@ -26,7 +26,10 @@ pub trait Host {
 // Created at the first stage (XFER_FIRST_PART) of a MultpartReceive,
 // where we have the offset and size.
 struct FileTransferContext {
-    buf: Vec<u8>,
+    // File starting offset
+    start: usize,
+    len: usize,
+    // Current transfer 0..len
     offset: usize,
 }
 
@@ -345,14 +348,14 @@ impl<const N: usize> Responder<N> {
             if let Some(ctx) = file_ctx.xfer_ctx.as_mut() {
                 ctx.offset = 0;
             } else {
-                let new_ctx = Self::init_read(&cmd, host)?;
+                let new_ctx = Self::init_read(&cmd)?;
                 // a repeated FIRST_PART is valid, and restarts the transfer
                 file_ctx.xfer_ctx.replace(new_ctx);
             };
         }
 
         let xfer_ctx = file_ctx.xfer_ctx.as_mut().ok_or(CCode::ERROR)?;
-        let full_len = xfer_ctx.buf.len();
+        let full_len = xfer_ctx.len;
 
         let offset = match cmd.xfer_op {
             pldm::control::xfer_op::FIRST_PART
@@ -361,7 +364,7 @@ impl<const N: usize> Responder<N> {
             _ => Err(CCode::ERROR_INVALID_DATA)?,
         };
 
-        if offset >= xfer_ctx.buf.len() {
+        if offset >= xfer_ctx.len {
             Err(CCode::ERROR_INVALID_DATA)?;
         }
 
@@ -394,11 +397,13 @@ impl<const N: usize> Responder<N> {
         let mut resp_data = Vec::new();
         resp_data.extend_from_slice(&dfread_resp.to_bytes()?);
 
-        let data = &xfer_ctx.buf[offset..offset + len];
+        let l = resp_data.len();
+        resp_data.resize(resp_data.len() + len, 0);
+        let data = &mut resp_data[l..];
+        host.read(data, xfer_ctx.start + offset)
+            .map_err(|_| CCode::ERROR)?;
         let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
         let cs = crc32.checksum(data);
-
-        resp_data.extend_from_slice(data);
         resp_data.extend_from_slice(&cs.to_le_bytes());
 
         xfer_ctx.offset = offset;
@@ -409,18 +414,15 @@ impl<const N: usize> Responder<N> {
 
     fn init_read(
         req: &pldm::control::MultipartReceiveReq,
-        host: &mut impl Host,
     ) -> Result<FileTransferContext> {
-        let offset = req.req_offset;
-        let len = req.req_length;
-
-        let mut buf = vec![0; len as usize];
-        let read_len =
-            host.read(&mut buf, offset as usize).or(Err(CCode::ERROR))?;
-
-        buf.truncate(read_len);
-
-        Ok(FileTransferContext { buf, offset: 0 })
+        trace!("init_read {req:?}");
+        let start = req.req_offset as usize;
+        let len = req.req_length as usize;
+        Ok(FileTransferContext {
+            start,
+            len,
+            offset: 0,
+        })
     }
 }
 
