@@ -23,7 +23,7 @@
 //! ## Configuration
 //!
 //! `mctp-estack` uses fixed sizes to be suitable on no-alloc platforms.
-//! These can be configured at build time, see [`config`]
+//! These can be configured at build time, see [`config`].
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // Temporarily relaxed for zerocopy_channel vendored code.
@@ -176,9 +176,9 @@ pub struct Stack {
     // Unused reassemblers set Reassembler::is_unused()
     reassemblers: [(Reassembler, Vec<u8, MAX_PAYLOAD>); NUM_RECEIVE],
 
-    /// monotonic time and counter.
+    /// Monotonic time and counter.
     now: EventStamp,
-    /// cached next expiry time from update()
+    /// Cached next expiry time from update().
     next_timeout: u64,
 
     // Arbitrary counter to make tag allocation more variable.
@@ -668,8 +668,8 @@ pub struct MctpMessage<'a> {
     pub ic: MsgIC,
     pub payload: &'a [u8],
 
-    /// Cookie is set for response messages when the request had `cookie` set in the [`Stack::start_send`] call.
-    /// "Response" message refers having `TO` bit unset.
+    /// Cookie is set for response messages when the request had `cookie` set in the
+    /// [`Stack::start_send`] call. "Response" message refers having `TO` bit unset.
     reassembler: &'a mut Reassembler,
 
     // By default when a MctpMessage is dropped the reassembler will be
@@ -773,7 +773,6 @@ pub(crate) mod fmt {
 
 #[cfg(test)]
 mod tests {
-
     // TODO:
     // back to back fragmenter/reassembler
 

@@ -169,12 +169,8 @@ impl MctpSerialHandler {
                         // Complete frame
                         let packet = &self.rxbuf[2..][..self.rxcount];
                         return Some(packet);
-                    } else {
-                        warn!(
-                            "Bad checksum got {:04x} calc {:04x}",
-                            cs, cs_calc
-                        );
                     }
+                    warn!("Bad checksum got {:04x} calc {:04x}", cs, cs_calc);
                 } else {
                     // restart
                     self.rxpos = Pos::SerialRevision;

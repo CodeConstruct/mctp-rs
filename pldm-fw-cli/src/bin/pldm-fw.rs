@@ -9,17 +9,13 @@ use anyhow::{bail, Context};
 use argh::FromArgs;
 use enumset::{EnumSet, EnumSetType};
 use mctp_linux::{MctpAddr, MctpLinuxListener};
-use std::fmt::Write as _;
 use std::io::Write;
 
 fn comma_separated<T: EnumSetType + std::fmt::Debug>(e: EnumSet<T>) -> String {
-    let mut s = String::new();
-    let mut first = true;
-    for i in e.iter() {
-        write!(s, "{}{:?}", if first { "" } else { "," }, i).unwrap();
-        first = false;
-    }
-    s
+    e.iter()
+        .map(|t| format!("{t:?}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn print_device_info(
@@ -112,10 +108,9 @@ fn extract_component(
     pkg: &pldm_fw::pkg::Package,
     idx: usize,
 ) -> anyhow::Result<()> {
-    if idx >= pkg.components.len() {
-        bail!("no component with index {}", idx);
-    }
-    let comp = &pkg.components[idx];
+    let Some(comp) = pkg.components.get(idx) else {
+        bail!("no component with index {}", idx)
+    };
 
     let fname = format!("component-{}.{:04x}.bin", idx, comp.identifier);
     let mut f = std::fs::File::create(&fname)

@@ -9,7 +9,6 @@ use log::{debug, error, info, trace, warn};
 use core::time::Duration;
 use std::time::Instant;
 
-// use embedded_io::Write;
 use embedded_io_async::{Read, Write};
 use smol::future::FutureExt;
 use smol::Timer;

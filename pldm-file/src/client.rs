@@ -191,7 +191,7 @@ where
         let resp_data_len = read_resp.len as usize;
 
         if rest.len() != resp_data_len + 4 {
-            return Err(proto_error!("invalid resonse data length"));
+            return Err(proto_error!("invalid response data length"));
         }
 
         let (resp_data, resp_cs) = rest.split_at(resp_data_len);

@@ -20,8 +20,7 @@ use log::LevelFilter;
 use mctp::{Eid, Listener, MsgType, RespChannel};
 use mctp_standalone::MctpSerialListener;
 
-/** mctp serial echo
- */
+/// mctp serial echo
 #[derive(argh::FromArgs)]
 struct Args {
     #[argh(switch, short = 'v')]

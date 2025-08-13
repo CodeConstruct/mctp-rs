@@ -106,7 +106,7 @@ impl<const N: usize> Responder<N> {
         &mut self,
         mut comm: R,
         req: &PldmRequest<'_>,
-        host: &mut impl Host,
+        _host: &mut impl Host,
     ) -> pldm::Result<()> {
         if req.typ != PLDM_TYPE_FILE_TRANSFER {
             trace!("pldm-fw non-pldm-fw request {req:?}");
@@ -125,9 +125,9 @@ impl<const N: usize> Responder<N> {
         };
 
         let r = match cmd {
-            Cmd::DfProperties => self.cmd_dfproperties(req, host),
-            Cmd::DfOpen => self.cmd_dfopen(req, host),
-            Cmd::DfClose => self.cmd_dfclose(req, host),
+            Cmd::DfProperties => self.cmd_dfproperties(req),
+            Cmd::DfOpen => self.cmd_dfopen(req),
+            Cmd::DfClose => self.cmd_dfclose(req),
             _ => {
                 trace!("unhandled command {cmd:?}");
                 Err(CCode::ERROR_UNSUPPORTED_PLDM_CMD.into())
@@ -207,7 +207,6 @@ impl<const N: usize> Responder<N> {
     fn cmd_dfproperties<'a>(
         &mut self,
         req: &'a PldmRequest<'a>,
-        _host: &mut impl Host,
     ) -> Result<PldmResponse<'a>> {
         let (rest, dfp) = DfPropertiesReq::from_bytes((&req.data, 0))?;
 
@@ -234,7 +233,6 @@ impl<const N: usize> Responder<N> {
     fn cmd_dfopen<'a>(
         &mut self,
         req: &'a PldmRequest<'a>,
-        _host: &mut impl Host,
     ) -> Result<PldmResponse<'a>> {
         let (rest, dfo) = DfOpenReq::from_bytes((&req.data, 0))?;
 
@@ -254,8 +252,7 @@ impl<const N: usize> Responder<N> {
         let id = self
             .files
             .iter()
-            .enumerate()
-            .find_map(|(n, e)| if e.is_none() { Some(n) } else { None })
+            .position(|e| e.is_none())
             .ok_or(file_ccode::MAX_NUM_FDS_EXCEEDED)?;
 
         self.files[id].replace(file_ctx);
@@ -273,7 +270,6 @@ impl<const N: usize> Responder<N> {
     fn cmd_dfclose<'a>(
         &mut self,
         req: &'a PldmRequest<'a>,
-        _host: &mut impl Host,
     ) -> Result<PldmResponse<'a>> {
         let (rest, dfc) = DfCloseReq::from_bytes((&req.data, 0))?;
 

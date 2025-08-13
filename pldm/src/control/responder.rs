@@ -55,10 +55,10 @@ impl TypeData {
     }
 }
 
-// number of peers that we track negotiated parameters against.
+// Number of peers that we track negotiated parameters against.
 const N_PEERS: usize = 8;
 
-// per-peer data on Negotiate Transfer Parameters results.
+// Per-peer data on Negotiate Transfer Parameters results.
 //
 // The current implementation is spec-volatingly basic: we don't handle per-type
 // data, but just update our negotiated size across all types.

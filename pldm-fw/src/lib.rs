@@ -1342,7 +1342,6 @@ pub struct UpdateTransferProgress {
 
 #[cfg(test)]
 mod tests {
-
     use crate::*;
 
     #[test]

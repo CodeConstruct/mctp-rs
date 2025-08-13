@@ -12,8 +12,7 @@ use log::LevelFilter;
 use mctp::{Eid, MsgType, ReqChannel};
 use mctp_standalone::MctpSerialReq;
 
-/** mctp serial echo
- */
+/// mctp serial echo
 #[derive(argh::FromArgs)]
 struct Args {
     #[argh(switch, short = 'v')]
