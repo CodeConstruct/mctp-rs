@@ -652,7 +652,7 @@ pub struct GetPDRResp {
 
     /// CRC over entire PDR, when transfer_flag == end
     // TODO
-    #[deku(cond = "*transfer_flag & xfer_flag::END != 0")]
+    #[deku(cond = "*transfer_flag == xfer_flag::END")]
     pub crc: Option<u8>,
 }
 
