@@ -10,9 +10,11 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
+use std::time::{Duration, Instant};
 
 struct Host {
     file: RefCell<File>,
+    stamp: RefCell<(Instant, usize)>,
 }
 
 const FILENAME: &str = "pldm-file-host.bin";
@@ -25,12 +27,21 @@ impl Host {
             file: RefCell::new(File::open(FILENAME).with_context(|| {
                 format!("cannot open input file {FILENAME}")
             })?),
+            stamp: RefCell::new((Instant::now(), 0)),
         })
     }
 }
 
 impl pldm_file::host::Host for Host {
     fn read(&self, buf: &mut [u8], offset: usize) -> std::io::Result<usize> {
+        let mut stamp = self.stamp.borrow_mut();
+        let now = Instant::now();
+        let del = now - stamp.0;
+        if del > Duration::from_secs(2) {
+            let rate = (offset - stamp.1) / del.as_millis() as usize;
+            info!("{rate} kB/s, offset {offset}");
+            *stamp = (now, offset);
+        }
         let mut file = self.file.borrow_mut();
         file.seek(SeekFrom::Start(offset as u64))?;
         file.read(buf)
@@ -40,7 +51,8 @@ impl pldm_file::host::Host for Host {
 type FileResponder = pldm_file::host::Responder<1>;
 
 fn main() -> Result<()> {
-    env_logger::init();
+    let log_env = env_logger::Env::default().filter_or("RUST_LOG", "info");
+    env_logger::init_from_env(log_env);
 
     let mut listener = MctpLinuxAsyncListener::new(mctp::MCTP_TYPE_PLDM, None)?;
     let mut pldm_ctrl = pldm::control::responder::Responder::<2>::new();
