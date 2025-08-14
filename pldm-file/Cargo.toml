@@ -18,6 +18,7 @@ num-traits = { workspace = true }
 pldm = { workspace = true }
 
 [dev-dependencies]
+argh = { workspace = true }
 anyhow = "1.0"
 chrono = { workspace = true, features = ["clock"] }
 mctp-linux = { workspace = true }

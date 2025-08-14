@@ -1091,6 +1091,7 @@ name = "pldm-file"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argh",
  "chrono",
  "crc",
  "deku",

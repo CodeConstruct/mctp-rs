@@ -12,39 +12,163 @@ use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, Instant};
 
-struct Host {
-    file: RefCell<File>,
-    stamp: RefCell<(Instant, usize)>,
+use argh;
+
+/// PLDM file host
+#[derive(argh::FromArgs)]
+struct Args {
+    /// file to serve
+    #[argh(
+        option,
+        short = 'f',
+        default = r#""pldm-file-host.bin".to_string()"#
+    )]
+    file: String,
+
+    /// serve zeroes
+    #[argh(switch)]
+    zeroes: bool,
+
+    /// serve a file containing the offset at intervals
+    #[argh(switch)]
+    offset: bool,
 }
 
-const FILENAME: &str = "pldm-file-host.bin";
+struct Host {
+    file_size: u32,
+    speed: Speed,
+    mode: Mode,
+}
+
+enum Mode {
+    File {
+        file: RefCell<File>,
+        filename: String,
+    },
+    Offset,
+    Zeroes,
+}
+
+impl Mode {
+    fn filename(&self) -> String {
+        match self {
+            Self::File { filename, .. } => filename.clone(),
+            Self::Offset => "offset".to_string(),
+            Self::Zeroes => "zeroes".to_string(),
+        }
+    }
+}
+
 // Arbitrary, 0 is reserved.
 const PDR_HANDLE: u32 = 1;
 
 impl Host {
-    fn new() -> Result<Self> {
+    fn new(args: &Args) -> Result<Self> {
+        let speed = Speed::new();
+
+        let mut file_size = u32::MAX;
+        let mode = if args.zeroes {
+            info!("Serving zeroes");
+            Mode::Zeroes
+        } else if args.offset {
+            info!("Serving offset");
+            Mode::Offset
+        } else {
+            let file = File::open(&args.file).with_context(|| {
+                format!("cannot open input file {}", args.file)
+            })?;
+            file_size = file
+                .metadata()
+                .context("Metadata failed")?
+                .size()
+                .try_into()
+                .context("File size > u32")?;
+            info!("Serving {}, {} bytes", args.file, file_size);
+            Mode::File {
+                file: RefCell::new(file),
+                filename: args.file.clone(),
+            }
+        };
+
         Ok(Self {
-            file: RefCell::new(File::open(FILENAME).with_context(|| {
-                format!("cannot open input file {FILENAME}")
-            })?),
-            stamp: RefCell::new((Instant::now(), 0)),
+            mode,
+            file_size,
+            speed,
         })
     }
 }
 
 impl pldm_file::host::Host for Host {
     fn read(&self, buf: &mut [u8], offset: usize) -> std::io::Result<usize> {
+        self.speed.update(offset);
+
+        match &self.mode {
+            Mode::File { file, .. } => {
+                let mut file = file.borrow_mut();
+                file.seek(SeekFrom::Start(offset as u64))?;
+                read_whole(&mut file, buf)
+            }
+            Mode::Zeroes => {
+                buf.fill(0);
+                Ok(buf.len())
+            }
+            Mode::Offset => {
+                let mut o = offset;
+                for b in buf.chunks_mut(64) {
+                    if let Some(b) = b.get_mut(..4) {
+                        b.copy_from_slice(&o.to_be_bytes())
+                    }
+                    o += b.len();
+                }
+                Ok(buf.len())
+            }
+        }
+    }
+}
+
+/// Reads into buf until EOF or error.
+///
+/// A returned `length < buf.len()` means EOF. `buf` should not be empty.
+fn read_whole(f: &mut File, buf: &mut [u8]) -> std::io::Result<usize> {
+    let total = buf.len();
+    let mut rest = buf;
+    while !rest.is_empty() {
+        match f.read(rest) {
+            // EOF
+            Ok(0) => return Ok(total - rest.len()),
+            Ok(l) => rest = &mut rest[l..],
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    // Full output
+    return Ok(total);
+}
+
+struct Speed {
+    stamp: RefCell<(Instant, usize)>,
+}
+
+impl Speed {
+    fn new() -> Self {
+        Self {
+            stamp: RefCell::new((Instant::now(), 0)),
+        }
+    }
+
+    fn update(&self, offset: usize) {
         let mut stamp = self.stamp.borrow_mut();
         let now = Instant::now();
+        if offset == 0 {
+            stamp.0 = now;
+        }
+
         let del = now - stamp.0;
         if del > Duration::from_secs(2) {
             let rate = (offset - stamp.1) / del.as_millis() as usize;
             info!("{rate} kB/s, offset {offset}");
             *stamp = (now, offset);
         }
-        let mut file = self.file.borrow_mut();
-        file.seek(SeekFrom::Start(offset as u64))?;
-        file.read(buf)
     }
 }
 
@@ -57,7 +181,10 @@ fn main() -> Result<()> {
     let mut listener = MctpLinuxAsyncListener::new(mctp::MCTP_TYPE_PLDM, None)?;
     let mut pldm_ctrl = pldm::control::responder::Responder::<2>::new();
     let mut pldm_file = FileResponder::new();
-    let mut host = Host::new().context("unable to create file host")?;
+
+    let args: Args = argh::from_env();
+
+    let mut host = Host::new(&args).context("unable to create file host")?;
 
     FileResponder::register(&mut pldm_ctrl)?;
 
@@ -180,15 +307,6 @@ fn handle_get_pdr(
         return Ok(plat_codes::INVALID_RECORD_CHANGE_NUMBER);
     }
 
-    let file_max_size = host
-        .file
-        .borrow()
-        .metadata()
-        .context("Metadata failed")?
-        .size()
-        .try_into()
-        .context("File size > u32")?;
-
     let pdr_resp = GetPDRResp::new_single(
         PDR_HANDLE,
         PdrRecord::FileDescriptor(FileDescriptorPdr {
@@ -204,10 +322,15 @@ fn handle_get_pdr(
             oem_file_classification: 0,
             capabilities: file_capabilities::EX_READ_OPEN,
             file_version: 0xFFFFFFFF,
-            file_max_size,
+            file_max_size: host.file_size,
             // TODO
             file_max_desc_count: 1,
-            file_name: FILENAME.try_into().expect("Filename too long"),
+            file_name: host
+                .mode
+                .filename()
+                .as_str()
+                .try_into()
+                .expect("Filename too long"),
             oem_file_classification_name: Default::default(),
         }),
     )?;
