@@ -17,6 +17,10 @@ num-derive = { workspace = true }
 num-traits = { workspace = true }
 pldm = { workspace = true }
 
+[dev-dependencies]
+deku = { workspace = true, features = ["logging"] }
+env_logger = { workspace = true }
+
 [features]
 default = ["std"]
 alloc = ["pldm/alloc", "deku/alloc"]
