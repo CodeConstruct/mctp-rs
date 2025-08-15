@@ -675,8 +675,7 @@ impl GetPDRResp {
             next_data_transfer_handle: 0,
             transfer_flag: xfer_flag::START_AND_END,
             record_data: Default::default(),
-            // TODO crc
-            crc: Some(0),
+            crc: None,
         };
         let cap = s.record_data.capacity();
         s.record_data.resize_default(cap).unwrap();
