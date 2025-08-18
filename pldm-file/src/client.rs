@@ -167,6 +167,8 @@ where
         req_offset,
         req_length,
     };
+    let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+    let mut digest = crc32.digest();
     loop {
         let mut tx_buf = [0; 18];
         let l = req.to_slice(&mut tx_buf).map_err(|_| PldmError::NoSpace)?;
@@ -196,12 +198,11 @@ where
 
         let (resp_data, resp_cs) = rest.split_at(resp_data_len);
 
-        let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-        let calc_cs = crc32.checksum(resp_data);
+        digest.update(resp_data);
         // unwrap: we have asserted the lengths above
         let cs = u32::from_le_bytes(resp_cs.try_into().unwrap());
 
-        if calc_cs != cs {
+        if digest.clone().finalize() != cs {
             return Err(proto_error!("data checksum mismatch"));
         }
 

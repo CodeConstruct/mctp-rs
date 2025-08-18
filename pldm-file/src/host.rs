@@ -23,6 +23,9 @@ pub trait Host {
     fn read(&self, buf: &mut [u8], offset: usize) -> std::io::Result<usize>;
 }
 
+const CRC32: crc::Crc<u32, crc::Table<16>> =
+    crc::Crc::<u32, crc::Table<16>>::new(&crc::CRC_32_ISO_HDLC);
+
 // Created at the first stage (XFER_FIRST_PART) of a MultpartReceive,
 // where we have the offset and size.
 struct FileTransferContext {
@@ -31,6 +34,23 @@ struct FileTransferContext {
     len: usize,
     // Current transfer 0..len
     offset: usize,
+    digest: crc::Digest<'static, u32, crc::Table<16>>,
+}
+
+impl FileTransferContext {
+    fn new(start: usize, len: usize) -> Self {
+        Self {
+            start,
+            len,
+            offset: 0,
+            digest: CRC32.digest(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.offset = 0;
+        self.digest = CRC32.digest();
+    }
 }
 
 // Created on DfOpen
@@ -79,9 +99,6 @@ impl std::fmt::Display for PldmFileError {
         write!(f, "CC: {}", self.0)
     }
 }
-
-const CRC32: crc::Crc<u32, crc::Table<16>> =
-    crc::Crc::<u32, crc::Table<16>>::new(&crc::CRC_32_ISO_HDLC);
 
 type Result<T> = std::result::Result<T, PldmFileError>;
 
@@ -349,10 +366,10 @@ impl<const N: usize> Responder<N> {
         // Set new transfer context
         if cmd.xfer_op == pldm::control::xfer_op::FIRST_PART {
             if let Some(ctx) = file_ctx.xfer_ctx.as_mut() {
-                ctx.offset = 0;
+                // a repeated FIRST_PART is valid, and restarts the transfer
+                ctx.reset();
             } else {
                 let new_ctx = Self::init_read(&cmd)?;
-                // a repeated FIRST_PART is valid, and restarts the transfer
                 file_ctx.xfer_ctx.replace(new_ctx);
             };
         }
@@ -406,7 +423,8 @@ impl<const N: usize> Responder<N> {
         host.read(data, xfer_ctx.start + offset)
             .map_err(|_| CCode::ERROR)?;
 
-        let cs = CRC32.checksum(data);
+        xfer_ctx.digest.update(data);
+        let cs = xfer_ctx.digest.clone().finalize();
         resp_data.extend_from_slice(&cs.to_le_bytes());
 
         xfer_ctx.offset = offset;
@@ -421,11 +439,7 @@ impl<const N: usize> Responder<N> {
         trace!("init_read {req:?}");
         let start = req.req_offset as usize;
         let len = req.req_length as usize;
-        Ok(FileTransferContext {
-            start,
-            len,
-            offset: 0,
-        })
+        Ok(FileTransferContext::new(start, len))
     }
 }
 
