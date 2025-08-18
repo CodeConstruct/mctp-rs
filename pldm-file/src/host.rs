@@ -369,8 +369,11 @@ impl<const N: usize> Responder<N> {
                 // a repeated FIRST_PART is valid, and restarts the transfer
                 ctx.reset();
             } else {
-                let new_ctx = Self::init_read(&cmd)?;
-                file_ctx.xfer_ctx.replace(new_ctx);
+                let ctx = FileTransferContext::new(
+                    cmd.req_offset as usize,
+                    cmd.req_length as usize,
+                );
+                file_ctx.xfer_ctx.replace(ctx);
             };
         }
 
@@ -431,15 +434,6 @@ impl<const N: usize> Responder<N> {
         resp.set_data(resp_data);
 
         Ok(resp)
-    }
-
-    fn init_read(
-        req: &pldm::control::MultipartReceiveReq,
-    ) -> Result<FileTransferContext> {
-        trace!("init_read {req:?}");
-        let start = req.req_offset as usize;
-        let len = req.req_length as usize;
-        Ok(FileTransferContext::new(start, len))
     }
 }
 
