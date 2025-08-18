@@ -80,6 +80,9 @@ impl std::fmt::Display for PldmFileError {
     }
 }
 
+const CRC32: crc::Crc<u32, crc::Table<16>> =
+    crc::Crc::<u32, crc::Table<16>>::new(&crc::CRC_32_ISO_HDLC);
+
 type Result<T> = std::result::Result<T, PldmFileError>;
 
 impl<const N: usize> Responder<N> {
@@ -402,8 +405,8 @@ impl<const N: usize> Responder<N> {
         let data = &mut resp_data[l..];
         host.read(data, xfer_ctx.start + offset)
             .map_err(|_| CCode::ERROR)?;
-        let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-        let cs = crc32.checksum(data);
+
+        let cs = CRC32.checksum(data);
         resp_data.extend_from_slice(&cs.to_le_bytes());
 
         xfer_ctx.offset = offset;
