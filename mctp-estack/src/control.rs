@@ -424,16 +424,16 @@ where
 }
 
 /// A Control Message handler.
-pub struct MctpControl<'a> {
+pub struct MctpControl<'g, 'r> {
     rsp_buf: [u8; MAX_MSG_SIZE],
     types: heapless::Vec<MsgType, MAX_MSG_TYPES>,
     uuid: Option<Uuid>,
-    router: &'a Router<'a>,
+    router: &'g Router<'r>,
 }
 
-impl<'a> MctpControl<'a> {
+impl<'g, 'r> MctpControl<'g, 'r> {
     /// Create a new instance.
-    pub fn new(router: &'a Router<'a>) -> Self {
+    pub fn new(router: &'g Router<'r>) -> Self {
         Self {
             rsp_buf: [0u8; MAX_MSG_SIZE],
             types: heapless::Vec::new(),
