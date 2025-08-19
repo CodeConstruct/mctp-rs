@@ -109,21 +109,25 @@ pub async fn df_close(
     Ok(())
 }
 
-const PART_SIZE: usize = 1024;
+pub const PART_SIZE: usize = 4096;
 
 /// Read a file from the host.
 ///
 /// The total file size read is returned.
+///
+/// `part_buf` must be sized as at least `multipart_size + 18`, where multipart_size
+/// is the size passed to [`pldm::control::requester::negotiate_transfer_parameters`].
 pub async fn df_read(
     comm: &mut impl mctp::AsyncReqChannel,
     file: FileDescriptor,
     offset: usize,
     buf: &mut [u8],
+    part_buf: &mut [u8],
 ) -> Result<usize> {
     let len = buf.len();
     let mut v = pldm::util::SliceWriter::new(buf);
 
-    df_read_with(comm, file, offset, len, |b| {
+    df_read_with(comm, file, offset, len, part_buf, |b| {
         let r = v.extend(b);
         debug_assert!(r.is_some(), "provided data should be <= len");
         Ok(())
@@ -135,11 +139,15 @@ pub async fn df_read(
 ///
 /// The `out` closure will be called repeatedly with sequential buffer chunks
 /// sent from the host. Any error returned by `out` will be returned from `df_read_with`.
+///
+/// `part_buf` must be sized as at least `multipart_size + 18`, where multipart_size
+/// is the size passed to [`pldm::control::requester::negotiate_transfer_parameters`].
 pub async fn df_read_with<F>(
     comm: &mut impl mctp::AsyncReqChannel,
     file: FileDescriptor,
     offset: usize,
     len: usize,
+    part_buf: &mut [u8],
     mut out: F,
 ) -> Result<usize>
 where
@@ -180,9 +188,8 @@ where
             tx_buf,
         );
 
-        // todo: negotiated length
-        let mut rx_buf = [0u8; 14 + PART_SIZE + 4];
-        let resp = pldm_xfer_buf_async(comm, pldm_req, &mut rx_buf).await?;
+        // todo: can part_buf.len() be checked against negotiated length?
+        let resp = pldm_xfer_buf_async(comm, pldm_req, part_buf).await?;
 
         let ((rest, _), read_resp) =
             MultipartReceiveResp::from_bytes((&resp.data, 0)).map_err(|e| {
