@@ -9,7 +9,9 @@
 use crate::fmt::*;
 #[cfg(feature = "embassy")]
 use crate::Router;
-use mctp::{AsyncRespChannel, Eid, Error, Listener, MsgIC, MsgType};
+#[cfg(feature = "embassy")]
+use mctp::{AsyncRespChannel, MsgIC};
+use mctp::{Eid, Error, Listener, MsgType};
 use uuid::Uuid;
 
 /// A `Result` with a MCTP control completion code as error.
@@ -192,7 +194,9 @@ pub struct MctpControlMsg<'a> {
     work: [u8; 2],
 }
 
+#[cfg(feature = "embassy")]
 const MAX_MSG_SIZE: usize = 20; /* largest is Get Endpoint UUID */
+#[cfg(feature = "embassy")]
 const MAX_MSG_TYPES: usize = 8;
 
 impl<'a> MctpControlMsg<'a> {
