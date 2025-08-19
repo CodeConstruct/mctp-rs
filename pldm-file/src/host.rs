@@ -15,7 +15,8 @@ use crate::PLDM_TYPE_FILE_TRANSFER;
 
 const FILE_ID: FileIdentifier = FileIdentifier(0);
 
-const MAX_PART_SIZE: u16 = 1024;
+// Largest possible power of two
+const MAX_PART_SIZE: u16 = 8192;
 
 pub trait Host {
     /// Returns number of bytes read
