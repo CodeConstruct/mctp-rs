@@ -38,19 +38,21 @@ fn main() -> Result<()> {
 
         let mut buf = Vec::new();
         let req_len = 4096;
+        let mut part_buf = [0u8; 512 + 18];
 
         println!("Reading...");
-        let res = df_read_with(&mut req, fd, 0, req_len, |part| {
-            println!("  {} bytes", part.len());
-            if buf.len() + part.len() > req_len {
-                println!("  data overflow!");
-                Err(PldmError::NoSpace)
-            } else {
-                buf.extend_from_slice(part);
-                Ok(())
-            }
-        })
-        .await;
+        let res =
+            df_read_with(&mut req, fd, 0, req_len, &mut part_buf, |part| {
+                println!("  {} bytes", part.len());
+                if buf.len() + part.len() > req_len {
+                    println!("  data overflow!");
+                    Err(PldmError::NoSpace)
+                } else {
+                    buf.extend_from_slice(part);
+                    Ok(())
+                }
+            })
+            .await;
 
         println!("Read: {res:?}");
 
