@@ -61,6 +61,7 @@ pub mod control;
 pub mod fragment;
 pub mod i2c;
 mod reassemble;
+#[cfg(feature = "embassy")]
 pub mod router;
 pub mod serial;
 pub mod usb;
@@ -68,12 +69,14 @@ pub mod usb;
 mod util;
 mod proto;
 
+#[cfg(feature = "embassy")]
 #[rustfmt::skip]
 #[allow(clippy::needless_lifetimes)]
 mod zerocopy_channel;
 
 use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
+#[cfg(feature = "embassy")]
 pub use router::Router;
 
 use crate::fmt::*;

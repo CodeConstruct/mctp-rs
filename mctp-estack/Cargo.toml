@@ -11,7 +11,7 @@ rust-version = "1.85"
 [dependencies]
 crc = { workspace = true }
 defmt = { workspace = true, optional = true }
-embassy-sync = "0.7"
+embassy-sync = { version = "0.7", optional = true }
 embedded-io-async = { workspace = true }
 heapless = { workspace = true }
 log = { workspace = true, optional = true }
@@ -33,3 +33,4 @@ default = ["log"]
 std = ["mctp/std"]
 log = ["dep:log"]
 defmt = ["mctp/defmt", "dep:defmt" ]
+embassy = ["dep:embassy-sync"]
