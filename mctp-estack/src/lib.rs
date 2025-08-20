@@ -7,6 +7,8 @@
 //!
 //! This crate provides a MCTP stack that can be embedded in other programs
 //! or devices.
+//! A `async` Router for embassy based applications is available
+//! through the `embassy` feature.
 //!
 //! A [`Router`] object lets programs use a [`Stack`] with
 //! MCTP transport binding links. Each *Port* handles transmitting and receiving
@@ -19,6 +21,10 @@
 //!
 //! The IO-less [`Stack`] handles MCTP message formatting and parsing, independent
 //! of any particular MCTP transport binding.
+//!
+//! ## Features
+//! - `embassy`: async `Router` for [Embassy](https://embassy.dev/)
+//! - `async`: [embedded-io-async](https://docs.rs/embedded-io-async/0.6.1/embedded_io_async/) serial transport binding (enabled by `embassy` feature)
 //!
 //! ## Configuration
 //!
@@ -63,6 +69,7 @@ pub mod i2c;
 mod reassemble;
 #[cfg(feature = "embassy")]
 pub mod router;
+#[cfg(feature = "async")]
 pub mod serial;
 pub mod usb;
 #[macro_use]
