@@ -69,7 +69,6 @@ pub mod i2c;
 mod reassemble;
 #[cfg(feature = "embassy")]
 pub mod router;
-#[cfg(feature = "async")]
 pub mod serial;
 pub mod usb;
 #[macro_use]

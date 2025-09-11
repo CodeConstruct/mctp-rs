@@ -3,6 +3,11 @@
  * Copyright (c) 2025 Code Construct
  */
 
+// Roundtrip heavily relies on the router implementation that we currently have
+// to remove for a working synchronous implementaion.
+// For now, exclude the entire roundtrip test.
+#![cfg(feature = "embassy")]
+
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
@@ -10,6 +15,7 @@ use mctp::{Eid, MsgType};
 
 use mctp::{AsyncListener, AsyncReqChannel, AsyncRespChannel};
 use mctp_estack::config::NUM_RECEIVE;
+
 use mctp_estack::router::{
     Port, PortId, PortLookup, PortTop, RouterAsyncReqChannel,
 };

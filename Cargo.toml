@@ -16,6 +16,7 @@ defmt = "0.3"
 deku = { git = "https://github.com/CodeConstruct/deku.git", tag = "cc/deku-v0.19.1/no-alloc-3", default-features = false }
 embedded-io-adapters = { version = "0.6", features = ["std", "futures-03"] }
 embedded-io-async = "0.6"
+embedded-io = "0.6"
 enumset = "1.1"
 env_logger = "0.11.3"
 heapless = "0.8"

@@ -12,6 +12,7 @@ rust-version = "1.85"
 crc = { workspace = true }
 defmt = { workspace = true, optional = true }
 embassy-sync = { version = "0.7", optional = true }
+embedded-io.workspace = true
 embedded-io-async = { workspace = true, optional = true }
 heapless = { workspace = true }
 log = { workspace = true, optional = true }
