@@ -108,6 +108,7 @@ impl MctpSerialHandler {
         // TODO: This reads one byte a time, might need a buffering wrapper
         // for performance. Will require more thought about cancel-safety
 
+        trace!("recv trace");
         loop {
             let mut b = 0u8;
             match input.read(core::slice::from_mut(&mut b)) {
@@ -362,9 +363,12 @@ mod tests {
     #[cfg(feature = "embassy")]
     use embedded_io_adapters::futures_03::FromFutures;
 
+    static TEST_DATA_ROUNTRIP: [&[u8]; 1] =
+        [&[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36]];
+
     fn start_log() {
         let _ = env_logger::Builder::new()
-            .filter(None, log::LevelFilter::Trace)
+            .filter(None, log::LevelFilter::Debug)
             .is_test(true)
             .try_init();
     }
@@ -376,25 +380,29 @@ mod tests {
         MctpSerialHandler::frame_to_serial(payload, &mut s)
             .await
             .unwrap();
-        debug!("{:02x?}", payload);
-        debug!("{:02x?}", esc);
+
+        debug!("payload {:02x?}", payload);
+        debug!("esc {:02x?}", esc);
 
         let mut h = MctpSerialHandler::new();
         let mut s = FromFutures::new(esc.as_slice());
         let packet = h.recv_async(&mut s).await.unwrap();
+        debug!("packet {:02x?}", packet);
         debug_assert_eq!(payload, packet);
     }
 
     #[cfg(not(feature = "embassy"))]
     fn do_roundtrip_sync(payload: &[u8]) {
+        start_log();
         let mut esc = vec![];
         MctpSerialHandler::frame_to_serial(payload, &mut esc).unwrap();
-        debug!("{:02x?}", payload);
-        debug!("{:02x?}", esc);
+        debug!("payload {:02x?}", payload);
+        debug!("esc {:02x?}", esc);
 
         let mut h = MctpSerialHandler::new();
         let mut s = esc.as_slice();
         let packet = h.recv(&mut s).unwrap();
+        debug!("packet {:02x?}", packet);
         debug_assert_eq!(payload, packet);
     }
 
@@ -404,9 +412,7 @@ mod tests {
         // Fixed testcases
         start_log();
         smol::block_on(async {
-            for payload in
-                [&[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36]]
-            {
+            for payload in TEST_DATA_ROUNTRIP {
                 do_roundtrip_async(payload).await
             }
         })
@@ -415,10 +421,8 @@ mod tests {
     #[cfg(not(feature = "embassy"))]
     #[test]
     fn roundtrip_cases_sync() {
-        let test_payload =
-            [&[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36]];
         start_log();
-        for payload in test_payload {
+        for payload in TEST_DATA_ROUNTRIP {
             do_roundtrip_sync(payload)
         }
     }
