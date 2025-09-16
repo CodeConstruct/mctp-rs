@@ -547,15 +547,24 @@ impl MctpLinuxListener {
     /// This will listen for MCTP message type `typ`, on an optional
     /// Linux network `net`. `None` network defaults to `MCTP_NET_ANY`.
     pub fn new(typ: MsgType, net: Option<u32>) -> Result<Self> {
+        Self::new_with_eid(typ, MCTP_ADDR_ANY, net)
+    }
+
+    /// Create a new `MctpLinuxListener` bound to a local address.
+    ///
+    /// This will listen for MCTP message type `typ`, on an optional
+    /// Linux network `net`. `None` network defaults to `MCTP_NET_ANY`.
+    /// The listener will be bound to `local_addr`.
+    pub fn new_with_eid(
+        typ: MsgType,
+        local_addr: Eid,
+        net: Option<u32>,
+    ) -> Result<Self> {
         let sock = MctpSocket::new()?;
         // Linux requires MCTP_ADDR_ANY for binds.
         let net = net.unwrap_or(MCTP_NET_ANY);
-        let addr = MctpSockAddr::new(
-            MCTP_ADDR_ANY.0,
-            net,
-            typ.0,
-            mctp::MCTP_TAG_OWNER,
-        );
+        let addr =
+            MctpSockAddr::new(local_addr.0, net, typ.0, mctp::MCTP_TAG_OWNER);
         sock.bind(&addr)?;
         Ok(Self { sock, net, typ })
     }
@@ -617,15 +626,24 @@ impl MctpLinuxAsyncListener {
     /// This will listen for MCTP message type `typ`, on an optional
     /// Linux network `net`. `None` network defaults to `MCTP_NET_ANY`.
     pub fn new(typ: MsgType, net: Option<u32>) -> Result<Self> {
+        Self::new_with_eid(typ, MCTP_ADDR_ANY, net)
+    }
+
+    /// Create a new `MctpLinuxAsyncListener` bound to a local address.
+    ///
+    /// This will listen for MCTP message type `typ`, on an optional
+    /// Linux network `net`. `None` network defaults to `MCTP_NET_ANY`.
+    /// The listener will be bound to `local_addr`.
+    pub fn new_with_eid(
+        typ: MsgType,
+        local_addr: Eid,
+        net: Option<u32>,
+    ) -> Result<Self> {
         let sock = MctpSocketAsync::new()?;
         // Linux requires MCTP_ADDR_ANY for binds.
         let net = net.unwrap_or(MCTP_NET_ANY);
-        let addr = MctpSockAddr::new(
-            MCTP_ADDR_ANY.0,
-            net,
-            typ.0,
-            mctp::MCTP_TAG_OWNER,
-        );
+        let addr =
+            MctpSockAddr::new(local_addr.0, net, typ.0, mctp::MCTP_TAG_OWNER);
         sock.bind(&addr)?;
         Ok(Self { sock, net, typ })
     }
