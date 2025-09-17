@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -v
 set -e
@@ -15,7 +15,7 @@ cargo fmt -- --check
 
 # Check everything first
 cargo check --all-targets --locked
-if [ -z "NO_CLIPPY" ]; then
+if [ -z "$NO_CLIPPY" ]; then
     cargo clippy --all-targets
 fi
 
@@ -27,14 +27,14 @@ cargo test
 NOSTD_CRATES="mctp pldm pldm-fw pldm-platform pldm-file"
 for c in $NOSTD_CRATES; do
     (
-    cd $c
+    cd "$c"
     cargo build --target thumbv7em-none-eabihf --no-default-features
     )
 done
 ALLOC_CRATES="pldm pldm-platform pldm-file"
 for c in $ALLOC_CRATES; do
     (
-    cd $c
+    cd "$c"
     cargo build --target thumbv7em-none-eabihf --no-default-features --features alloc
     )
 done
