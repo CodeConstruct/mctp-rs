@@ -53,6 +53,25 @@ cargo build --target thumbv7em-none-eabihf --features defmt --no-default-feature
 cargo build --features log
 )
 
-cargo doc
+FEATURES_ASYNC="embassy"
+FEATURES_SYNC=""
+
+declare -a FEATURES=(
+    "$FEATURES_SYNC"
+    "$FEATURES_ASYNC"
+)
+
+# mctp-estack, sync an async
+(
+cd mctp-estack
+for feature in "${FEATURES[@]}"; do
+    cargo test --features="$feature"
+done;
+)
+
+# run cargo doc tests
+for feature in "${FEATURES[@]}"; do
+    cargo doc --features="$feature"
+done;
 
 echo success
