@@ -17,7 +17,7 @@ use core::task::{Poll, Waker};
 
 use crate::{
     config, AppCookie, Fragmenter, MctpHeader, MctpMessage, SendOutput, Stack,
-    MAX_MTU, MAX_PAYLOAD,
+    MAX_MTU,
 };
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
 
@@ -180,23 +180,8 @@ impl PortTop {
         &self,
         fragmenter: &mut Fragmenter,
         pkt: &[&[u8]],
-        work_msg: &mut Vec<u8, MAX_PAYLOAD>,
     ) -> Result<Tag> {
         trace!("send_message");
-        let payload = if pkt.len() == 1 {
-            // Avoid the copy when sending a single slice
-            pkt[0]
-        } else {
-            work_msg.clear();
-            for p in pkt {
-                work_msg.extend_from_slice(p).map_err(|_| {
-                    debug!("Message too large");
-                    Error::NoSpace
-                })?;
-            }
-            work_msg
-        };
-
         // send_message() needs to wait for packets to get enqueued to the PortTop channel.
         // It shouldn't hold the send_mutex() across an await, since that would block
         // forward_packet().
@@ -215,7 +200,7 @@ impl PortTop {
                     };
 
                     qpkt.len = 0;
-                    match fragmenter.fragment(payload, &mut qpkt.data) {
+                    match fragmenter.fragment_vectored(pkt, &mut qpkt.data) {
                         SendOutput::Packet(p) => {
                             qpkt.len = p.len();
                             sender.send_done();
@@ -452,10 +437,6 @@ pub struct Router<'r> {
         BlockingMutex<RefCell<Vec<(MsgType, AppCookie), MAX_LISTENERS>>>,
 
     recv_wakers: WakerPool,
-
-    /// Temporary storage to flatten vectorised local sent messages
-    // prior to fragmentation and queueing.
-    work_msg: AsyncMutex<Vec<u8, MAX_PAYLOAD>>,
 }
 
 pub struct RouterInner<'r> {
@@ -497,7 +478,6 @@ impl<'r> Router<'r> {
             app_listeners,
             ports: Vec::new(),
             recv_wakers: Default::default(),
-            work_msg: AsyncMutex::new(Vec::new()),
         }
     }
 
@@ -776,9 +756,7 @@ impl<'r> Router<'r> {
         // release to allow other ports to continue work
         drop(inner);
 
-        // lock the shared work buffer against other app_send_message()
-        let mut work_msg = self.work_msg.lock().await;
-        top.send_message(&mut fragmenter, buf, &mut work_msg).await
+        top.send_message(&mut fragmenter, buf).await
     }
 
     /// Create a `AsyncReqChannel` instance.
