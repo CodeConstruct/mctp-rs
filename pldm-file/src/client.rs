@@ -228,7 +228,6 @@ where
 
         part_offset = total_len;
         req.xfer_op = pldm::control::xfer_op::NEXT_PART;
-        req.xfer_context = 0;
         req.xfer_handle = read_resp.next_handle;
         req.req_offset = 0;
         req.req_length = 0;
