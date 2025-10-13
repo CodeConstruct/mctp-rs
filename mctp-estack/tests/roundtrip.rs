@@ -6,7 +6,7 @@
 // Roundtrip heavily relies on the router implementation that we currently have
 // to remove for a working synchronous implementaion.
 // For now, exclude the entire roundtrip test.
-#![cfg(feature = "embassy")]
+#![cfg(feature = "async")]
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};

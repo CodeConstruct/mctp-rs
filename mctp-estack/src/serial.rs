@@ -12,10 +12,10 @@ use mctp::{Error, Result};
 use crc::Crc;
 use heapless::Vec;
 
-#[cfg(feature = "embassy")]
+#[cfg(feature = "async")]
 use embedded_io_async::{Read, Write};
 
-#[cfg(not(feature = "embassy"))]
+#[cfg(not(feature = "async"))]
 use embedded_io::{Read, Write};
 
 const MCTP_SERIAL_REVISION: u8 = 0x01;
@@ -72,7 +72,7 @@ impl MctpSerialHandler {
     /// Read a frame.
     ///
     /// This is async cancel-safe.
-    #[cfg(feature = "embassy")]
+    #[cfg(feature = "async")]
     pub async fn recv_async(&mut self, input: &mut impl Read) -> Result<&[u8]> {
         // TODO: This reads one byte a time, might need a buffering wrapper
         // for performance. Will require more thought about cancel-safety
@@ -103,7 +103,7 @@ impl MctpSerialHandler {
 
     /// Read a frame synchronously.
     /// This function blocks until at least one byte is available
-    #[cfg(not(feature = "embassy"))]
+    #[cfg(not(feature = "async"))]
     pub fn recv(&mut self, input: &mut impl Read) -> Result<&[u8]> {
         // TODO: This reads one byte a time, might need a buffering wrapper
         // for performance. Will require more thought about cancel-safety
@@ -220,7 +220,7 @@ impl MctpSerialHandler {
     }
 
     /// Asynchronously send a MCTP packet over serial provided by `output`.
-    #[cfg(feature = "embassy")]
+    #[cfg(feature = "async")]
     pub async fn send_async(
         &mut self,
         pkt: &[u8],
@@ -232,7 +232,7 @@ impl MctpSerialHandler {
     }
 
     /// Synchronously send a MCTP packet over serial provided by `output`.
-    #[cfg(not(feature = "embassy"))]
+    #[cfg(not(feature = "async"))]
     pub fn send_sync(
         &mut self,
         pkt: &[u8],
@@ -242,7 +242,7 @@ impl MctpSerialHandler {
     }
 
     /// Frame a MCTP packet into a serial frame, writing to `output`.
-    #[cfg(feature = "embassy")]
+    #[cfg(feature = "async")]
     async fn frame_to_serial<W>(
         p: &[u8],
         output: &mut W,
@@ -267,7 +267,7 @@ impl MctpSerialHandler {
     }
 
     /// Frame a MCTP packet into a serial frame, writing to `output`.
-    #[cfg(not(feature = "embassy"))]
+    #[cfg(not(feature = "async"))]
     fn frame_to_serial<W>(
         p: &[u8],
         output: &mut W,
@@ -292,7 +292,7 @@ impl MctpSerialHandler {
     }
 
     /// Asynchronously write a byte slice to `output`, escaping 0x7e and 0x7d bytes.
-    #[cfg(feature = "embassy")]
+    #[cfg(feature = "async")]
     async fn write_escaped<W>(
         p: &[u8],
         output: &mut W,
@@ -320,7 +320,7 @@ impl MctpSerialHandler {
     }
 
     /// Synchronously write a byte slice to `output`, escaping 0x7e and 0x7d bytes.
-    #[cfg(not(feature = "embassy"))]
+    #[cfg(not(feature = "async"))]
     fn write_escaped<W>(
         p: &[u8],
         output: &mut W,
@@ -360,7 +360,7 @@ mod tests {
     use crate::*;
     use proptest::prelude::*;
 
-    #[cfg(feature = "embassy")]
+    #[cfg(feature = "async")]
     use embedded_io_adapters::futures_03::FromFutures;
 
     static TEST_DATA_ROUNTRIP: [&[u8]; 1] =
@@ -373,7 +373,7 @@ mod tests {
             .try_init();
     }
 
-    #[cfg(feature = "embassy")]
+    #[cfg(feature = "async")]
     async fn do_roundtrip_async(payload: &[u8]) {
         let mut esc = vec![];
         let mut s = FromFutures::new(&mut esc);
@@ -391,7 +391,7 @@ mod tests {
         debug_assert_eq!(payload, packet);
     }
 
-    #[cfg(not(feature = "embassy"))]
+    #[cfg(not(feature = "async"))]
     fn do_roundtrip_sync(payload: &[u8]) {
         start_log();
         let mut esc = vec![];
@@ -406,7 +406,7 @@ mod tests {
         debug_assert_eq!(payload, packet);
     }
 
-    #[cfg(feature = "embassy")]
+    #[cfg(feature = "async")]
     #[test]
     fn roundtrip_cases_async() {
         // Fixed testcases
@@ -418,7 +418,7 @@ mod tests {
         })
     }
 
-    #[cfg(not(feature = "embassy"))]
+    #[cfg(not(feature = "async"))]
     #[test]
     fn roundtrip_cases_sync() {
         start_log();
@@ -428,14 +428,14 @@ mod tests {
     }
 
     proptest! {
-        #[cfg(feature = "embassy")]
+        #[cfg(feature = "async")]
         #[test]
         fn roundtrip_escape_async(payload in proptest::collection::vec(0..255u8, 5..20)) {
             start_log();
             smol::block_on(do_roundtrip_async(&payload))
         }
 
-        #[cfg(not(feature = "embassy"))]
+        #[cfg(not(feature = "async"))]
         #[test]
         fn roundtrip_escape_sync(payload in proptest::collection::vec(0..255u8, 5..20)) {
             start_log();

@@ -7,9 +7,9 @@
 //! MCTP Control Protocol implementation
 
 use crate::fmt::*;
-#[cfg(feature = "embassy")]
+#[cfg(feature = "async")]
 use crate::Router;
-#[cfg(feature = "embassy")]
+#[cfg(feature = "async")]
 use mctp::{AsyncRespChannel, MsgIC};
 use mctp::{Eid, Error, Listener, MsgType};
 use uuid::Uuid;
@@ -194,9 +194,9 @@ pub struct MctpControlMsg<'a> {
     work: [u8; 2],
 }
 
-#[cfg(feature = "embassy")]
+#[cfg(feature = "async")]
 const MAX_MSG_SIZE: usize = 20; /* largest is Get Endpoint UUID */
-#[cfg(feature = "embassy")]
+#[cfg(feature = "async")]
 const MAX_MSG_TYPES: usize = 8;
 
 impl<'a> MctpControlMsg<'a> {
@@ -429,7 +429,7 @@ where
 }
 
 /// A Control Message handler.
-#[cfg(feature = "embassy")]
+#[cfg(feature = "async")]
 pub struct MctpControl<'g, 'r> {
     rsp_buf: [u8; MAX_MSG_SIZE],
     types: heapless::Vec<MsgType, MAX_MSG_TYPES>,
@@ -437,7 +437,7 @@ pub struct MctpControl<'g, 'r> {
     router: &'g Router<'r>,
 }
 
-#[cfg(feature = "embassy")]
+#[cfg(feature = "async")]
 impl<'g, 'r> MctpControl<'g, 'r> {
     /// Create a new instance.
     pub fn new(router: &'g Router<'r>) -> Self {
