@@ -197,6 +197,11 @@ pub async fn negotiate_transfer_parameters<'f>(
 
     let req_types = req_types.iter().fold(0u64, |x, typ| x | 1 << typ);
 
+    if !part_size.is_power_of_two() || part_size < 256 {
+        debug!("Bad part_size {}", part_size);
+        return Err(PldmError::InvalidArgument);
+    }
+
     let req = control::NegotiateTransferParametersReq {
         part_size,
         protocols: req_types.to_le_bytes(),
