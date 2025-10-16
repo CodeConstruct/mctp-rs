@@ -150,6 +150,10 @@ impl Fragmenter {
         payload: &[&[u8]],
         out: &'f mut [u8],
     ) -> SendOutput<'f> {
+        if self.header.eom {
+            return SendOutput::success(self);
+        }
+
         let total_payload_len =
             payload.iter().fold(0, |acc, part| acc + part.len());
         if total_payload_len < self.payload_used {
