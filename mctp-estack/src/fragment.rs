@@ -90,14 +90,45 @@ impl Fragmenter {
     /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with
     /// packet contents.
     ///
+    /// Calls to `fragment_vectored()` and `fragment()` should not be mixed.
+    /// (If you do, the vector has to hold exactly one buffer that is
+    /// equal to the one passed to `fragment()`.)
+    ///
     /// `out` must be at least as large as the specified `mtu`.
     pub fn fragment<'f>(
         &mut self,
         payload: &[u8],
         out: &'f mut [u8],
     ) -> SendOutput<'f> {
+        self.fragment_vectored(&[payload], out)
+    }
+
+    /// Returns fragments for the MCTP payload
+    ///
+    /// The same input message `payload` should be passed to each `fragment_vectored()` call.
+    /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with
+    /// packet contents.
+    ///
+    /// Calls to `fragment_vectored()` and `fragment()` should not be mixed.
+    /// (If you do, the vector has to hold exactly one buffer that is
+    /// equal to the one passed to `fragment()`.)
+    ///
+    /// `out` must be at least as large as the specified `mtu`.
+    pub fn fragment_vectored<'f>(
+        &mut self,
+        payload: &[&[u8]],
+        out: &'f mut [u8],
+    ) -> SendOutput<'f> {
         if self.header.eom {
             return SendOutput::success(self);
+        }
+
+        let total_payload_len =
+            payload.iter().fold(0, |acc, part| acc + part.len());
+        if total_payload_len < self.payload_used {
+            // Caller is passing varying payload buffers
+            debug!("varying payload");
+            return SendOutput::failure(Error::BadArgument, self);
         }
 
         // Require at least MTU buffer size, to ensure that all non-end
@@ -118,21 +149,14 @@ impl Fragmenter {
             rest = &mut rest[1..];
         }
 
-        if payload.len() < self.payload_used {
-            // Caller is passing varying payload buffers
-            debug!("varying payload");
-            return SendOutput::failure(Error::BadArgument, self);
-        }
-
-        // Copy as much as is available in input or output
-        let p = &payload[self.payload_used..];
-        let l = p.len().min(rest.len());
+        let remaining_payload_len = total_payload_len - self.payload_used;
+        let l = remaining_payload_len.min(rest.len());
         let (d, rest) = rest.split_at_mut(l);
+        crate::util::copy_vectored(payload, self.payload_used, d);
         self.payload_used += l;
-        d.copy_from_slice(&p[..l]);
 
         // Add the header
-        if self.payload_used == payload.len() {
+        if self.payload_used == total_payload_len {
             self.header.eom = true;
         }
         // OK unwrap: seq and tag are valid.
