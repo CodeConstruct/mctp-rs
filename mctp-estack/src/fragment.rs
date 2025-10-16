@@ -90,61 +90,30 @@ impl Fragmenter {
     /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with
     /// packet contents.
     ///
+    /// Calls to `fragment_vectored()` and `fragment()` should not be mixed.
+    /// (If you do, the vector has to hold exactly one buffer that is
+    /// equal to the one passed to `fragment()`.)
+    ///
     /// `out` must be at least as large as the specified `mtu`.
     pub fn fragment<'f>(
         &mut self,
         payload: &[u8],
         out: &'f mut [u8],
     ) -> SendOutput<'f> {
-        if self.header.eom {
-            return SendOutput::success(self);
-        }
-
-        // Require at least MTU buffer size, to ensure that all non-end
-        // fragments are the same size per the spec.
-        if out.len() < self.mtu {
-            debug!("small out buffer");
-            return SendOutput::failure(Error::BadArgument, self);
-        }
-
-        // Reserve header space, the remaining buffer keeps being
-        // updated in `rest`
-        let max_total = out.len().min(self.mtu);
-        let (h, mut rest) = out[..max_total].split_at_mut(MctpHeader::LEN);
-
-        // Append type byte
-        if self.header.som {
-            rest[0] = mctp::encode_type_ic(self.typ, self.ic);
-            rest = &mut rest[1..];
-        }
-
-        if payload.len() < self.payload_used {
-            // Caller is passing varying payload buffers
-            debug!("varying payload");
-            return SendOutput::failure(Error::BadArgument, self);
-        }
-
-        // Copy as much as is available in input or output
-        let p = &payload[self.payload_used..];
-        let l = p.len().min(rest.len());
-        let (d, rest) = rest.split_at_mut(l);
-        self.payload_used += l;
-        d.copy_from_slice(&p[..l]);
-
-        // Add the header
-        if self.payload_used == payload.len() {
-            self.header.eom = true;
-        }
-        // OK unwrap: seq and tag are valid.
-        h.copy_from_slice(&self.header.encode().unwrap());
-
-        self.header.som = false;
-        self.header.seq = (self.header.seq + 1) & mctp::MCTP_SEQ_MASK;
-
-        let used = max_total - rest.len();
-        SendOutput::Packet(&mut out[..used])
+        self.fragment_vectored(&[payload], out)
     }
 
+    /// Returns fragments for the MCTP payload
+    ///
+    /// The same input message `payload` should be passed to each `fragment_vectored()` call.
+    /// In `SendOutput::Packet(buf)`, `out` is borrowed as the returned fragment, filled with
+    /// packet contents.
+    ///
+    /// Calls to `fragment_vectored()` and `fragment()` should not be mixed.
+    /// (If you do, the vector has to hold exactly one buffer that is
+    /// equal to the one passed to `fragment()`.)
+    ///
+    /// `out` must be at least as large as the specified `mtu`.
     pub fn fragment_vectored<'f>(
         &mut self,
         payload: &[&[u8]],
