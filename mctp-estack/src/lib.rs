@@ -49,7 +49,7 @@ pub use heapless::Vec;
 
 use heapless::{Entry, FnvIndexMap};
 
-use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue};
+use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag, TagValue, MCTP_ADDR_NULL};
 
 #[cfg(not(any(feature = "log", feature = "defmt")))]
 compile_error!("Either log or defmt feature must be enabled");
@@ -488,6 +488,11 @@ impl Stack {
             .inspect_err(|_e| warn!("Invalid Set EID {}", eid))?;
         info!("Set EID to {}", eid);
         Ok(())
+    }
+
+    /// Clears the local Endpoint ID.
+    pub fn clear_eid(&mut self) {
+        self.own_eid = MCTP_ADDR_NULL;
     }
 
     /// Retrieves  the local Endpoint ID.

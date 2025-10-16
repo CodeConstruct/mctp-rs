@@ -812,6 +812,12 @@ impl<'r> Router<'r> {
         let mut inner = self.inner.lock().await;
         inner.stack.set_eid(eid.0)
     }
+
+    /// Clears the EID assigned to the local stack
+    pub async fn clear_eid(&self) {
+        let mut inner = self.inner.lock().await;
+        inner.stack.clear_eid();
+    }
 }
 
 impl core::fmt::Debug for Router<'_> {
