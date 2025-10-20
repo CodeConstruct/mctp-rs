@@ -10,7 +10,7 @@ use crate::fmt::{debug, error, info, trace, warn};
 
 use mctp::{Eid, Error, MsgIC, MsgType, Result, Tag};
 
-use crate::{AppCookie, MctpHeader};
+use crate::{util::VectorReader, AppCookie, MctpHeader};
 
 /// Fragments a MCTP message.
 ///
@@ -24,8 +24,8 @@ pub struct Fragmenter {
 
     cookie: Option<AppCookie>,
 
-    // A count of how many bytes have already been sent.
-    payload_used: usize,
+    // A reader to read from the payload vector
+    reader: VectorReader,
 }
 
 impl Fragmenter {
@@ -59,7 +59,7 @@ impl Fragmenter {
         };
 
         Ok(Self {
-            payload_used: 0,
+            reader: VectorReader::new(),
             header,
             typ,
             mtu,
@@ -123,9 +123,7 @@ impl Fragmenter {
             return SendOutput::success(self);
         }
 
-        let total_payload_len =
-            payload.iter().fold(0, |acc, part| acc + part.len());
-        if total_payload_len < self.payload_used {
+        if self.reader.is_exhausted(payload).is_err() {
             // Caller is passing varying payload buffers
             debug!("varying payload");
             return SendOutput::failure(Error::BadArgument, self);
@@ -149,14 +147,13 @@ impl Fragmenter {
             rest = &mut rest[1..];
         }
 
-        let remaining_payload_len = total_payload_len - self.payload_used;
-        let l = remaining_payload_len.min(rest.len());
-        let (d, rest) = rest.split_at_mut(l);
-        crate::util::copy_vectored(payload, self.payload_used, d);
-        self.payload_used += l;
+        let Ok(n) = self.reader.read(payload, &mut rest) else {
+            return SendOutput::failure(Error::BadArgument, self);
+        };
+        let rest = &rest[n..];
 
         // Add the header
-        if self.payload_used == total_payload_len {
+        if self.reader.is_exhausted(payload).unwrap() {
             self.header.eom = true;
         }
         // OK unwrap: seq and tag are valid.
