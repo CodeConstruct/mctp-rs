@@ -36,6 +36,9 @@ struct FileTransferContext {
     // Current transfer 0..len
     offset: usize,
     digest: crc::Digest<'static, u32, crc::Table<16>>,
+    // Digest after adding the current part. Is copied to
+    // `digest` after the next part is requested (to allow for retries).
+    next_digest: crc::Digest<'static, u32, crc::Table<16>>,
 }
 
 impl FileTransferContext {
@@ -45,6 +48,7 @@ impl FileTransferContext {
             len,
             offset: 0,
             digest: CRC32.digest(),
+            next_digest: CRC32.digest(),
         }
     }
 
@@ -384,7 +388,11 @@ impl<const N: usize> Responder<N> {
         let offset = match cmd.xfer_op {
             pldm::control::xfer_op::FIRST_PART
             | pldm::control::xfer_op::CURRENT_PART => xfer_ctx.offset,
-            pldm::control::xfer_op::NEXT_PART => xfer_ctx.offset + part_size,
+            pldm::control::xfer_op::NEXT_PART => {
+                // have moved to the next part, can include the previous part's digest
+                xfer_ctx.digest = xfer_ctx.next_digest.clone();
+                xfer_ctx.offset + part_size
+            }
             _ => Err(CCode::ERROR_INVALID_DATA)?,
         };
 
@@ -427,8 +435,9 @@ impl<const N: usize> Responder<N> {
         host.read(data, xfer_ctx.start + offset)
             .map_err(|_| CCode::ERROR)?;
 
-        xfer_ctx.digest.update(data);
-        let cs = xfer_ctx.digest.clone().finalize();
+        xfer_ctx.next_digest = xfer_ctx.digest.clone();
+        xfer_ctx.next_digest.update(data);
+        let cs = xfer_ctx.next_digest.clone().finalize();
         resp_data.extend_from_slice(&cs.to_le_bytes());
 
         xfer_ctx.offset = offset;
