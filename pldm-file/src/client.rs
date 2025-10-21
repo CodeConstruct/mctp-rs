@@ -1,5 +1,5 @@
 use deku::{DekuContainerRead, DekuContainerWrite};
-use log::trace;
+use log::{trace, warn};
 use pldm::control::{MultipartReceiveReq, MultipartReceiveResp};
 use pldm::{
     pldm_xfer_buf_async, proto_error, PldmError, PldmRequest, PldmResult,
@@ -153,6 +153,9 @@ pub async fn df_read_with<F>(
 where
     F: FnMut(&[u8]) -> PldmResult<()>,
 {
+    // Maximum retries for the same offset. Avoids looping forever.
+    const CRC_FAIL_RETRIES: usize = 20;
+
     let req_offset = u32::try_from(offset).map_err(|_| {
         trace!("invalid offset");
         PldmError::InvalidArgument
@@ -177,6 +180,7 @@ where
     };
     let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     let mut digest = crc32.digest();
+    let mut crc_fail_count = 0;
     loop {
         let mut tx_buf = [0; 18];
         let l = req.to_slice(&mut tx_buf).map_err(|_| PldmError::NoSpace)?;
@@ -205,13 +209,25 @@ where
 
         let (resp_data, resp_cs) = rest.split_at(resp_data_len);
 
-        digest.update(resp_data);
+        let mut up_digest = digest.clone();
+        up_digest.update(resp_data);
         // unwrap: we have asserted the lengths above
         let cs = u32::from_le_bytes(resp_cs.try_into().unwrap());
 
-        if digest.clone().finalize() != cs {
-            return Err(proto_error!("data checksum mismatch"));
+        if up_digest.clone().finalize() != cs {
+            warn!(
+                "data checksum mismatch requesting offset {}",
+                req_offset as usize + part_offset
+            );
+            crc_fail_count += 1;
+            if crc_fail_count > CRC_FAIL_RETRIES {
+                return Err(proto_error!("excess CRC failures"));
+            }
+            req.xfer_op = pldm::control::xfer_op::CURRENT_PART;
+            continue;
         }
+        digest = up_digest;
+        crc_fail_count = 0;
 
         // Ensure the host doesn't send more data than requested
         let total_len = part_offset
