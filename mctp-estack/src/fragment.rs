@@ -147,7 +147,7 @@ impl Fragmenter {
             rest = &mut rest[1..];
         }
 
-        let Ok(n) = self.reader.read(payload, &mut rest) else {
+        let Ok(n) = self.reader.read(payload, rest) else {
             return SendOutput::failure(Error::BadArgument, self);
         };
         let rest = &rest[n..];

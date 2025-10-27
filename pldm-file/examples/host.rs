@@ -12,8 +12,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, Instant};
 
-use argh;
-
 /// PLDM file host
 #[derive(argh::FromArgs)]
 struct Args {
@@ -142,7 +140,7 @@ fn read_whole(f: &mut File, buf: &mut [u8]) -> std::io::Result<usize> {
         }
     }
     // Full output
-    return Ok(total);
+    Ok(total)
 }
 
 struct Speed {

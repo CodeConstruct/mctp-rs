@@ -15,7 +15,7 @@ embassy-usb-driver = { version = "0.2" }
 embassy-usb = { version = "0.5", default-features = false }
 heapless = { workspace = true }
 log = { workspace = true, optional = true }
-mctp-estack = { workspace = true }
+mctp-estack = { workspace = true, features = ["async"] }
 mctp = { workspace = true, default-features = false }
 
 [features]

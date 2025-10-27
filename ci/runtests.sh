@@ -53,7 +53,7 @@ cargo build --target thumbv7em-none-eabihf --features defmt --no-default-feature
 cargo build --features log
 )
 
-FEATURES_ASYNC="embassy"
+FEATURES_ASYNC="async"
 FEATURES_SYNC=""
 
 declare -a FEATURES=(
