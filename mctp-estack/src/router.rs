@@ -144,7 +144,7 @@ impl PortTop {
     /// Do not call with locks held.
     /// May block waiting for a port queue to flush.
     /// Packet must be a valid MCTP packet, may panic otherwise.
-    async fn forward_packet(&self, pkt: &[u8]) -> Result<()> {
+    fn forward_packet(&self, pkt: &[u8]) -> Result<()> {
         debug_assert!(MctpHeader::decode(pkt).is_ok());
 
         // With forwarded packets we don't want to block if
@@ -550,7 +550,7 @@ impl<'r> Router<'r> {
             match inner.stack.receive(pkt) {
                 // Complete message
                 Ok(Some(msg)) => {
-                    self.incoming_local(msg).await;
+                    self.incoming_local(msg);
                     return ret_src;
                 }
                 // Fragment consumed, message is incomplete
@@ -577,11 +577,11 @@ impl<'r> Router<'r> {
             return ret_src;
         };
 
-        let _ = top.forward_packet(pkt).await;
+        let _ = top.forward_packet(pkt);
         ret_src
     }
 
-    async fn incoming_local(&self, msg: MctpMessage<'_>) {
+    fn incoming_local(&self, msg: MctpMessage<'_>) {
         trace!("incoming local, type {}", msg.typ.0);
         debug_assert!(
             msg.tag.is_owner() == msg.cookie().is_none(),
@@ -589,13 +589,13 @@ impl<'r> Router<'r> {
         );
 
         if msg.tag.is_owner() {
-            self.incoming_listener(msg).await
+            self.incoming_listener(msg)
         } else {
-            self.incoming_response(msg).await
+            self.incoming_response(msg)
         }
     }
 
-    async fn incoming_listener(&self, mut msg: MctpMessage<'_>) {
+    fn incoming_listener(&self, mut msg: MctpMessage<'_>) {
         // wake the packet listener
         self.app_listeners.lock(|a| {
             let mut a = a.borrow_mut();
@@ -615,7 +615,7 @@ impl<'r> Router<'r> {
         });
     }
 
-    async fn incoming_response(&self, mut msg: MctpMessage<'_>) {
+    fn incoming_response(&self, mut msg: MctpMessage<'_>) {
         if let Some(cookie) = msg.cookie() {
             msg.retain();
             self.recv_wakers.wake(cookie);

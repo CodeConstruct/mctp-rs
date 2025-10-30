@@ -34,6 +34,7 @@
 // defmt does not currently allow inline format arguments, so we don't want
 // those reworked when using the log crate either.
 #![allow(clippy::uninlined_format_args)]
+#![warn(clippy::unused_async)]
 
 #[cfg(test)]
 #[macro_use]
