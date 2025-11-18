@@ -20,7 +20,7 @@
 //! be passed to applications.
 //!
 //! ## Features
-//! - `async`: [embedded-io-async](https://docs.rs/embedded-io-async/0.6.1/embedded_io_async/) serial transport binding and async Router
+//! - `async`: _async_ router implementing [`mctp` crate](mctp) _async_ traits
 //!
 //! ## Configuration
 //!

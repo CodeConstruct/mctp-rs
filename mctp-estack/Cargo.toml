@@ -30,7 +30,7 @@ smol = { workspace = true }
 
 
 [features]
-default = ["log"]
+default = ["log", "async"]
 std = ["mctp/std"]
 log = ["dep:log"]
 defmt = ["mctp/defmt", "dep:defmt" ]
