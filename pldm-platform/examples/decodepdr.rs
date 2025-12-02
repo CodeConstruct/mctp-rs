@@ -22,7 +22,7 @@ fn main() {
         })
         .unwrap();
     println!("rsp {pdrrsp:?}");
-    assert!(rest.len() == 0);
+    assert!(rest.is_empty());
 
     let ((rest, _), pdr) = Pdr::from_bytes((&pdrrsp.record_data, 0))
         .map_err(|e| {
@@ -33,7 +33,7 @@ fn main() {
     if !rest.is_empty() {
         panic!("Extra PDR response");
     }
-    assert!(rest.len() == 0);
+    assert!(rest.is_empty());
 
     println!("PDR {pdr:?}");
 }

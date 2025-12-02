@@ -4,6 +4,8 @@
  */
 
 //! A MCTP serial transport binding, DSP0253
+//!
+//! Supporting both `embedded-io` and `embedded-io-async`.
 
 #[allow(unused)]
 use crate::fmt::{debug, error, info, trace, warn};
@@ -12,7 +14,9 @@ use mctp::{Error, Result};
 use crc::Crc;
 use heapless::Vec;
 
-use embedded_io_async::{Read, Write};
+use embedded_io_async::{Read as AsyncRead, Write as AsyncWrite};
+
+use embedded_io::{Read, Write};
 
 const MCTP_SERIAL_REVISION: u8 = 0x01;
 
@@ -68,7 +72,10 @@ impl MctpSerialHandler {
     /// Read a frame.
     ///
     /// This is async cancel-safe.
-    pub async fn recv_async(&mut self, input: &mut impl Read) -> Result<&[u8]> {
+    pub async fn recv_async(
+        &mut self,
+        input: &mut impl AsyncRead,
+    ) -> Result<&[u8]> {
         // TODO: This reads one byte a time, might need a buffering wrapper
         // for performance. Will require more thought about cancel-safety
 
@@ -96,9 +103,43 @@ impl MctpSerialHandler {
         }
     }
 
+    /// Read a frame synchronously
+    ///
+    /// This function blocks until at least one byte is available.
+    ///
+    /// Reads one byte at a time from the [reader](Read).
+    /// If buffering is needed for performance reasons,
+    /// this has to be provided by the reader.
+    pub fn recv_sync(&mut self, input: &mut impl Read) -> Result<&[u8]> {
+        trace!("recv trace");
+        loop {
+            let mut b = 0u8;
+            match input.read(core::slice::from_mut(&mut b)) {
+                Ok(1) => (),
+                Ok(0) => {
+                    trace!("Serial EOF");
+                    return Err(Error::RxFailure);
+                }
+                Ok(2..) => unreachable!(),
+                Err(_e) => {
+                    trace!("Serial read error");
+                    return Err(Error::RxFailure);
+                }
+            }
+
+            if let Some(_p) = self.feed_frame(b) {
+                return Ok(&self.rxbuf[2..][..self.rxcount]);
+            }
+        }
+    }
+
+    /// Feed a byte into the frame parser state machine.
+    /// Returns Some(&[u8]) when a complete frame is available, containing the MCTP packet.
+    /// Returns None if the frame is incomplete.
     fn feed_frame(&mut self, b: u8) -> Option<&[u8]> {
         trace!("serial read {:02x}", b);
 
+        // State machine from DSP0253 Figure 1
         match self.rxpos {
             Pos::FrameSearch => {
                 if b == FRAMING_FLAG {
@@ -181,17 +222,52 @@ impl MctpSerialHandler {
         None
     }
 
+    /// Asynchronously send a MCTP packet over serial provided by `output`.
     pub async fn send_async(
         &mut self,
         pkt: &[u8],
-        output: &mut impl Write,
+        output: &mut impl AsyncWrite,
     ) -> Result<()> {
-        Self::frame_to_serial(pkt, output)
+        Self::frame_to_serial_async(pkt, output)
             .await
             .map_err(|_e| Error::TxFailure)
     }
 
-    async fn frame_to_serial<W>(
+    /// Synchronously send a MCTP packet over serial provided by `output`.
+    pub fn send_sync(
+        &mut self,
+        pkt: &[u8],
+        output: &mut impl Write,
+    ) -> Result<()> {
+        Self::frame_to_serial_sync(pkt, output).map_err(|_e| Error::TxFailure)
+    }
+
+    /// Frame a MCTP packet into a serial frame, writing to `output`.
+    async fn frame_to_serial_async<W>(
+        p: &[u8],
+        output: &mut W,
+    ) -> core::result::Result<(), W::Error>
+    where
+        W: AsyncWrite,
+    {
+        debug_assert!(p.len() <= u8::MAX.into());
+        debug_assert!(p.len() > 4);
+
+        let start = [FRAMING_FLAG, MCTP_SERIAL_REVISION, p.len() as u8];
+        let mut cs = CRC_FCS.digest();
+        cs.update(&start[1..]);
+        cs.update(p);
+        let cs = !cs.finalize();
+
+        output.write_all(&start).await?;
+        Self::write_escaped_async(p, output).await?;
+        output.write_all(&cs.to_be_bytes()).await?;
+        output.write_all(&[FRAMING_FLAG]).await?;
+        Ok(())
+    }
+
+    /// Frame a MCTP packet into a serial frame, writing to `output`.
+    fn frame_to_serial_sync<W>(
         p: &[u8],
         output: &mut W,
     ) -> core::result::Result<(), W::Error>
@@ -207,19 +283,20 @@ impl MctpSerialHandler {
         cs.update(p);
         let cs = !cs.finalize();
 
-        output.write_all(&start).await?;
-        Self::write_escaped(p, output).await?;
-        output.write_all(&cs.to_be_bytes()).await?;
-        output.write_all(&[FRAMING_FLAG]).await?;
+        output.write_all(&start)?;
+        Self::write_escaped_sync(p, output)?;
+        output.write_all(&cs.to_be_bytes())?;
+        output.write_all(&[FRAMING_FLAG])?;
         Ok(())
     }
 
-    async fn write_escaped<W>(
+    /// Asynchronously write a byte slice to `output`, escaping 0x7e and 0x7d bytes.
+    async fn write_escaped_async<W>(
         p: &[u8],
         output: &mut W,
     ) -> core::result::Result<(), W::Error>
     where
-        W: Write,
+        W: AsyncWrite,
     {
         for c in
             p.split_inclusive(|&b| b == FRAMING_FLAG || b == FRAMING_ESCAPE)
@@ -239,6 +316,33 @@ impl MctpSerialHandler {
         }
         Ok(())
     }
+
+    /// Synchronously write a byte slice to `output`, escaping 0x7e and 0x7d bytes.
+    fn write_escaped_sync<W>(
+        p: &[u8],
+        output: &mut W,
+    ) -> core::result::Result<(), W::Error>
+    where
+        W: Write,
+    {
+        for c in
+            p.split_inclusive(|&b| b == FRAMING_FLAG || b == FRAMING_ESCAPE)
+        {
+            let (last, rest) = c.split_last().unwrap();
+            match *last {
+                FRAMING_FLAG => {
+                    output.write_all(rest)?;
+                    output.write_all(&[FRAMING_ESCAPE, FLAG_ESCAPED])?;
+                }
+                FRAMING_ESCAPE => {
+                    output.write_all(rest)?;
+                    output.write_all(&[FRAMING_ESCAPE, ESCAPE_ESCAPED])?;
+                }
+                _ => output.write_all(c)?,
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for MctpSerialHandler {
@@ -251,51 +355,81 @@ impl Default for MctpSerialHandler {
 mod tests {
     use crate::serial::*;
     use crate::*;
-    use embedded_io_adapters::futures_03::FromFutures;
     use proptest::prelude::*;
+
+    use embedded_io_adapters::futures_03::FromFutures;
+
+    static TEST_DATA_ROUNTRIP: [&[u8]; 1] =
+        [&[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36]];
 
     fn start_log() {
         let _ = env_logger::Builder::new()
-            .filter(None, log::LevelFilter::Trace)
+            .filter(None, log::LevelFilter::Debug)
             .is_test(true)
             .try_init();
     }
 
-    async fn do_roundtrip(payload: &[u8]) {
+    async fn do_roundtrip_async(payload: &[u8]) {
         let mut esc = vec![];
         let mut s = FromFutures::new(&mut esc);
-        MctpSerialHandler::frame_to_serial(payload, &mut s)
+        MctpSerialHandler::frame_to_serial_async(payload, &mut s)
             .await
             .unwrap();
-        debug!("{:02x?}", payload);
-        debug!("{:02x?}", esc);
+
+        debug!("payload {:02x?}", payload);
+        debug!("esc {:02x?}", esc);
 
         let mut h = MctpSerialHandler::new();
         let mut s = FromFutures::new(esc.as_slice());
         let packet = h.recv_async(&mut s).await.unwrap();
+        debug!("packet {:02x?}", packet);
+        debug_assert_eq!(payload, packet);
+    }
+
+    fn do_roundtrip_sync(payload: &[u8]) {
+        start_log();
+        let mut esc = vec![];
+        MctpSerialHandler::frame_to_serial_sync(payload, &mut esc).unwrap();
+        debug!("payload {:02x?}", payload);
+        debug!("esc {:02x?}", esc);
+
+        let mut h = MctpSerialHandler::new();
+        let mut s = esc.as_slice();
+        let packet = h.recv_sync(&mut s).unwrap();
+        debug!("packet {:02x?}", packet);
         debug_assert_eq!(payload, packet);
     }
 
     #[test]
-    fn roundtrip_cases() {
+    fn roundtrip_cases_async() {
         // Fixed testcases
         start_log();
         smol::block_on(async {
-            for payload in
-                [&[0x01, 0x5d, 0x0d, 0xf4, 0x01, 0x93, 0x7d, 0xcd, 0x36]]
-            {
-                do_roundtrip(payload).await
+            for payload in TEST_DATA_ROUNTRIP {
+                do_roundtrip_async(payload).await
             }
         })
     }
 
+    #[test]
+    fn roundtrip_cases_sync() {
+        start_log();
+        for payload in TEST_DATA_ROUNTRIP {
+            do_roundtrip_sync(payload)
+        }
+    }
+
     proptest! {
         #[test]
-        fn roundtrip_escape(payload in proptest::collection::vec(0..255u8, 5..20)) {
+        fn roundtrip_escape_async(payload in proptest::collection::vec(0..255u8, 5..20)) {
             start_log();
+            smol::block_on(do_roundtrip_async(&payload))
+        }
 
-            smol::block_on(do_roundtrip(&payload))
-
+        #[test]
+        fn roundtrip_escape_sync(payload in proptest::collection::vec(0..255u8, 5..20)) {
+            start_log();
+            do_roundtrip_sync(&payload)
         }
     }
 }

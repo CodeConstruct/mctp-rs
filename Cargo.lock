@@ -919,6 +919,7 @@ dependencies = [
  "critical-section",
  "defmt",
  "embassy-sync",
+ "embedded-io",
  "embedded-io-adapters",
  "embedded-io-async",
  "env_logger",

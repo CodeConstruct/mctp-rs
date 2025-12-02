@@ -5,20 +5,22 @@
 
 //! # MCTP Stack
 //!
-//! This crate provides a MCTP stack that can be embedded in other programs
-//! or devices.
-//!
-//! A [`Router`] object lets programs use a [`Stack`] with
-//! MCTP transport binding links. Each *Port* handles transmitting and receiving
-//! packets independently. Messages destined for the stack's own EID will
-//! be passed to applications.
-//!
-//! Applications can create [`router::RouterAsyncListener`] and [`router::RouterAsyncReqChannel`]
-//! instances to communicate over MCTP. Those implement the standard [`mctp` crate](mctp)
-//! async traits.
+//! This crate provides a MCTP stack and transport bindings,
+//! that can be embedded in other programs or devices.
 //!
 //! The IO-less [`Stack`] handles MCTP message formatting and parsing, independent
 //! of any particular MCTP transport binding.
+//!
+//! A Router for *async* applications is available
+//! through the `async` feature.
+//! The async `Router` lets programs use a `Stack`
+//! by providing implementations for the standard [`mctp` crate](mctp) async traits.
+//! Transport bindings are provided by *Ports* which handle transmitting and receiving
+//! packets independently. Messages destined for the stack's own EID will
+//! be passed to applications.
+//!
+//! ## Features
+//! - `async`: _async_ router implementing [`mctp` crate](mctp) _async_ traits
 //!
 //! ## Configuration
 //!
@@ -35,6 +37,7 @@
 // those reworked when using the log crate either.
 #![allow(clippy::uninlined_format_args)]
 #![warn(clippy::unused_async)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 #[cfg(test)]
 #[macro_use]
@@ -61,6 +64,7 @@ pub mod control;
 pub mod fragment;
 pub mod i2c;
 mod reassemble;
+#[cfg(feature = "async")]
 pub mod router;
 pub mod serial;
 pub mod usb;
@@ -68,12 +72,14 @@ pub mod usb;
 mod util;
 mod proto;
 
+#[cfg(feature = "async")]
 #[rustfmt::skip]
 #[allow(clippy::needless_lifetimes)]
 mod zerocopy_channel;
 
 use fragment::{Fragmenter, SendOutput};
 use reassemble::Reassembler;
+#[cfg(feature = "async")]
 pub use router::Router;
 
 use crate::fmt::*;
