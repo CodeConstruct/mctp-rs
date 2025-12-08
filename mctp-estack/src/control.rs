@@ -19,6 +19,7 @@ pub type ControlResult<T> = core::result::Result<T, CompletionCode>;
 
 /// MCTP control message completion code.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 #[expect(non_camel_case_types)]
 pub enum CompletionCode {
