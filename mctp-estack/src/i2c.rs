@@ -21,13 +21,31 @@ const MCTP_I2C_HEADER: usize = 4;
 // bytecount is limited to u8, includes MCTP payload + 1 byte i2c source
 pub const MCTP_I2C_MAXMTU: usize = u8::MAX as usize - 1;
 
+/// MCTP I2C encapsulation header
 pub struct MctpI2cHeader {
+    /// Destination address
+    ///
+    /// The 7-bit destination address of the encapsulated packet.
+    /// (Not including the SMBus R/W# bit)
     pub dest: u8,
+    /// Source address
+    ///
+    /// The 7-bit source address of the encapsulated packet.
+    /// (Not including fixed bit `[0]`)
     pub source: u8,
+    /// Byte count
+    ///
+    /// The count of bytes that follow the _Byte Count_ field up to,
+    /// but not including, the PEC byte.
     pub byte_count: usize,
 }
 
 impl MctpI2cHeader {
+    /// Encode this header
+    ///
+    /// Creates a 4-byte header with destination, command code, byte count, and source.
+    /// Returns a [BadArgument](Error::BadArgument) error when the addresses are not 7-bit,
+    /// or when the byte count is larger than [u8::MAX].
     fn encode(&self) -> Result<[u8; 4]> {
         if self.dest > 0x7f || self.source > 0x7f {
             return Err(Error::BadArgument);
@@ -85,6 +103,17 @@ impl MctpI2cEncap {
         self.own_addr
     }
 
+    /// Decode a I2C encapsulated packet
+    ///
+    /// Decodes and verifies the I2C transport header.
+    /// Optionally an included _PEC_ will be verified.
+    ///
+    /// The inner MCTP packet and the decoded header are returned on success.
+    ///
+    /// ### Errors when
+    /// - The _PEC_ is incorrect
+    /// - Header decoding fails
+    /// - The decoded byte count field does not match the packet size
     pub fn decode<'f>(
         &self,
         mut packet: &'f [u8],
@@ -111,6 +140,9 @@ impl MctpI2cEncap {
         if header.byte_count + 3 != packet.len() {
             trace!("Packet byte count mismatch");
             return Err(Error::InvalidInput);
+        }
+        if header.dest != self.own_addr {
+            trace!("I2C destination address mismatch");
         }
 
         Ok((&packet[MCTP_I2C_HEADER..], header))
