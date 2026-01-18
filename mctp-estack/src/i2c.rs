@@ -90,11 +90,11 @@ impl MctpI2cEncap {
         mut packet: &'f [u8],
         pec: bool,
     ) -> Result<(&'f [u8], MctpI2cHeader)> {
+        if packet.is_empty() {
+            return Err(Error::InvalidInput);
+        }
         if pec {
             // Remove the pec byte, check it.
-            if packet.is_empty() {
-                return Err(Error::InvalidInput);
-            }
             let packet_pec;
             (packet_pec, packet) = packet.split_last().unwrap();
             let calc_pec = smbus_pec::pec(packet);
