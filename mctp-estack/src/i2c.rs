@@ -43,9 +43,13 @@ impl MctpI2cHeader {
         ])
     }
 
-    fn decode(pkt: &[u8]) -> Result<Self> {
+    /// Decode a 4-byte I2C header
+    ///
+    /// Checks and decodes destination and source address,
+    /// command code, and byte count.
+    fn decode(header: &[u8]) -> Result<Self> {
         let [dest, cmd, byte_count, source] =
-            pkt.try_into().map_err(|_| Error::BadArgument)?;
+            header.try_into().map_err(|_| Error::BadArgument)?;
         if dest & 1 != 0 {
             trace!("Bad i2c dest write bit");
             return Err(Error::InvalidInput);
@@ -85,7 +89,7 @@ impl MctpI2cEncap {
         &self,
         mut packet: &'f [u8],
         pec: bool,
-    ) -> Result<(&'f [u8], u8)> {
+    ) -> Result<(&'f [u8], MctpI2cHeader)> {
         if pec {
             // Remove the pec byte, check it.
             if packet.is_empty() {
@@ -106,25 +110,25 @@ impl MctpI2cEncap {
             return Err(Error::InvalidInput);
         }
 
-        Ok((&packet[MCTP_I2C_HEADER..], header.source))
+        Ok((&packet[MCTP_I2C_HEADER..], header))
     }
 
     /// Handles a MCTP fragment with the PEC already validated
     ///
     /// `packet` should omit the PEC byte.
-    /// Returns the MCTP message and the i2c source address.
+    /// Returns the MCTP message and the i2c header.
     pub fn receive_done_pec<'f>(
         &self,
         packet: &[u8],
         mctp: &'f mut Stack,
-    ) -> Result<Option<(MctpMessage<'f>, u8)>> {
-        let (mctp_packet, i2c_src) = self.decode(packet, false)?;
+    ) -> Result<Option<(MctpMessage<'f>, MctpI2cHeader)>> {
+        let (mctp_packet, i2c_header) = self.decode(packet, false)?;
 
         // Pass to MCTP stack
         let m = mctp.receive(mctp_packet)?;
 
-        // Return a (message, i2c_source) tuple on completion
-        Ok(m.map(|msg| (msg, i2c_src)))
+        // Return a (message, i2c_header) tuple on completion
+        Ok(m.map(|msg| (msg, i2c_header)))
     }
 
     /// `out` must be sized to hold 8+mctp_mtu, to allow for MCTP and I2C headers
@@ -252,7 +256,7 @@ impl MctpI2cHandler {
         &mut self,
         packet: &[u8],
         mctp: &'f mut Stack,
-    ) -> Result<Option<(MctpMessage<'f>, u8)>> {
+    ) -> Result<Option<(MctpMessage<'f>, MctpI2cHeader)>> {
         self.encap.receive_done_pec(packet, mctp)
     }
 
@@ -368,4 +372,52 @@ enum HandlerSendState {
         fragmenter: Fragmenter,
         i2c_dest: u8,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn i2c_codec_roundtrip() {
+        let codec = MctpI2cEncap::new(0x0A);
+        const PACKET: &[u8] =
+            &[0x01, 0x00, 0x09, 0xc8, 0x00, 0x8a, 0x01, 0x00, 0x0a];
+
+        let mut buf = [0; 128];
+        let i2c_packet = codec.encode(0x0B, PACKET, &mut buf, false).unwrap();
+
+        assert_eq!(&i2c_packet[..4], [0x16, 0x0f, 0x0a, 0x15]);
+
+        let codec = MctpI2cEncap::new(0x0B);
+        let (decoded_packet, header) = codec.decode(i2c_packet, false).unwrap();
+        assert_eq!(decoded_packet, PACKET);
+        assert_eq!(header.source, 0x0a);
+        assert_eq!(header.dest, 0x0b);
+    }
+
+    #[test]
+    fn test_partial_packet_decode() {
+        let codec = MctpI2cEncap::new(0x0A);
+
+        // Test that empty packets are handled correctly
+        let res = codec.decode(&[], false);
+        assert!(res.is_err());
+        let res = codec.decode(&[], true);
+        assert!(res.is_err());
+        // Test that packets with only partial header are handled correctly
+        let res = codec.decode(&[0x16, 0x0f], false);
+        assert!(res.is_err());
+        let res = codec.decode(&[0x16, 0x0f], true);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_decode_byte_count_mismatch() {
+        let codec = MctpI2cEncap::new(0x0A);
+
+        // Try to decode a packet with a `byte count` of 0x0a followed by only 3 bytes
+        let res = codec.decode(&[0x16, 0x0f, 0x0a, 0x15, 0x01, 0x02], false);
+        assert!(res.is_err_and(|e| matches!(e, Error::InvalidInput)));
+    }
 }
