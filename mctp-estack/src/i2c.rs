@@ -104,7 +104,8 @@ impl MctpI2cEncap {
             }
         }
 
-        let header = MctpI2cHeader::decode(packet)?;
+        let header =
+            MctpI2cHeader::decode(packet.get(..4).ok_or(Error::InvalidInput)?)?;
         // +1 for i2c source address field
         if header.byte_count != packet.len() + 1 {
             return Err(Error::InvalidInput);
