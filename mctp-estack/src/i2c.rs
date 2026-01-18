@@ -63,8 +63,8 @@ impl MctpI2cHeader {
             return Err(Error::InvalidInput);
         }
         Ok(Self {
-            dest,
-            source,
+            dest: dest >> 1,
+            source: source >> 1,
             byte_count: byte_count as usize,
         })
     }
