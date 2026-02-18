@@ -240,6 +240,10 @@ struct ExtractCommand {
     /// components to extract (by index)
     #[argh(positional)]
     components: Vec<usize>,
+
+    /// extract all components
+    #[argh(switch)]
+    all: bool,
 }
 
 #[derive(FromArgs, Debug)]
@@ -364,10 +368,17 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Extract(e) => {
             let pkg = open_package(e.file)?;
-            if e.components.is_empty() {
+
+            let comps = if e.all {
+                (0..pkg.components.len()).collect()
+            } else {
+                e.components
+            };
+
+            if comps.is_empty() {
                 println!("No components specified to extract");
             }
-            for idx in e.components {
+            for idx in comps {
                 let res = extract_component(&pkg, idx);
                 if let Err(e) = res {
                     println!("Error extracting: {e:?}");
