@@ -42,9 +42,11 @@ enum Pos {
     SerialRevision,
     ByteCount,
     Data,
-    // Byte following a 0x7d
+    // Byte following a 0x7d in Data state
     DataEscaped,
     Check,
+    // Byte following a 0x7d in Check state (FCS bytes can also be escaped)
+    CheckEscaped,
     FrameEnd,
 }
 
@@ -192,7 +194,31 @@ impl MctpSerialHandler {
                 }
             }
             Pos::Check => {
-                self.rxbuf.push(b).unwrap();
+                match b {
+                    // Unexpected framing, restart
+                    FRAMING_FLAG => self.rxpos = Pos::SerialRevision,
+                    FRAMING_ESCAPE => self.rxpos = Pos::CheckEscaped,
+                    _ => {
+                        self.rxbuf.push(b).unwrap();
+                        if self.rxbuf.len() == self.rxcount + RXBUF_FRAMING {
+                            self.rxpos = Pos::FrameEnd;
+                        }
+                    }
+                }
+            }
+            Pos::CheckEscaped => {
+                match b {
+                    FLAG_ESCAPED => {
+                        self.rxbuf.push(FRAMING_FLAG).unwrap();
+                        self.rxpos = Pos::Check;
+                    }
+                    ESCAPE_ESCAPED => {
+                        self.rxbuf.push(FRAMING_ESCAPE).unwrap();
+                        self.rxpos = Pos::Check;
+                    }
+                    // Unexpected escape, restart
+                    _ => self.rxpos = Pos::FrameSearch,
+                }
                 if self.rxbuf.len() == self.rxcount + RXBUF_FRAMING {
                     self.rxpos = Pos::FrameEnd;
                 }
@@ -261,7 +287,7 @@ impl MctpSerialHandler {
 
         output.write_all(&start).await?;
         Self::write_escaped_async(p, output).await?;
-        output.write_all(&cs.to_be_bytes()).await?;
+        Self::write_escaped_async(&cs.to_be_bytes(), output).await?;
         output.write_all(&[FRAMING_FLAG]).await?;
         Ok(())
     }
@@ -285,7 +311,7 @@ impl MctpSerialHandler {
 
         output.write_all(&start)?;
         Self::write_escaped_sync(p, output)?;
-        output.write_all(&cs.to_be_bytes())?;
+        Self::write_escaped_sync(&cs.to_be_bytes(), output)?;
         output.write_all(&[FRAMING_FLAG])?;
         Ok(())
     }
@@ -431,5 +457,155 @@ mod tests {
             start_log();
             do_roundtrip_sync(&payload)
         }
+    }
+
+    /// Helper to parse a manually-constructed frame
+    fn parse_frame(frame: &[u8]) -> std::vec::Vec<u8> {
+        let mut h = MctpSerialHandler::new();
+        let mut s = frame;
+        h.recv_sync(&mut s).unwrap().to_vec()
+    }
+
+    // Test vectors with known FCS values:
+    // payload=[01, 00, 00, 00, 00, 49] -> FCS=[7e, 10] (FLAG in first byte)
+    // payload=[01, 00, 00, 00, 00, 65] -> FCS=[95, 7e] (FLAG in second byte)
+    // payload=[01, 00, 00, 00, 00, 7a] -> FCS=[7d, 08] (ESCAPE in first byte)
+    // payload=[01, 00, 00, 00, 01, 7f] -> FCS=[33, 7d] (ESCAPE in second byte)
+    // payload=[01, 00, 00, 00, 16, cd] -> FCS=[7d, 7d] (both bytes need escaping)
+
+    /// Test FCS with 0x7e (FLAG) in first byte
+    #[test]
+    fn fcs_escape_flag_first_byte() {
+        start_log();
+        // payload produces FCS = [0x7e, 0x10]
+        let payload = [0x01, 0x00, 0x00, 0x00, 0x00, 0x49];
+        do_roundtrip_sync(&payload);
+
+        // Also test RX directly with manually escaped frame
+        let frame = [
+            FRAMING_FLAG,
+            0x01,
+            0x06, // revision, length
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x49, // payload
+            FRAMING_ESCAPE,
+            FLAG_ESCAPED,
+            0x10, // FCS with escaped first byte
+            FRAMING_FLAG,
+        ];
+        assert_eq!(parse_frame(&frame), payload);
+    }
+
+    /// Test FCS with 0x7e (FLAG) in second byte
+    #[test]
+    fn fcs_escape_flag_second_byte() {
+        start_log();
+        // payload produces FCS = [0x95, 0x7e]
+        let payload = [0x01, 0x00, 0x00, 0x00, 0x00, 0x65];
+        do_roundtrip_sync(&payload);
+
+        // Also test RX directly with manually escaped frame
+        let frame = [
+            FRAMING_FLAG,
+            0x01,
+            0x06, // revision, length
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x65, // payload
+            0x95,
+            FRAMING_ESCAPE,
+            FLAG_ESCAPED, // FCS with escaped second byte
+            FRAMING_FLAG,
+        ];
+        assert_eq!(parse_frame(&frame), payload);
+    }
+
+    /// Test FCS with 0x7d (ESCAPE) in first byte
+    #[test]
+    fn fcs_escape_escape_first_byte() {
+        start_log();
+        // payload produces FCS = [0x7d, 0x08]
+        let payload = [0x01, 0x00, 0x00, 0x00, 0x00, 0x7a];
+        do_roundtrip_sync(&payload);
+
+        // Also test RX directly with manually escaped frame
+        let frame = [
+            FRAMING_FLAG,
+            0x01,
+            0x06, // revision, length
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x7a, // payload
+            FRAMING_ESCAPE,
+            ESCAPE_ESCAPED,
+            0x08, // FCS with escaped first byte
+            FRAMING_FLAG,
+        ];
+        assert_eq!(parse_frame(&frame), payload);
+    }
+
+    /// Test FCS with 0x7d (ESCAPE) in second byte
+    #[test]
+    fn fcs_escape_escape_second_byte() {
+        start_log();
+        // payload produces FCS = [0x33, 0x7d]
+        let payload = [0x01, 0x00, 0x00, 0x00, 0x01, 0x7f];
+        do_roundtrip_sync(&payload);
+
+        // Also test RX directly with manually escaped frame
+        let frame = [
+            FRAMING_FLAG,
+            0x01,
+            0x06, // revision, length
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x7f, // payload
+            0x33,
+            FRAMING_ESCAPE,
+            ESCAPE_ESCAPED, // FCS with escaped second byte
+            FRAMING_FLAG,
+        ];
+        assert_eq!(parse_frame(&frame), payload);
+    }
+
+    /// Test FCS where both bytes need escaping
+    #[test]
+    fn fcs_escape_both_bytes() {
+        start_log();
+        // payload produces FCS = [0x7d, 0x7d]
+        let payload = [0x01, 0x00, 0x00, 0x00, 0x16, 0xcd];
+        do_roundtrip_sync(&payload);
+
+        // Also test RX directly with manually escaped frame
+        let frame = [
+            FRAMING_FLAG,
+            0x01,
+            0x06, // revision, length
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            0x16,
+            0xcd, // payload
+            FRAMING_ESCAPE,
+            ESCAPE_ESCAPED, // first FCS byte escaped
+            FRAMING_ESCAPE,
+            ESCAPE_ESCAPED, // second FCS byte escaped
+            FRAMING_FLAG,
+        ];
+        assert_eq!(parse_frame(&frame), payload);
     }
 }
