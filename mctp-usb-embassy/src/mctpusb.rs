@@ -59,8 +59,7 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
             return Err(mctp::Error::NoSpace);
         }
 
-        let mut hdr = [0u8; 4];
-        MctpUsbHandler::header(pkt.len(), &mut hdr)?;
+        let hdr = MctpUsbHandler::header(pkt.len())?;
         let _ = self.buf.extend_from_slice(&hdr);
         let _ = self.buf.extend_from_slice(pkt);
         Ok(())

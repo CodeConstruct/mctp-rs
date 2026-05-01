@@ -127,12 +127,11 @@ impl MctpUsbHandler {
                     return r.unborrowed().unwrap()
                 }
             };
-            if Self::header(len, hdr).is_err() {
-                return SendOutput::Error {
-                    err: Error::InternalError,
-                    cookie: None,
-                };
-            }
+
+            // Can't fail since len is at most MCTP_USB_MAX, and thus can't overflow a u8
+            let header = Self::header(len).unwrap();
+            hdr.copy_from_slice(&header);
+
             let slice = &self.tx_xfer[0..len + 4];
             let res = xfer.send_xfer(slice);
             if let Err(_e) = res {
@@ -145,27 +144,17 @@ impl MctpUsbHandler {
         }
     }
 
-    /// Creates a MCTP over USB Header.
+    /// Returns a MCTP over USB Header.
     ///
     /// `mctplen` is the length of the remaining MCTP packet
     /// after the header.
-    /// `hdr` must be a 4 byte slice.
-    pub fn header(mctp_len: usize, hdr: &mut [u8]) -> Result<()> {
-        if hdr.len() != 4 {
-            return Err(Error::BadArgument);
-        }
-
+    pub fn header(mctp_len: usize) -> Result<[u8; 4]> {
         let usb_len: u8 = mctp_len
             .checked_add(4)
             .ok_or(Error::BadArgument)?
             .try_into()
             .map_err(|_| Error::BadArgument)?;
-
-        hdr[0] = 0x1a;
-        hdr[1] = 0xb4;
-        hdr[2] = 0;
-        hdr[3] = usb_len;
-        Ok(())
+        Ok([0x1a, 0xb4, 0, usb_len])
     }
 }
 
