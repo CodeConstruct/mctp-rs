@@ -1174,6 +1174,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "pldm",
+ "tempfile",
  "thiserror 1.0.69",
  "uuid",
 ]

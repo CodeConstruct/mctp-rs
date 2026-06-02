@@ -180,9 +180,13 @@ pub fn request_update(
     check_fd_state(comm, PldmFDState::Idle)?;
 
     let sz = XFER_SIZE as u32;
+    let num_components: u16 =
+        update.components.len().try_into().map_err(|_| {
+            PldmUpdateError::new_update("too many components".into())
+        })?;
     let mut data = vec![];
     data.extend_from_slice(&sz.to_le_bytes());
-    data.extend_from_slice(&1u16.to_le_bytes()); // NumberOfComponents
+    data.extend_from_slice(&num_components.to_le_bytes()); // NumberOfComponents
     data.extend_from_slice(&1u8.to_le_bytes()); // MaximumOutstandingTransferRequests
     data.extend_from_slice(&0u16.to_le_bytes()); // PackageDataLength
     update.package.version.write_utf8_bytes(&mut data);
@@ -581,4 +585,138 @@ fn check_fd_state(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{request_update, Update};
+    use crate::{
+        Descriptor, DescriptorString, DeviceCapabilities, DeviceIdentifiers,
+        FirmwareParameters, GetStatusResponse, PldmFDState, PLDM_TYPE_FW,
+    };
+    use mctp::{Eid, MsgIC, MsgType, ReqChannel, MCTP_TYPE_PLDM};
+    use std::collections::VecDeque;
+
+    // --- Mock MCTP transport ---------------------------------------------
+    //
+    // request_update only drives the UA-initiated `ReqChannel` (`comm`):
+    // a GetStatus precondition followed by RequestUpdate. The mock replays
+    // scripted FD responses and records everything the UA sends so the test
+    // can assert on the wire format.
+
+    #[derive(Default)]
+    struct MockComm {
+        responses: VecDeque<Vec<u8>>,
+        sent: Vec<Vec<u8>>,
+    }
+
+    impl MockComm {
+        fn new(responses: Vec<Vec<u8>>) -> Self {
+            Self {
+                responses: responses.into(),
+                sent: Vec::new(),
+            }
+        }
+
+        fn sent(&self) -> Vec<Vec<u8>> {
+            self.sent.clone()
+        }
+    }
+
+    impl ReqChannel for MockComm {
+        fn send_vectored(
+            &mut self,
+            _typ: MsgType,
+            _ic: MsgIC,
+            bufs: &[&[u8]],
+        ) -> mctp::Result<()> {
+            let mut msg = Vec::new();
+            for b in bufs {
+                msg.extend_from_slice(b);
+            }
+            self.sent.push(msg);
+            Ok(())
+        }
+
+        fn recv<'f>(
+            &mut self,
+            buf: &'f mut [u8],
+        ) -> mctp::Result<(MsgType, MsgIC, &'f mut [u8])> {
+            let resp =
+                self.responses.pop_front().ok_or(mctp::Error::RxFailure)?;
+            buf[..resp.len()].copy_from_slice(&resp);
+            Ok((MCTP_TYPE_PLDM, MsgIC(false), &mut buf[..resp.len()]))
+        }
+
+        fn remote_eid(&self) -> Eid {
+            Eid(8)
+        }
+    }
+
+    // --- frame helpers ---------------------------------------------------
+
+    /// A PLDM response frame as returned by the FD over `comm`.
+    fn resp_frame(cmd: u8, cc: u8, data: &[u8]) -> Vec<u8> {
+        let mut v = vec![0u8, PLDM_TYPE_FW, cmd, cc];
+        v.extend_from_slice(data);
+        v
+    }
+
+    fn status_data(state: PldmFDState) -> Vec<u8> {
+        let s = GetStatusResponse {
+            current_state: state,
+            previous_state: PldmFDState::Idle,
+            aux_state: 0,
+            aux_state_status: 0,
+            progress_percent: 0,
+            reason_code: 0,
+            update_option_flags_enabled: 0,
+        };
+        let mut b = [0u8; 16];
+        let l = s.write_buf(&mut b).unwrap();
+        b[..l].to_vec()
+    }
+
+    fn make_update(vid: u16, components: &[&[u8]]) -> Update {
+        let bytes = crate::pkg::tests::build_v11_package(vid, components);
+        let pkg =
+            crate::pkg::Package::parse(crate::pkg::temp_file_with(&bytes))
+                .unwrap();
+        let dev = DeviceIdentifiers {
+            ids: vec![Descriptor::PciVid(vid)],
+        };
+        let fwp = FirmwareParameters {
+            caps: DeviceCapabilities::from_u32(0),
+            components: Vec::new().into(),
+            active: DescriptorString::empty(),
+            pending: DescriptorString::empty(),
+        };
+        Update::new(&dev, &fwp, pkg, None, None, vec![]).unwrap()
+    }
+
+    // --- RequestUpdate ---------------------------------------------------
+
+    #[test]
+    fn request_update_reports_actual_component_count() {
+        let img: &[u8] = &[0u8; 64];
+        let update = make_update(0xabcd, &[img, img]);
+
+        let mut comm = MockComm::new(vec![
+            resp_frame(0x1b, 0, &status_data(PldmFDState::Idle)),
+            // RequestUpdateResponse: FirmwareDeviceMetaDataLength + flag
+            resp_frame(0x10, 0, &[0, 0, 0]),
+        ]);
+
+        request_update(&mut comm, &update).unwrap();
+
+        let sent = comm.sent();
+        assert_eq!(sent.len(), 2);
+        // sent[1] is RequestUpdate: [0x80, type, 0x10, <payload>]
+        let ru = &sent[1];
+        assert_eq!(ru[2], 0x10);
+        let data = &ru[3..];
+        // payload: MaxTransferSize(4), NumberOfComponents(2), ...
+        let num_components = u16::from_le_bytes([data[4], data[5]]);
+        assert_eq!(num_components, 2);
+    }
 }

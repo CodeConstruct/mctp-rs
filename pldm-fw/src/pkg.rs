@@ -313,3 +313,132 @@ impl Package {
         Ok(self.file.read_at(buf, file_offset)?)
     }
 }
+
+/// Write `bytes` to a fresh anonymous temporary file and return a handle to
+/// it, seeked back to the start ready for reading.
+#[cfg(test)]
+pub(crate) fn temp_file_with(bytes: &[u8]) -> std::fs::File {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let mut f = tempfile::tempfile().unwrap();
+    f.write_all(bytes).unwrap();
+    f.seek(SeekFrom::Start(0)).unwrap();
+    f
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// Build the bytes of a minimal, well-formed v1.1.x firmware update
+    /// package.
+    ///
+    /// The package describes a single device identified by one PCI Vendor
+    /// ID descriptor (`vid`), whose component bitmap selects every supplied
+    /// component. Each entry of `components` becomes a component image
+    /// appended after the (CRC-protected) package header, with matching
+    /// file offset/size fields.
+    pub(crate) fn build_v11_package(vid: u16, components: &[&[u8]]) -> Vec<u8> {
+        let ncomp = components.len();
+        assert!(ncomp >= 1);
+
+        // --- single device record ---
+        let bitmap_bytes = ncomp.div_ceil(8);
+        let mut bitmap = vec![0u8; bitmap_bytes];
+        for i in 0..ncomp {
+            bitmap[i / 8] |= 1u8 << (i % 8);
+        }
+        let set_ver = b"0000";
+
+        let mut descs = Vec::new();
+        descs.extend_from_slice(&0x0000u16.to_le_bytes()); // type: PCI Vendor ID
+        descs.extend_from_slice(&2u16.to_le_bytes()); // length
+        descs.extend_from_slice(&vid.to_le_bytes()); // data
+        let desc_count = 1u8;
+        let pkg_data_len = 0u16;
+
+        let mut rec_body = Vec::new();
+        rec_body.extend_from_slice(&bitmap);
+        rec_body.extend_from_slice(set_ver);
+        rec_body.extend_from_slice(&descs);
+        let rec_len = (11 + rec_body.len()) as u16;
+
+        let mut device = Vec::new();
+        device.extend_from_slice(&rec_len.to_le_bytes());
+        device.push(desc_count);
+        device.extend_from_slice(&0u32.to_le_bytes()); // option flags
+        device.push(1u8); // set version string type (utf-8)
+        device.push(set_ver.len() as u8);
+        device.extend_from_slice(&pkg_data_len.to_le_bytes());
+        device.extend_from_slice(&rec_body);
+
+        // Header bytes following the 19-byte init region, excluding the
+        // trailing 4-byte checksum. `offsets` carries each component's
+        // absolute file offset.
+        let build_pre = |offsets: &[usize]| -> Vec<u8> {
+            let mut pre = Vec::new();
+            pre.extend_from_slice(&[0u8; 13]); // release date/time
+            pre.extend_from_slice(&(ncomp as u16).to_le_bytes()); // bitmap length (bits)
+
+            // package version string (type, length, data)
+            pre.push(1u8);
+            pre.push(4u8);
+            pre.extend_from_slice(b"0000");
+            // device id record area
+            pre.push(1u8); // device count
+            pre.extend_from_slice(&device);
+            // downstream device id record area (1.1.x): none
+            pre.push(0u8);
+            // component image information area
+            pre.extend_from_slice(&(ncomp as u16).to_le_bytes());
+            for (i, c) in components.iter().enumerate() {
+                pre.extend_from_slice(&0x000au16.to_le_bytes()); // classification: firmware
+                pre.extend_from_slice(&(i as u16).to_le_bytes()); // identifier
+                pre.extend_from_slice(&0u32.to_le_bytes()); // comparison stamp
+                pre.extend_from_slice(&0u16.to_le_bytes()); // options
+                pre.extend_from_slice(&0u16.to_le_bytes()); // activation method
+                pre.extend_from_slice(&(offsets[i] as u32).to_le_bytes());
+                pre.extend_from_slice(&(c.len() as u32).to_le_bytes());
+                // component version string (type, length, data)
+                pre.push(1u8);
+                pre.push(4u8);
+                pre.extend_from_slice(b"0000");
+            }
+            pre
+        };
+
+        const HDR_INIT_SIZE: usize = 16 + 1 + 2;
+
+        // First pass with placeholder offsets to learn the header size,
+        // which is independent of the (fixed-size) offset field values.
+        let pre_len = build_pre(&vec![0usize; ncomp]).len();
+        let hdr_size = HDR_INIT_SIZE + pre_len + 4;
+
+        // Second pass: real offsets point past the header into the payload
+        // area.
+        let mut offsets = vec![0usize; ncomp];
+        let mut cum = hdr_size;
+        for (i, c) in components.iter().enumerate() {
+            offsets[i] = cum;
+            cum += c.len();
+        }
+        let pre = build_pre(&offsets);
+
+        let mut header = Vec::new();
+        header.extend_from_slice(PKG_UUID_1_1_X.as_bytes());
+        header.push(1u8); // header format revision
+        header.extend_from_slice(&(hdr_size as u16).to_le_bytes());
+        header.extend_from_slice(&pre);
+
+        let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+        let checksum = crc32.checksum(&header);
+        header.extend_from_slice(&checksum.to_le_bytes());
+        assert_eq!(header.len(), hdr_size);
+
+        let mut file = header;
+        for c in components {
+            file.extend_from_slice(c);
+        }
+        file
+    }
+}
