@@ -59,13 +59,20 @@ declare -a FEATURES=(
     "$FEATURES_ASYNC"
 )
 
-# mctp-estack, sync an async
+# mctp-estack, sync and async
 (
 cd mctp-estack
 for feature in "${FEATURES[@]}"; do
     cargo test --features="$feature"
 done;
 )
+
+# Linux programs and examples
+# Tested individually to ensure each defines necessary features itself
+LINUX_PROGRAMS="mctp-linux pldm-platform-util pldm-fw-cli mctp-standalone pldm-file pldm-platform"
+for c in $LINUX_PROGRAMS; do
+    cargo check -p $c --all-targets
+done
 
 # run cargo doc tests
 for feature in "${FEATURES[@]}"; do
