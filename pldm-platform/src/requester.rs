@@ -139,6 +139,9 @@ pub async fn set_numeric_sensor_enable(
 
     let mut rx = [0; 50];
     let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
+    if !resp.data.is_empty() {
+        return Err(proto_error!("Invalid sensor enable response"));
+    }
 
     match CCode::from_u8(resp.cc) {
         Some(CCode::SUCCESS) => (),
@@ -194,6 +197,9 @@ pub async fn set_simple_state_sensor_enables(
 
     let mut rx = [0; 50];
     let resp = pldm_xfer_buf_async(comm, req, &mut rx).await?;
+    if !resp.data.is_empty() {
+        return Err(proto_error!("Invalid sensor enable response"));
+    }
 
     match CCode::from_u8(resp.cc) {
         Some(CCode::SUCCESS) => (),
